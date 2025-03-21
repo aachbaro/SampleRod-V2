@@ -1,0 +1,33 @@
+# Ignorer l'environnement virtuel
+venv/
+
+# Ignorer les fichiers compilés Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignorer les fichiers de logs et temporaires
+*.log
+*.tmp
+
+# Ignorer les dépendances installées via pip
+dist/
+build/
+*.egg-info/
+
+# Ignorer les fichiers spécifiques à l'IDE
+.vscode/
+.idea/
+*.iml
+
+# Ignorer les fichiers système
+.DS_Store
+Thumbs.db
+
+# Ignorer les fichiers générés par PyQt
+*.qrc
+*.ui
+
+# Ignorer les fichiers de cache de l'application
+.cache/
