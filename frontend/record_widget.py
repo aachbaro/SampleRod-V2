@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget
 from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect
 from PyQt6.QtGui import QIcon
+import qtawesome as qta
 
 class RecordWidgetWindow(QMainWindow):
     def __init__(self):
@@ -33,7 +34,7 @@ class RecordWidgetWindow(QMainWindow):
         # 🔹 Bouton d'enregistrement placé à l'intérieur du conteneur
         self.recordButton = QPushButton(self.button_container)
         self.recordButton.setGeometry(4, 4, 18, 18)
-        self.recordButton.setIcon(QIcon("ressources/microphone.png"))
+        self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
         self.recordButton.setStyleSheet(
             "background: transparent; "
             "color: white; "
