@@ -7,7 +7,7 @@ from datetime import datetime
 import threading
 from queue import Queue, Empty
 import time
-from models import Settings
+from backend.models import Settings
 from flask import current_app
 from . import db
 

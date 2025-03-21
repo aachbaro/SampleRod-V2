@@ -1,58 +1,41 @@
-# ./app
-
-
 import sys
+import os
+import threading
 from PyQt6.QtWidgets import QApplication
 from frontend.main_window import MainWindow
+from backend.models.User import User
+from backend.models import db
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
 
-def main():
-    app = QApplication(sys.argv)
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///samples.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db.init_app(app)
+
+# Fonction qui démarre le serveur Flask
+def run_flask_app():
+    with app.app_context():
+        if not os.path.exists('samples.db'):
+            db.create_all()
+            print("Base de données créée avec succès.")
+        else:
+            print("Base de données déjà existante.")
+        
+        user = User()  # Crée un utilisateur, par exemple
+        app.run(debug=True, use_reloader=False)  # Ne pas utiliser reloader en raison de PyQt
+
+# Fonction qui démarre l'interface graphique
+def start_gui():
+    gui = QApplication(sys.argv)
     main_window = MainWindow()
     main_window.show()
-    sys.exit(app.exec())
+    sys.exit(gui.exec())
 
 if __name__ == '__main__':
-    main()
+    # Démarre Flask dans un thread séparé
+    flask_thread = threading.Thread(target=run_flask_app)
+    flask_thread.start()
 
-
-
-
-
-
-# import sys
-# from PyQt6.QtWidgets import QApplication
-# from frontend.main_window import MainWindow
-# from backend.models import create_tables, User, Session
-# import os
-
-# def setup_database():
-#     # Créer la base de données si elle n'existe pas encore
-#     if not os.path.exists('samples.db'):
-#         create_tables()
-#         print("Base de données créée avec succès.")
-#     else:
-#         print("Base de données déjà existante.")
-
-#     # Créer un utilisateur par défaut si nécessaire
-#     session = Session()
-#     user = session.query(User).first()
-#     if user is None:
-#         user = User(name="Default User")  # Créer un nouvel utilisateur
-#         session.add(user)
-#         session.commit()
-#     session.close()
-
-#     return user
-
-# def main():
-#     # Initialisation de la base de données
-#     user = setup_database()
-
-#     # Lancement de l'application PyQt
-#     app = QApplication(sys.argv)
-#     main_window = MainWindow()
-#     main_window.show()
-#     sys.exit(app.exec())
-
-# if __name__ == '__main__':
-#     main()
+    # Démarre l'interface graphique
+    start_gui()

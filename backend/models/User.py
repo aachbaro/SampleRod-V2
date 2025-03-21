@@ -4,10 +4,10 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from models.sample import Sample
-from models.recorder import Recorder
-from models.SampleLibrary import SampleBank
-from models.Settings import Settings
+from backend.models.sample import Sample
+from backend.models.recorder import Recorder
+from backend.models.SampleLibrary import SampleBank
+from backend.models.Settings import Settings
 from flask import current_app
 from . import db
 

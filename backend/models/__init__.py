@@ -1,12 +1,9 @@
-# backend/models/__init__.py
+# /backend/models/__init__.py
 
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from flask_sqlalchemy import SQLAlchemy
 
-# Création de la base SQLAlchemy
-Base = declarative_base()
+db = SQLAlchemy()
 
-# Configuration de la base de données
-engine = create_engine('sqlite:///samples.db', echo=True)
-Session = sessionmaker(bind=engine)
+# Importez tous les modèles ici
+from .sample import Sample
+from .recorder import Recorder

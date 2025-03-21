@@ -1,11 +1,14 @@
 PyQt6
 pyqt6-tools  # Pour Qt Designer (optionnel)
 qtawesome
+SQLAlchemy
+numpy
+Flask
+Flask-SQLAlchemy
+soundfile
+SoundCard
 # qt-material  # Pour un thème moderne (optionnel)
-# numpy  # Utile pour le traitement audio si nécessaire
-# SoundCard==0.4.3
 # audioread==3.0.1
-# soundfile==0.12.1
 # wave  # Gestion des fichiers WAV
 
 
@@ -25,5 +28,4 @@ qtawesome
 # blinker==1.8.2
 # Werkzeug==3.0.3
 # itsdangerous==2.2.0
-# SQLAlchemy==2.0.30
 # numpy==1.26.4
