@@ -1,0 +1,28 @@
+PyQt6
+pyqt6-tools  # Pour Qt Designer (optionnel)
+# qt-material  # Pour un thème moderne (optionnel)
+# numpy  # Utile pour le traitement audio si nécessaire
+# SoundCard==0.4.3
+# audioread==3.0.1
+# soundfile==0.12.1
+# wave  # Gestion des fichiers WAV
+
+
+# sounddevice  # Enregistrement audio
+# pydub  # Manipulation audio
+# click==8.1.7
+# colorama==0.4.6
+# Flask==3.0.3
+# Flask-Cors==4.0.1
+# Flask-SQLAlchemy==3.1.1
+# greenlet==3.0.3
+# Jinja2==3.1.4
+# MarkupSafe==2.1.5
+# pycparser==2.22
+# cffi==1.16.0
+# typing_extensions==4.12.0
+# blinker==1.8.2
+# Werkzeug==3.0.3
+# itsdangerous==2.2.0
+# SQLAlchemy==2.0.30
+# numpy==1.26.4
