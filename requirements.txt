@@ -1,5 +1,6 @@
 PyQt6
 pyqt6-tools  # Pour Qt Designer (optionnel)
+qtawesome
 # qt-material  # Pour un thème moderne (optionnel)
 # numpy  # Utile pour le traitement audio si nécessaire
 # SoundCard==0.4.3
