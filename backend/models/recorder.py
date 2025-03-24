@@ -8,8 +8,6 @@ import threading
 from queue import Queue, Empty
 import time
 from backend.models import Settings
-from flask import current_app
-from . import db
 
 class Recorder:
 

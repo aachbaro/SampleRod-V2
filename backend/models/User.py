@@ -8,22 +8,20 @@ from backend.models.sample import Sample
 from backend.models.recorder import Recorder
 from backend.models.SampleLibrary import SampleBank
 from backend.models.Settings import Settings
-from flask import current_app
-from . import db
+from backend.db import SessionLocal
 
 class User:
     def __init__(self):
         print("Initialisation du User")
-        self.settings = Settings.initialize_settings()
-        self.recorder = Recorder(self.settings)
+        session = SessionLocal()
+        self.settings = session.query(Settings).first()
+        if not self.settings:
+            self.settings = Settings(retro_recording_enabled=False, pre_recording_seconds=0)
+            session.add(self.settings)
+            session.commit()
+
+        self.recorder = Recorder(self.settings)  # Maintenant, settings est bien lié à une session
         print("User: Settings:", self.settings.to_dict())
+        
         if self.settings.retro_recording_enabled:
             self.recorder.bac_rec_activated()
-
-    def to_dict(self):
-        return {
-            "user.to_dict"
-        }
-
-    def __repr__(self):
-        return f"user(__repr__)"

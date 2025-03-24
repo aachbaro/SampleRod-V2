@@ -3,13 +3,13 @@ pyqt6-tools  # Pour Qt Designer (optionnel)
 qtawesome
 SQLAlchemy
 numpy
-Flask
-Flask-SQLAlchemy
 soundfile
 SoundCard
+# Flask
 # qt-material  # Pour un thème moderne (optionnel)
 # audioread==3.0.1
 # wave  # Gestion des fichiers WAV
+# Flask-SQLAlchemy
 
 
 # sounddevice  # Enregistrement audio
