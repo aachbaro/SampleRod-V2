@@ -1,7 +1,7 @@
 import sqlite3
 
 # Connecter à la base de données
-db_path = 'samples.db'  # Remplacez par le chemin correct si nécessaire
+db_path = 'sample.db'  # Remplacez par le chemin correct si nécessaire
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
 

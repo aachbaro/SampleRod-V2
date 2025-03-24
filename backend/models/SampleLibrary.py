@@ -13,6 +13,8 @@ class SampleBank(Base):
     position = Column(Integer, nullable=False)
 
     def __init__(self, path: str):
+        session = SessionLocal()
+        session.expire_on_commit = False
         print(f"Sample Bank: Initialisation avec {path}")
 
         path_resolved = str(Path(path).resolve())  # Conversion en chemin absolu
@@ -24,20 +26,20 @@ class SampleBank(Base):
             raise ValueError("Le chemin spécifié n'est pas un dossier.")
 
         # Ouverture de la session pour les requêtes SQLAlchemy
-        with SessionLocal() as session:
-            # Vérification de l'existence dans la base de données
-            existing_library = session.query(SampleBank).filter_by(path=path_resolved).first()
-            if existing_library:
-                raise ValueError("Cette librairie existe déjà dans la base de données.")
+        # Vérification de l'existence dans la base de données
+        existing_library = session.query(SampleBank).filter_by(path=path_resolved).first()
+        if existing_library:
+            raise ValueError("Cette librairie existe déjà dans la base de données.")
 
-            self.path = path_resolved
+        self.path = path_resolved
 
-            # Déterminer la position maximale
-            max_position = session.query(func.max(SampleBank.position)).scalar()
-            self.position = 0 if max_position is None else max_position + 1
+        # Déterminer la position maximale
+        max_position = session.query(func.max(SampleBank.position)).scalar()
+        self.position = 0 if max_position is None else max_position + 1
 
-            session.add(self)
-            session.commit()
+        session.add(self)
+        session.commit()
+        session.close()
 
         print(f"Classe SampleBank: La librairie {self.path} a été ajoutée avec succès")
 
@@ -55,14 +57,35 @@ class SampleBank(Base):
             'position': self.position,
         }
 
+    @staticmethod
+    def get_all_libraries():
+        """
+        Récupère toutes les instances de SampleBank depuis la base de données,
+        triées par position.
+        """
+        print("Récupération des librairies depuis la base de données")
+        with SessionLocal() as session:
+            return session.query(SampleBank).order_by(SampleBank.position).all()
+    
     # @staticmethod
-    # def get_all_libraries():
-    #     """
-    #     Récupère toutes les instances de SampleBank depuis la base de données,
-    #     triées par position.
-    #     """
-    #     print("Récupération des librairies depuis la base de données")
-    #     return SampleBank.query.order_by(SampleBank.position).all()
+    # def add_sample_library(path: str):
+    #     path_resolved = str(Path(path).resolve())
+    #     if not os.path.exists(path_resolved):
+    #         raise ValueError("Le chemin spécifié n'existe pas.")
+    #     if not os.path.isdir(path_resolved):
+    #         raise ValueError("Le chemin spécifié n'est pas un dossier.")
+        
+    #     with SessionLocal() as session:
+    #         existing_library = session.query(SampleBank).filter_by(path=path_resolved).first()
+    #         if existing_library:
+    #             raise ValueError("Cette librairie existe déjà dans la base de données.")
+            
+    #         # Crée et ajoute la librairie
+    #         new_library = SampleBank(path=path_resolved)
+    #         session.add(new_library)
+    #         session.commit()
+            
+    #     return new_library
 
     # @staticmethod
     # def delete_library_by_id(library_id):

@@ -11,7 +11,7 @@ from backend.models import Settings
 
 class Recorder:
 
-    def __init__(self, settings):
+    def __init__(self, settings: Settings):
         # Charger les paramètres depuis la table Settings
         if not settings:
             raise ValueError("Les paramètres de l'application n'ont pas été initialisés dans la base de données.")

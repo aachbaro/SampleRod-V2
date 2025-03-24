@@ -20,6 +20,8 @@ class User:
             session.add(self.settings)
             session.commit()
 
+        self.libraries = SampleBank.get_all_libraries()
+
         self.recorder = Recorder(self.settings)  # Maintenant, settings est bien lié à une session
         print("User: Settings:", self.settings.to_dict())
         
