@@ -58,8 +58,8 @@ class RetroRecordingWidget(QWidget):
         # Charger les valeurs du store
         # self.duration_input.setValue(self.store.get("maxRecordingTime", 10))
         # self.toggle_checkbox.setChecked(self.store.get("retroactiveRecording", False))
-        self.duration_input.setValue(0)
-        self.toggle_checkbox.setChecked(False)
+        self.duration_input.setValue(self.user.settings.pre_recording_seconds)
+        self.toggle_checkbox.setChecked(self.user.settings.retro_recording_enabled)
 
     
     def on_duration_change(self, value):
@@ -67,7 +67,9 @@ class RetroRecordingWidget(QWidget):
 
     def save_duration(self):
         self.user.settings.set_pre_recording_seconds(self.duration_input.value())
+        self.user.settings.pre_recording_seconds = self.duration_input.value()
         self.confirm_button.setEnabled(False)
+        self.retroRecordingUpdated.emit()
 
     def toggle_recording(self, state):
         # Désactiver le bouton pendant l'opération

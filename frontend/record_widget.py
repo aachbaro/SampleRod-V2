@@ -98,7 +98,7 @@ class RecordWidgetWindow(QMainWindow):
         self.drag_area.setCursor(Qt.CursorShape.SizeAllCursor)
         self.drag_area.setStyleSheet(
             "background: transparent;"
-            "font-size: 1x;"    
+            "font-size: 1x;"
         )
         self.is_dragging = False
         self.drag_offset = QPoint(0, 0)
@@ -153,10 +153,9 @@ class RecordWidgetWindow(QMainWindow):
                 print(selected_library)
                 is_recording = self.user.recorder.record_button_clicked(selected_library, self.retro_time_selected)
                 if is_recording:
-                    self.recordButton.setIcon(qta.icon('fa5s.microphone', color='red'))
+                    self.updateRecordButtonDisplay()
                 else:
-                    self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
-                
+                    self.updateRecordButtonDisplay()                
                 if not is_recording and self.user.recorder.last_audio_recorded_frames:
                     print("is it here?")
                     while not self.user.recorder.ready_to_send_data:
@@ -167,6 +166,17 @@ class RecordWidgetWindow(QMainWindow):
                     print("last_record_data: ", last_record_data)
                     if last_record_data:
                         Sample(last_record_data['filename'])
+
+        # -------------------------------- Scroll sur retro recording
+
+            elif event.type() == QEvent.Type.Wheel and self.user.settings.retro_recording_enabled:
+                delta = event.angleDelta().y()
+                if delta > 0 and self.retro_time_selected < self.user.settings.pre_recording_seconds:
+                    self.retro_time_selected += 1
+                elif delta < 0 and self.retro_time_selected > 0:
+                    self.retro_time_selected -= 1
+                
+                self.updateRecordButtonDisplay()
 
         return super().eventFilter(source, event)
 
@@ -226,6 +236,9 @@ class RecordWidgetWindow(QMainWindow):
     def updateRetroRecording(self):
         print("update Retro Recoring from record widget")
         if self.user.settings:
+            if self.retro_time_selected > self.user.settings.pre_recording_seconds:
+                self.retro_time_selected = self.user.settings.pre_recording_seconds
+                self.updateRecordButtonDisplay()
             if self.user.settings.retro_recording_enabled:
                 self.button_container.setStyleSheet(
                     "background: transparent; "
@@ -233,6 +246,8 @@ class RecordWidgetWindow(QMainWindow):
                     "border-radius: 4px;"
                 )
             else:
+                self.recordButton.setText("")  # Supprime le texte
+                self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
                 self.button_container.setStyleSheet(
                     "background: transparent; "
                     "border: 1px solid white; "
@@ -274,4 +289,32 @@ class RecordWidgetWindow(QMainWindow):
         """Diminue l'opacité lorsque la souris quitte la fenêtre."""
         self.setWindowOpacity(0.5)  # Opacité à 50%
         super().leaveEvent(event)
+
+    def updateRecordButtonDisplay(self):
+        """Met à jour l'affichage du bouton en fonction du mode de rétro-enregistrement et de l'état d'enregistrement."""
+        if self.user.recorder.is_recording:
+            if self.retro_time_selected > 0:
+                self.recordButton.setIcon(QIcon())
+                self.recordButton.setText(str(self.retro_time_selected))
+                self.recordButton.setStyleSheet(
+                    "background: transparent; "
+                    "color: red; "
+                    "border: 1px solid red; "
+                    "border-radius: 8px;"
+                )
+            else:
+                self.recordButton.setIcon(qta.icon('fa5s.microphone', color='red'))
+        else:
+            if self.retro_time_selected > 0:
+                self.recordButton.setIcon(QIcon())
+                self.recordButton.setText(str(self.retro_time_selected))
+                self.recordButton.setStyleSheet(
+                    "background: transparent; "
+                    "color: white; "
+                    "border: 1px solid white; "
+                    "border-radius: 8px;"
+                )
+            else:
+                self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
+                self.recordButton.setText("")  # Supprime le texte
 
