@@ -16,6 +16,7 @@ class MainWindow(QMainWindow):
         # Création de l'onglet principal (QTabWidget)
         self.tab_widget = QTabWidget(self)
         self.setCentralWidget(self.tab_widget)
+        self.record_widget = RecordWidgetWindow(self.user)
 
         # Création de l'onglet Liste de Samples
         self.samples_tab = QWidget()
@@ -29,11 +30,14 @@ class MainWindow(QMainWindow):
         self.settings_layout = QVBoxLayout(self.settings_tab)
         self.tab_widget.addTab(self.settings_tab, "Paramètres")
         
-        self.settings_layout.addWidget(SettingsLibrariesList(self.user))
+        self.settings_libraries_list = SettingsLibrariesList(self.user)
+        self.settings_layout.addWidget(self.settings_libraries_list)
+
+        # Connecte le signal au widget d'enregistrement
+        self.settings_libraries_list.librariesUpdated.connect(self.record_widget.updateLibraryCount)
 
 
         # Configuration de l'onglet RecordWidget
-        self.record_widget = RecordWidgetWindow()
         self.record_widget.show()
 
     def closeEvent(self, event):

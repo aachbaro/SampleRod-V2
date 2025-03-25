@@ -1,10 +1,17 @@
+import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel
 from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QWheelEvent
 import qtawesome as qta
+from backend.models.User import User
+from utils.utils import get_folder_name
 
 class RecordWidgetWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, user: User):
         super().__init__()
 
 # ------------------------------------------------------------------------ Geometrie de la fenetre
@@ -15,6 +22,13 @@ class RecordWidgetWindow(QMainWindow):
         self.setStyleSheet("background: transparent;")                     # Fond transparent
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)  # Toujours au premier plan
         self.setWindowOpacity(0.5)
+        self.button_container = QWidget(self)
+        self.recordButton = QPushButton(self.button_container)
+        self.library_indicator = QLabel(self.button_container)
+        self.library_number_label = QLabel(self.library_indicator)
+        self.library_name = QLabel(self)
+        self.user = user
+        self.library_selected = 0
 
         # 🔹 Timer pour forcer la fenêtre au premier plan
         self.timer = QTimer(self)
@@ -22,7 +36,6 @@ class RecordWidgetWindow(QMainWindow):
         self.timer.start(1000)
 # ------------------------------------------------------------------------ Container a boutons
 
-        self.button_container = QWidget(self)
         self.base_geometry = QRect(0, 0, 26, 26)
         self.button_container.setGeometry(self.base_geometry)
         self.button_container.setStyleSheet(
@@ -35,7 +48,6 @@ class RecordWidgetWindow(QMainWindow):
 
         # ----- Bouton d'enregistrement placé à l'intérieur du conteneur
 
-        self.recordButton = QPushButton(self.button_container)
         self.recordButton.setGeometry(4, 4, 18, 18)
         self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
         self.recordButton.setIconSize(QSize(14, 14))
@@ -49,12 +61,10 @@ class RecordWidgetWindow(QMainWindow):
 
         # ----- Indicateur de repertoire
 
-        self.library_indicator = QLabel(self.button_container)
         self.library_indicator.setGeometry(26, 0, 26, 26)
         self.library_indicator.setPixmap(qta.icon('fa5s.folder', color='white').pixmap(20, 23))
         self.library_indicator.setCursor(Qt.CursorShape.SplitVCursor)
 
-        self.library_number_label = QLabel(self.library_indicator)
         self.library_number_label.setGeometry(3, 2, 25, 25)  # Positionner le label à l'intérieur du `library_indicator`
         self.library_number_label.setStyleSheet(
             "background: transparent; "
@@ -63,13 +73,17 @@ class RecordWidgetWindow(QMainWindow):
             "font-size: 14px; "
             "text-align: center;"
         )
-        self.library_number_label.setText("10") 
-
+        if (self.user.libraries):
+            self.library_number_label.setText(str(self.user.libraries[self.library_selected].position))
+        else:
+            self.library_number_label.setText("N")
         self.library_indicator.setStyleSheet(
             "background: transparent; "
             "color: white; "
             "border: none; "
         )
+        self.library_indicator.installEventFilter(self)
+
 
 
 # ------------------------------------------------------------------------ Zone draggable
@@ -86,6 +100,14 @@ class RecordWidgetWindow(QMainWindow):
         self.is_dragging = False
         self.drag_offset = QPoint(0, 0)
 
+# ------------------------------------------------------------------------ Indicateur de nom
+        self.library_name.setGeometry(0, 26, 100, 10)  # Définir la géométrie correctement
+        if (self.user.libraries):
+            self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
+        else:
+            self.library_name.setText("No library")
+        self.library_name.setVisible(False)
+        self.library_name.setStyleSheet("font-size: 10px;")
 
 # ------------------------------------------------------------------------ Extension du container a bouton
     def eventFilter(self, source, event):
@@ -94,6 +116,24 @@ class RecordWidgetWindow(QMainWindow):
                 self.animate_container(expand=True)
             elif event.type() == QEvent.Type.Leave:
                 self.animate_container(expand=False)
+        elif source == self.library_indicator:
+            if event.type() == QEvent.Type.Wheel:
+                # event est déjà un QWheelEvent, pas besoin de le recréer
+                delta = event.angleDelta().y()
+                if self.user.libraries:
+                    if delta > 0:
+                        self.library_selected = (self.library_selected + 1) % len(self.user.libraries)
+                    else:
+                        self.library_selected = (self.library_selected - 1) % len(self.user.libraries)
+                    self.updateLibraryCount()
+                    if (self.user.libraries):
+                        self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
+                    else:
+                        self.library_name.setText("No library.")
+
+                return True
+            elif event.type() == QEvent.Type.MouseButtonPress:
+                self.library_name.setVisible(not self.library_name.isVisible())
         return super().eventFilter(source, event)
 
     def animate_container(self, expand: bool):
@@ -138,6 +178,15 @@ class RecordWidgetWindow(QMainWindow):
         self.current_animation = anim  # Conserver une référence
         self.current_animation_drag = animDragZone
 
+    def updateLibraryCount(self):
+        """Met à jour le nombre de bibliothèques affiché"""
+        if (self.user.libraries):
+            self.library_number_label.setText(str(self.user.libraries[self.library_selected].position))
+            self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
+        else:
+            self.library_number_label.setText('N')
+            self.library_name.setText("No library.")
+
 
 # ------------------------------------------------------------------------ Position de la fenetre
     def keep_on_top(self):
@@ -173,3 +222,4 @@ class RecordWidgetWindow(QMainWindow):
         """Diminue l'opacité lorsque la souris quitte la fenêtre."""
         self.setWindowOpacity(0.5)  # Opacité à 50%
         super().leaveEvent(event)
+
