@@ -66,9 +66,11 @@ class SettingsLibrariesList(QWidget):
         if self.scroll_area.isVisible():
             self.scroll_area.setVisible(False)
             self.toggle_button.setText("▼")
+            self.add_library_button.setVisible(False)
         else:
             self.scroll_area.setVisible(True)
             self.toggle_button.setText("▲")
+            self.add_library_button.setVisible(True)
 
     def selectDirectory(self):
         """ Ouvrir un dialogue pour choisir un répertoire """

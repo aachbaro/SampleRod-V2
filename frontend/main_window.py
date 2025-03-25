@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBox
 from PyQt6.QtCore import Qt
 from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
+from frontend.settings_gui.retro_recording import RetroRecordingWidget
 from backend.models.User import User
 
 class MainWindow(QMainWindow):
@@ -31,10 +32,14 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.settings_tab, "Paramètres")
         
         self.settings_libraries_list = SettingsLibrariesList(self.user)
+        self.settings_retro_recording = RetroRecordingWidget(self.user)
+
         self.settings_layout.addWidget(self.settings_libraries_list)
+        self.settings_layout.addWidget(self.settings_retro_recording)
 
         # Connecte le signal au widget d'enregistrement
         self.settings_libraries_list.librariesUpdated.connect(self.record_widget.updateLibraryCount)
+        self.settings_retro_recording.retroRecordingUpdated.connect(self.record_widget.updateRetroRecording)
 
 
         # Configuration de l'onglet RecordWidget
@@ -51,4 +56,10 @@ class MainWindow(QMainWindow):
     def exit_procedure(self):
         """ Fonction de nettoyage lors de la fermeture de l'application """
         print("Fermeture de l'application proprement...")
+        if self.user.settings:
+            self.user.settings.retro_recording_enabled = False
+            self.user.settings.set_retro_recording_state(False)
+            self.user.recorder.bac_rec_deactivated()
+        if self.user.recorder.is_recording:
+            self.user.recorder.is_recording = False
         # Ajoutez ici d'éventuelles actions de nettoyage (sauvegarde, fermeture de connexion, etc.)

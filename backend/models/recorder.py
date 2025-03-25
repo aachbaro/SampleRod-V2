@@ -66,7 +66,8 @@ class Recorder:
 
     def bac_rec_deactivated(self):
         print("recorder: back_rec_deactivated")
-        self.bac_rec_thread.join()
+        if self.bac_rec_thread:
+            self.bac_rec_thread.join()
 
     def record(self):
         output_file_name = self.create_file_name()

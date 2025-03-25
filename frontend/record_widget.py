@@ -223,6 +223,22 @@ class RecordWidgetWindow(QMainWindow):
             self.library_number_label.setText('N')
             self.library_name.setText("No library.")
 
+    def updateRetroRecording(self):
+        print("update Retro Recoring from record widget")
+        if self.user.settings:
+            if self.user.settings.retro_recording_enabled:
+                self.button_container.setStyleSheet(
+                    "background: transparent; "
+                    "border: 1px solid #40E0D0; "
+                    "border-radius: 4px;"
+                )
+            else:
+                self.button_container.setStyleSheet(
+                    "background: transparent; "
+                    "border: 1px solid white; "
+                    "border-radius: 4px;"
+                )
+
 
 # ------------------------------------------------------------------------ Position de la fenetre
     def keep_on_top(self):
