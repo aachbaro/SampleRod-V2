@@ -2,13 +2,15 @@
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, 
-    QHBoxLayout, QFrame, QScrollArea, QGroupBox, QComboBox
+    QHBoxLayout, QFrame, QScrollArea, QGroupBox, QComboBox, QListWidget, QListWidgetItem
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect
 from PyQt6.QtGui import QIcon
 from backend.models.SampleLibrary import SampleBank
 from backend.models.User import User
 from backend.db import Base, SessionLocal
+from frontend.custom_widgets import QListWidgetDragBugFix
+import time
 
 import os
 
@@ -26,6 +28,8 @@ class SettingsLibrariesList(QWidget):
         self.scroll_area = QScrollArea()
         self.add_library_button = QPushButton("Add Sample Library")
         self.header_label = QLabel("Sample Libraries")
+        self.library_list_widget = QListWidgetDragBugFix()
+
         self.toggle_button.setFixedSize(30, 30)
         self.toggle_button.clicked.connect(self.toggleList)
         self.header_layout.addWidget(self.header_label)
@@ -34,13 +38,14 @@ class SettingsLibrariesList(QWidget):
         self.layout().addLayout(self.header_layout)
 
         # Zone de contenu pour la liste des bibliothèques
-        self.library_list_widget = QWidget()
         self.library_list_layout = QVBoxLayout(self.library_list_widget)
 
-        print("Libraries : ",self.user.libraries)
-        for library in self.user.libraries:
-            print("libraries: ", library.to_dict())
-        self.refreshLibraryList()
+
+        self.library_list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self.library_list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self.library_list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.library_list_widget.model().rowsMoved.connect(self.updateLibraryOrder)
+
 
 
         # Zone de défilement
@@ -52,6 +57,8 @@ class SettingsLibrariesList(QWidget):
         self.add_library_button.setIcon(QIcon("folder-plus.png"))
         self.add_library_button.clicked.connect(self.selectDirectory)
         self.layout().addWidget(self.add_library_button)
+
+        self.refreshLibraryList()
 
 
     def toggleList(self):
@@ -73,6 +80,7 @@ class SettingsLibrariesList(QWidget):
                     print("Library succesfully added: ", directory)
                     self.user.libraries = SampleBank.get_all_libraries()
                     self.refreshLibraryList()
+                    self.updateLibraryOrder()
                     self.librariesUpdated.emit()
                 
         except Exception as error:
@@ -89,37 +97,64 @@ class SettingsLibrariesList(QWidget):
                 session.commit()
                 self.user.libraries = SampleBank.get_all_libraries()
                 self.refreshLibraryList()
+                self.updateLibraryOrder()
             session.close()
             self.librariesUpdated.emit()
         except Exception as e:
             print(f"Error deleting library: {e}")
 
+    def updateLibraryOrder(self):
+        """ Met à jour l'ordre des bibliothèques après un drag & drop """
+        session = SessionLocal()
+        for index in range(self.library_list_widget.count()):
+            item = self.library_list_widget.item(index)
+            library = item.data(Qt.ItemDataRole.UserRole)
+
+            if library is None:
+                print(f"Erreur : Impossible de récupérer la bibliothèque pour l'index {index}")
+                continue
+
+            library.position = index  # Mise à jour de la position
+            session.merge(library)  # Mise à jour de l'objet dans la session SQLAlchemy
+        
+        session.commit()
+        session.close()
+        self.librariesUpdated.emit()
+        time.sleep(0.1)
+        self.refreshLibraryList()
+        print("Ordre des bibliothèques mis à jour !")
+
+
     def refreshLibraryList(self):
-        """ Met à jour l'affichage de la liste des bibliothèques avec un bouton de suppression """
-        # Vider correctement la mise en page
-        while self.library_list_layout.count():
-            item = self.library_list_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        """ Met à jour l'affichage de la liste des bibliothèques """
+        self.library_list_widget.clear()
 
-        # Recréer les éléments de la liste
-        print("RefreshLibraryList: ", [lib.path for lib in self.user.libraries])
-        for library in self.user.libraries:
-            library_name = library.path
-            library_layout = QHBoxLayout()
+        for library in sorted(self.user.libraries, key=lambda lib: lib.position):
+            item_widget = QWidget()
+            layout = QHBoxLayout(item_widget)
+            layout.setContentsMargins(5, 5, 5, 5)
 
-            library_label = QLabel(library_name)
-            library_layout.addWidget(library_label)
+            label_text = f"{library.position} - {library.path}"
+            label = QLabel(label_text)
+            # label = QLabel(library.path)
+            delete_button = QPushButton("❌")
+            delete_button.setFixedSize(30, 30)
+            delete_button.clicked.connect(lambda _, lib=library: self.deleteLibrary(lib))
 
-            delete_button = QPushButton("Delete")
-            delete_button.clicked.connect(lambda checked, lib=library: self.deleteLibrary(lib))
-            library_layout.addWidget(delete_button)
+            layout.addWidget(label)
+            layout.addStretch()
+            layout.addWidget(delete_button)
 
-            container = QWidget()
-            container.setLayout(library_layout)
+            item_widget.setLayout(layout)
 
-            self.library_list_layout.addWidget(container)
+            list_item = QListWidgetItem(self.library_list_widget)
+            list_item.setSizeHint(item_widget.sizeHint())
 
-        self.library_list_widget.adjustSize()
-        self.scroll_area.setWidget(self.library_list_widget)
+            # Stocker l'objet SampleBank dans l'item pour le récupérer plus tard
+            list_item.setData(Qt.ItemDataRole.UserRole, library)
+
+            self.library_list_widget.addItem(list_item)
+            self.library_list_widget.setItemWidget(list_item, item_widget)
+
+
 

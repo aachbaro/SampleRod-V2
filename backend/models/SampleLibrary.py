@@ -25,7 +25,6 @@ class SampleBank(Base):
         if not os.path.isdir(path_resolved):
             raise ValueError("Le chemin spécifié n'est pas un dossier.")
 
-        # Ouverture de la session pour les requêtes SQLAlchemy
         # Vérification de l'existence dans la base de données
         existing_library = session.query(SampleBank).filter_by(path=path_resolved).first()
         if existing_library:
@@ -66,66 +65,3 @@ class SampleBank(Base):
         print("Récupération des librairies depuis la base de données")
         with SessionLocal() as session:
             return session.query(SampleBank).order_by(SampleBank.position).all()
-    
-    # @staticmethod
-    # def add_sample_library(path: str):
-    #     path_resolved = str(Path(path).resolve())
-    #     if not os.path.exists(path_resolved):
-    #         raise ValueError("Le chemin spécifié n'existe pas.")
-    #     if not os.path.isdir(path_resolved):
-    #         raise ValueError("Le chemin spécifié n'est pas un dossier.")
-        
-    #     with SessionLocal() as session:
-    #         existing_library = session.query(SampleBank).filter_by(path=path_resolved).first()
-    #         if existing_library:
-    #             raise ValueError("Cette librairie existe déjà dans la base de données.")
-            
-    #         # Crée et ajoute la librairie
-    #         new_library = SampleBank(path=path_resolved)
-    #         session.add(new_library)
-    #         session.commit()
-            
-    #     return new_library
-
-    # @staticmethod
-    # def delete_library_by_id(library_id):
-    #     """
-    #     Supprime une librairie de la base de données à partir de son ID, puis
-    #     réaffecte les positions pour que l'ordre reste séquentiel.
-    #     """
-    #     print(f"SampleBank: Tentative de suppression de la librairie avec ID {library_id}")
-    #     library = SampleBank.query.get(library_id)
-    #     if not library:
-    #         raise ValueError("La librairie spécifiée n'existe pas dans la base de données.")
-
-    #     db.session.delete(library)
-    #     db.session.commit()
-    #     print(f"SampleBank: Librairie avec ID {library_id} supprimée avec succès.")
-
-    #     # Réaffecte les positions pour que l'ordre reste séquentiel
-    #     SampleBank.reassign_positions()
-
-    # @staticmethod
-    # def reassign_positions():
-    #     """
-    #     Réaffecte les positions de toutes les librairies de façon séquentielle
-    #     (0, 1, 2, ...).
-    #     """
-    #     libraries = SampleBank.query.order_by(SampleBank.position).all()
-    #     for index, lib in enumerate(libraries):
-    #         lib.position = index
-    #     db.session.commit()
-    #     print("Positions réaffectées avec succès.")
-
-    # @staticmethod
-    # def update_positions(new_order):
-    #     """
-    #     Met à jour les positions des librairies en fonction d'une nouvelle commande.
-    #     :param new_order: Liste d'IDs dans l'ordre souhaité.
-    #     """
-    #     for pos, lib_id in enumerate(new_order):
-    #         library = SampleBank.query.get(lib_id)
-    #         if library:
-    #             library.position = pos
-    #     db.session.commit()
-    #     print("Positions mises à jour avec succès.")

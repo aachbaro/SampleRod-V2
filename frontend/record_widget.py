@@ -9,6 +9,7 @@ from PyQt6.QtGui import QIcon, QWheelEvent
 import qtawesome as qta
 from backend.models.User import User
 from utils.utils import get_folder_name
+from backend.models.sample import Sample
 
 class RecordWidgetWindow(QMainWindow):
     def __init__(self, user: User):
@@ -29,6 +30,7 @@ class RecordWidgetWindow(QMainWindow):
         self.library_name = QLabel(self)
         self.user = user
         self.library_selected = 0
+        self.retro_time_selected = 0
 
         # 🔹 Timer pour forcer la fenêtre au premier plan
         self.timer = QTimer(self)
@@ -58,6 +60,7 @@ class RecordWidgetWindow(QMainWindow):
             "border: 1px solid white; "
             "border-radius: 8px;"
         )
+        self.recordButton.installEventFilter(self)
 
         # ----- Indicateur de repertoire
 
@@ -111,11 +114,16 @@ class RecordWidgetWindow(QMainWindow):
 
 # ------------------------------------------------------------------------ Extension du container a bouton
     def eventFilter(self, source, event):
+
+        # ------------------------------------------------ Button container
         if source == self.button_container:
             if event.type() == QEvent.Type.Enter:
                 self.animate_container(expand=True)
             elif event.type() == QEvent.Type.Leave:
                 self.animate_container(expand=False)
+
+        # ------------------------------------------------ lIBRARY INDICATOR
+
         elif source == self.library_indicator:
             if event.type() == QEvent.Type.Wheel:
                 # event est déjà un QWheelEvent, pas besoin de le recréer
@@ -134,6 +142,32 @@ class RecordWidgetWindow(QMainWindow):
                 return True
             elif event.type() == QEvent.Type.MouseButtonPress:
                 self.library_name.setVisible(not self.library_name.isVisible())
+
+        # ----------------------------------------------- RecordButton
+
+        elif source == self.recordButton:
+            if event.type() == QEvent.Type.MouseButtonPress:
+                print(self.user.recorder.is_recording)
+                last_record_data = None
+                selected_library = self.user.libraries[self.library_selected].path
+                print(selected_library)
+                is_recording = self.user.recorder.record_button_clicked(selected_library, self.retro_time_selected)
+                if is_recording:
+                    self.recordButton.setIcon(qta.icon('fa5s.microphone', color='red'))
+                else:
+                    self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
+                
+                if not is_recording and self.user.recorder.last_audio_recorded_frames:
+                    print("is it here?")
+                    while not self.user.recorder.ready_to_send_data:
+                        continue
+                    print("its here")
+                    last_record_data = self.user.recorder.get_last_record_data()
+                    self.user.recorder.last_record_data_zero()
+                    print("last_record_data: ", last_record_data)
+                    if last_record_data:
+                        Sample(last_record_data['filename'])
+
         return super().eventFilter(source, event)
 
     def animate_container(self, expand: bool):
@@ -181,6 +215,8 @@ class RecordWidgetWindow(QMainWindow):
     def updateLibraryCount(self):
         """Met à jour le nombre de bibliothèques affiché"""
         if (self.user.libraries):
+            if (len(self.user.libraries) - 1 < self.library_selected):
+                self.library_selected = len(self.user.libraries) - 1
             self.library_number_label.setText(str(self.user.libraries[self.library_selected].position))
             self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
         else:
