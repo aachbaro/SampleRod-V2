@@ -48,13 +48,50 @@ class Sample(Base):
     def __repr__(self):
         return f"<Sample(name={self.name}, duration={self.duration}, created_at={self.created_at})>"
 
-    # @staticmethod
-    # def get_all_samples():
-    #     """
-    #     Récupère toutes les instances de SampleBank depuis la base de données.
-    #     """
-    #     print("Récupération des samples depuis la base de données")
-    #     return Sample.query.all()
+    @staticmethod
+    def get_all_samples():
+        """
+        Récupère tous les samples depuis la base de données, triés par date de création.
+        """
+        print("Récupération des samples depuis la base de données")
+        with SessionLocal() as session:
+            return session.query(Sample).order_by(Sample.created_at).all()
+
+    @staticmethod
+    def delete_sample(sample_id: int):
+        """
+        Supprime un échantillon de la base de données et du système de fichiers de manière sécurisée.
+        Si le fichier n'existe pas dans le système de fichiers, il supprime seulement l'entrée de la base de données.
+        
+        :param sample_id: ID de l'échantillon à supprimer.
+        """
+        print(f"Tentative de suppression du sample avec ID {sample_id}")
+        
+        with SessionLocal() as session:
+            session.expire_on_commit = False
+            sample = session.query(Sample).filter_by(id=sample_id).first()
+            if not sample:
+                print(f"Sample avec ID {sample_id} introuvable dans la base de données.")
+                return
+            
+            # Vérifier si le fichier existe dans le système
+            if os.path.exists(sample.path):
+                try:
+                    os.remove(sample.path)
+                    print(f"Fichier {sample.path} supprimé du système de fichiers.")
+                except Exception as e:
+                    print(f"Erreur lors de la suppression du fichier {sample.path}: {str(e)}")
+            else:
+                print(f"Fichier {sample.path} introuvable dans le système de fichiers. Suppression uniquement dans la base de données.")
+            
+            # Supprimer l'échantillon de la base de données
+            try:
+                session.delete(sample)
+                session.commit()
+                print(f"Sample avec ID {sample_id} supprimé de la base de données.")
+            except Exception as e:
+                session.rollback()
+                print(f"Erreur lors de la suppression du sample dans la base de données: {str(e)}")
     
     # @staticmethod
     # def rename_sample(sample_id: int, new_name: str):
@@ -86,38 +123,3 @@ class Sample(Base):
     #         db.session.delete(sample)
     #         db.session.commit()
     #         raise Exception(f"File {sample.path} not found in the system. Sample has been deleted from the database.")
-
-    # @staticmethod
-    # def delete_sample(sample_id: int):
-    #     """
-    #     Supprime un échantillon de la base de données et du système de fichiers de manière sécurisée.
-    #     Si le fichier n'existe pas dans le système de fichiers, il supprime seulement l'entrée de la base de données.
-        
-    #     :param sample_id: ID de l'échantillon à supprimer.
-    #     """
-    #     print(f"Tentative de suppression du sample avec ID {sample_id}")
-
-    #     # Récupérer l'échantillon par son ID
-    #     sample = Sample.query.get(sample_id)
-    #     if not sample:
-    #         raise Exception(f"Sample avec ID {sample_id} introuvable dans la base de données.")
-
-    #     # Vérifier si le fichier existe dans le système
-    #     if os.path.exists(sample.path):
-    #         try:
-    #             # Supprimer le fichier du système
-    #             os.remove(sample.path)
-    #             print(f"Fichier {sample.path} supprimé du système de fichiers.")
-    #         except Exception as e:
-    #             raise Exception(f"Erreur lors de la suppression du fichier {sample.path}: {str(e)}")
-    #     else:
-    #         print(f"Fichier {sample.path} introuvable dans le système de fichiers. Suppression uniquement dans la base de données.")
-
-    #     # Supprimer l'échantillon de la base de données
-    #     try:
-    #         db.session.delete(sample)
-    #         db.session.commit()
-    #         print(f"Sample avec ID {sample_id} supprimé de la base de données.")
-    #     except Exception as e:
-    #         db.session.rollback()
-    #         raise Exception(f"Erreur lors de la suppression du sample dans la base de données: {str(e)}")

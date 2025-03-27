@@ -6,6 +6,8 @@ from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
 from frontend.settings_gui.retro_recording import RetroRecordingWidget
 from backend.models.User import User
+from backend.models.sample import Sample
+from frontend.sample_gui.sample_list import SampleListWidget
 
 class MainWindow(QMainWindow):
     def __init__(self, user: User):
@@ -23,7 +25,9 @@ class MainWindow(QMainWindow):
         self.samples_tab = QWidget()
         self.samples_layout = QVBoxLayout(self.samples_tab)
         self.samples_layout.addWidget(QLabel("Liste des Samples"))
-        self.samples_layout.addWidget(QPushButton("Ajouter un sample"))  # Exemple de bouton pour l'onglet des samples
+        # Supposons que user.samples contient la liste des samples récupérée depuis la BDD
+        self.sample_list_widget = SampleListWidget(Sample.get_all_samples())
+        self.samples_layout.addWidget(self.sample_list_widget)
         self.tab_widget.addTab(self.samples_tab, "Liste des Samples")
 
         # Création de l'onglet Paramètres
@@ -40,8 +44,7 @@ class MainWindow(QMainWindow):
         # Connecte le signal au widget d'enregistrement
         self.settings_libraries_list.librariesUpdated.connect(self.record_widget.updateLibraryCount)
         self.settings_retro_recording.retroRecordingUpdated.connect(self.record_widget.updateRetroRecording)
-
-
+        self.record_widget.newSampleRecorded.connect(self.sample_list_widget.addSampleToList)
         # Configuration de l'onglet RecordWidget
         self.record_widget.show()
 

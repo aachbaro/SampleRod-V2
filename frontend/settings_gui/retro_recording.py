@@ -20,7 +20,7 @@ class RetroRecordingWidget(QWidget):
         # Ligne principale avec icône et titre
         top_layout = QHBoxLayout()
         self.icon_label = QLabel()
-        self.icon_label.setPixmap(QIcon("icon.svg").pixmap(24, 24))
+        # self.icon_label.setPixmap(QIcon("icon.svg").pixmap(24, 24))
         self.title_label = QLabel("Enregistrement Rétroactif")
 
         top_layout.addWidget(self.icon_label)

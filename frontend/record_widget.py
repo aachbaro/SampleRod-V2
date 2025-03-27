@@ -4,14 +4,17 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel
-from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize
+from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal
 from PyQt6.QtGui import QIcon, QWheelEvent
 import qtawesome as qta
 from backend.models.User import User
 from utils.utils import get_folder_name
 from backend.models.sample import Sample
+import datetime
 
 class RecordWidgetWindow(QMainWindow):
+    newSampleRecorded = pyqtSignal(str)
+
     def __init__(self, user: User):
         super().__init__()
 
@@ -157,15 +160,14 @@ class RecordWidgetWindow(QMainWindow):
                 else:
                     self.updateRecordButtonDisplay()                
                 if not is_recording and self.user.recorder.last_audio_recorded_frames:
-                    print("is it here?")
                     while not self.user.recorder.ready_to_send_data:
                         continue
-                    print("its here")
                     last_record_data = self.user.recorder.get_last_record_data()
                     self.user.recorder.last_record_data_zero()
                     print("last_record_data: ", last_record_data)
-                    if last_record_data:
-                        Sample(last_record_data['filename'])
+                if last_record_data:
+                    # Émet un dictionnaire de données
+                    self.newSampleRecorded.emit(last_record_data['filename'])
 
         # -------------------------------- Scroll sur retro recording
 
