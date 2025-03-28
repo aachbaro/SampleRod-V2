@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, QSlider, QLineEdit
+from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, QSlider, QLineEdit, QFrame
 from PyQt6.QtCore import pyqtSignal, Qt, QSize
 from PyQt6.QtGui import QIcon
 import qtawesome as qta
@@ -176,6 +176,7 @@ class SampleCard(QWidget):
         """)
 
 
+
     def get_sample_name(self):
         """Retourne le nom du sample à partir du chemin."""
         return os.path.basename(self.sample.name)
@@ -211,7 +212,7 @@ class SampleCard(QWidget):
     def submitRename(self):
         new_name = self.rename_input.text().strip()
         if new_name and new_name != self.get_sample_name():
-            self.renameSample.emit(self.sample, new_name)
+            self.renameSample.emit(self.sample.id, new_name)
             self.name_label.setText(new_name)
         self.isRenaming = False
 
@@ -225,8 +226,6 @@ class SampleCard(QWidget):
     def confirmDelete(self):
         """Appelle la méthode delete_sample et émet le signal."""
         self.deleteSample.emit(self.sample.id)  # Passe l'ID du sample
-        self.sample.delete_sample(self.sample.id)
-        self.setParent(None)
 
     def togglePlay(self):
         self.playSample.emit(self.sample)

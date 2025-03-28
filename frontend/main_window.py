@@ -24,8 +24,6 @@ class MainWindow(QMainWindow):
         # Création de l'onglet Liste de Samples
         self.samples_tab = QWidget()
         self.samples_layout = QVBoxLayout(self.samples_tab)
-        self.samples_layout.addWidget(QLabel("Liste des Samples"))
-        # Supposons que user.samples contient la liste des samples récupérée depuis la BDD
         self.sample_list_widget = SampleListWidget(Sample.get_all_samples())
         self.samples_layout.addWidget(self.sample_list_widget)
         self.tab_widget.addTab(self.samples_tab, "Liste des Samples")
