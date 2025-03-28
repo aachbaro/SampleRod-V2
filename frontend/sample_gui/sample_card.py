@@ -5,6 +5,7 @@ import qtawesome as qta
 from utils.utils import get_folder_name
 from datetime import datetime
 import os
+from backend.models.User import User
 
 class SampleCard(QWidget):
     # Signaux pour communiquer avec la liste
@@ -12,14 +13,17 @@ class SampleCard(QWidget):
     renameSample = pyqtSignal(object, str)   # émet l'objet sample et le nouveau nom
     playSample = pyqtSignal(object)          # émet l'objet sample à jouer
 
-    def __init__(self, sample, parent=None):
+    def __init__(self, sample, user: User, parent=None):
         """
         sample : objet Sample, avec au moins les attributs :
             - id, name (ou filename), created_at, duration.
         """
         super().__init__(parent)
+        self.user = user
         self.sample = sample
         self.isRenaming = False
+
+        self.user.audio_player.signals.playbackFinished.connect(self.handlePlaybackFinished)
 
         self.init_ui()
 
@@ -229,6 +233,9 @@ class SampleCard(QWidget):
 
     def togglePlay(self):
         self.playSample.emit(self.sample)
+        is_playing = self.user.audio_player.toggle_play(self.sample.id, self.sample.path, self.sample.duration)
+        icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
+        self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
 
     def name_label_double_click(self, event):
         self.startRename()
@@ -236,3 +243,10 @@ class SampleCard(QWidget):
     def keyPressEvent(self, event):
         if self.isRenaming and event.key() == Qt.Key.Key_Escape:
             self.cancelRename()
+
+    def handlePlaybackFinished(self, finished_sample_id):
+        """ Méthode appelée quand un sample termine sa lecture """
+        if finished_sample_id == self.sample.id:
+            print(f"Lecture terminée pour le sample {finished_sample_id}")
+            self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+            

@@ -4,6 +4,7 @@ from frontend.sample_gui.sample_card import SampleCard
 from backend.models.sample import Sample
 from backend.db import Base, SessionLocal
 import os
+from backend.models.User import User
 
 class SampleListWidget(QWidget):
     # Signal pour notifier des actions sur un sample, à connecter aux fonctions de ton store/backend
@@ -11,12 +12,13 @@ class SampleListWidget(QWidget):
     sampleRenamed = pyqtSignal(object, str)
     samplePlayed = pyqtSignal(object)
 
-    def __init__(self, samples, parent=None):
+    def __init__(self, samples, user: User, parent=None):
         """
         samples : liste d'objets Sample.
         """
         super().__init__(parent)
         self.samples = samples  # La liste des samples
+        self.user = user
         self.init_ui()
 
     def init_ui(self):
@@ -45,7 +47,7 @@ class SampleListWidget(QWidget):
                 # Rafraîchir l'objet sample avec la session courante
                 sample = session.merge(sample)
                 if sample is not None: #Verifie que le sample n'est pas None
-                    card = SampleCard(sample)
+                    card = SampleCard(sample, self.user)
                     card.deleteSample.connect(self.delete_sample)
                     card.renameSample.connect(self.rename_sample)
                     card.renameSample.connect(self.sampleRenamed.emit)
