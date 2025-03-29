@@ -47,45 +47,74 @@ class AudioPlayer:
         self.player.setAudioOutput(self.audio_output)
         self.player.positionChanged.connect(self.handlePositionChanged)
 
-        self.current_sample_id = None
+        self.current_sample_id = -1
         self.current_time = 0  # Position en millisecondes
-        self.current_sample_duration = 0
+        self.current_sample_duration = -1
         self.current_sample_path = None
 
     def toggle_play(self, sample_id, file_path, sample_duration):
         """ Joue un nouveau sample, en arrêtant le précédent si nécessaire """
 
-        # Si on clique sur le même sample et qu'il est en lecture, on le met en pause
         if self.current_sample_id == sample_id:
             if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-                self.current_time = self.player.position()  # Sauvegarde du temps
+                self.current_time = self.player.position()
                 self.player.pause()
                 return False
             else:
-                # Reprise de la lecture à la position précédente
                 self.player.setPosition(self.current_time)
+                print(self.player.position())
                 self.player.play()
                 return True
         
-        # Sinon, on joue un nouveau sample
-        self.current_sample_id = sample_id
-        self.current_sample_duration = sample_duration * 1000
-        self.current_time = 0  # On reset la position
-        self.current_sample_path = file_path
-
-        self.player.stop()  # On arrête le précédent sample
-        self.player.setSource(QUrl.fromLocalFile(file_path))  # On charge le nouveau sample
-        self.player.play()  # On joue
-
+        self.clear_audio()
+        self.set_up_audio(sample_id, file_path, sample_duration)
+        print(self.player.position())
+        self.player.play()
         return True
     
+    def seek_position(self, sample_id, file_path, sample_duration, position):
+        print("seek audio and play", position)
+        if self.current_sample_id != sample_id:
+            self.clear_audio()
+            self.set_up_audio(sample_id, file_path, sample_duration)
+        if self.player.seekable:
+            self.player.setPosition(position)
+        else:
+            print("Le média n'est pas seekable.")
+        self.current_time = position
+        print(self.player.position())
+        if self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            return True
+        return False
+
+    def set_up_audio(self, sample_id, file_path, sample_duration):
+        print("Changing disk")
+        self.current_sample_id = sample_id
+        self.current_sample_duration = sample_duration * 1000
+        self.current_sample_path = file_path
+        self.current_time = 0
+        self.player.setSource(QUrl.fromLocalFile(file_path))
+        return self.current_sample_id
+    
+    def clear_audio(self):
+        print("Throwing disk away")
+        print(self.current_sample_id, self.current_sample_duration)
+        self.signals.positionChanged.emit(self.current_sample_id, (int)(self.current_sample_duration), (int)(self.current_sample_duration))
+        self.player.stop()
+        self.player.setSource(QUrl())
+        self.current_sample_id = -1
+        self.current_sample_duration = -1
+        self.current_sample_path = None
+        return 0
+
+    
     def handlePositionChanged(self, position):
-        print(f"Media Status: {position} / {self.current_sample_duration}")  # Affiche tous les statuts reçus
+        # print(f"Media Status: {position} / {self.current_sample_duration}")  # Affiche tous les statuts reçus
+        if self.current_sample_id:
+            self.signals.positionChanged.emit(self.current_sample_id, position, (int)(self.current_sample_duration))
         if position == self.current_sample_duration:
-            print("sample end")
-            self.signals.playbackFinished.emit(self.current_sample_id)
-            self.player.stop()  # On arrête le précédent sample
-            self.player.setSource(QUrl.fromLocalFile(self.current_sample_path))
+            self.clear_audio()
+        
 
 class AudioPlayerSignals(QObject):
-    playbackFinished = pyqtSignal(int)
+    positionChanged = pyqtSignal(int, int, int)

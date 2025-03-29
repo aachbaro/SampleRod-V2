@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QListWidget
+from PyQt6.QtWidgets import QListWidget, QSlider, QStyle
 from PyQt6.QtGui import QDragMoveEvent
 from PyQt6.QtCore import Qt
 
@@ -13,3 +13,27 @@ class QListWidgetDragBugFix(QListWidget):
             e.ignore()
         else:
             super().dragMoveEvent(e)
+
+class CustomSlider(QSlider):
+    def mousePressEvent(self, event):
+        """Permet de positionner directement le slider là où on clique"""
+        if self.orientation() == Qt.Horizontal:
+            value = QStyle.sliderValueFromPosition(
+                self.minimum(),
+                self.maximum(),
+                int(event.position().x()),  # Convertir en entier
+                self.width(),
+                self.invertedAppearance()
+            )
+        else:
+            value = QStyle.sliderValueFromPosition(
+                self.minimum(),
+                self.maximum(),
+                int(event.position().y()),  # Convertir en entier
+                self.height(),
+                self.invertedAppearance()
+            )
+
+        self.setValue(value)
+        self.sliderMoved.emit(value)  # Émet le signal pour que l'UI suive immédiatement
+        super().mousePressEvent(event)

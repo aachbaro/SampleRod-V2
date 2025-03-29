@@ -6,6 +6,8 @@ from utils.utils import get_folder_name
 from datetime import datetime
 import os
 from backend.models.User import User
+from backend.models.sample import Sample
+from frontend.custom_widgets import CustomSlider
 
 class SampleCard(QWidget):
     # Signaux pour communiquer avec la liste
@@ -13,7 +15,7 @@ class SampleCard(QWidget):
     renameSample = pyqtSignal(object, str)   # émet l'objet sample et le nouveau nom
     playSample = pyqtSignal(object)          # émet l'objet sample à jouer
 
-    def __init__(self, sample, user: User, parent=None):
+    def __init__(self, sample:Sample, user: User, parent=None):
         """
         sample : objet Sample, avec au moins les attributs :
             - id, name (ou filename), created_at, duration.
@@ -23,7 +25,7 @@ class SampleCard(QWidget):
         self.sample = sample
         self.isRenaming = False
 
-        self.user.audio_player.signals.playbackFinished.connect(self.handlePlaybackFinished)
+        self.user.audio_player.signals.positionChanged.connect(self.updateSlider)
 
         self.init_ui()
 
@@ -137,18 +139,21 @@ class SampleCard(QWidget):
         self.play_button.clicked.connect(self.togglePlay)
         playback_layout.addWidget(self.play_button)
 
-        self.playback_slider = QSlider(Qt.Orientation.Horizontal)
+        self.playback_slider = CustomSlider(Qt.Orientation.Horizontal)
         self.playback_slider.setRange(0, 100)
         self.playback_slider.setValue(0)
         self.playback_slider.setFixedHeight(30)
         playback_layout.addWidget(self.playback_slider)
 
         self.time_label = QLabel("00:00/00:00")
-        self.time_label.setFixedHeight(30)
+        self.time_label.setFixedSize(80,30)
         self.time_label.setStyleSheet("font-size: 12px; color: #ffffff;")
         playback_layout.addWidget(self.time_label)
 
         main_layout.addLayout(playback_layout)
+
+        self.updateSlider(self.sample.id, 0, int(self.sample.duration * 1000))
+        self.playback_slider.sliderMoved.connect(self.seekAudio)
     
 #------------------- Style général du SampleCard pour fond sombre
         self.setStyleSheet("""
@@ -189,6 +194,9 @@ class SampleCard(QWidget):
     def get_folder_name(path):
         """Retourne le nom du dernier dossier dans le chemin."""
         return os.path.basename(os.path.dirname(path))
+
+    def name_label_double_click(self, event):
+        self.startRename()
 
     def startRename(self):
         self.isRenaming = True
@@ -237,16 +245,27 @@ class SampleCard(QWidget):
         icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
         self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
 
-    def name_label_double_click(self, event):
-        self.startRename()
+    def seekAudio(self, value):
+        """Déplace la position de lecture lorsque l'utilisateur interagit avec le slider"""
+        new_position = int((value / 100) * (self.sample.duration * 1000))
+        is_playing = self.user.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
+        icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
+        self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
 
     def keyPressEvent(self, event):
         if self.isRenaming and event.key() == Qt.Key.Key_Escape:
             self.cancelRename()
 
-    def handlePlaybackFinished(self, finished_sample_id):
-        """ Méthode appelée quand un sample termine sa lecture """
-        if finished_sample_id == self.sample.id:
-            print(f"Lecture terminée pour le sample {finished_sample_id}")
-            self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
-            
+    def updateSlider(self, sample_id, position, duration):
+        """Met à jour la position du slider, le temps affiché et détecte la fin de lecture"""
+        if sample_id == self.sample.id and duration > 0:
+            self.playback_slider.setValue(int((position / duration) * 100))
+            self.time_label.setText(f"{position//1000:02}:{position%1000//10:02}/{duration//1000:02}:{duration%1000//10:02}")
+
+            # Détection de la fin de lecture
+            if position >= duration:
+                print(f"Lecture terminée pour le sample {sample_id}")
+                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+                self.playback_slider.setValue(int((0 / duration) * 100))
+                self.time_label.setText(f"{0:02}:{0:02}/{duration//1000:02}:{duration%1000//10:02}")
+    
