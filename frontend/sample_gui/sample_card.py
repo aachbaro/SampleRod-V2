@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, QSlider, QLineEdit, QFrame
-from PyQt6.QtCore import pyqtSignal, Qt, QSize
+from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
 import qtawesome as qta
 from utils.utils import get_folder_name
@@ -25,7 +25,7 @@ class SampleCard(QWidget):
         self.sample = sample
         self.isRenaming = False
 
-        self.user.audio_player.signals.positionChanged.connect(self.updateSlider)
+        # self.user.audio_player.signals.positionChanged.connect(self.updateSlider)
 
         self.init_ui()
 
@@ -152,7 +152,7 @@ class SampleCard(QWidget):
 
         main_layout.addLayout(playback_layout)
 
-        self.updateSlider(self.sample.id, 0, int(self.sample.duration * 1000))
+        self.updateSlider()
         self.playback_slider.sliderMoved.connect(self.seekAudio)
     
 #------------------- Style général du SampleCard pour fond sombre
@@ -244,20 +244,25 @@ class SampleCard(QWidget):
         is_playing = self.user.audio_player.toggle_play(self.sample.id, self.sample.path, self.sample.duration)
         icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
         self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
+        if is_playing:
+            self.updateSlider()
 
     def seekAudio(self, value):
         """Déplace la position de lecture lorsque l'utilisateur interagit avec le slider"""
         new_position = int((value / 100) * (self.sample.duration * 1000))
-        is_playing = self.user.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
-        icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
-        self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
+        # is_playing = self.user.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
+        # icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
+        # self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
 
     def keyPressEvent(self, event):
         if self.isRenaming and event.key() == Qt.Key.Key_Escape:
             self.cancelRename()
 
-    def updateSlider(self, sample_id, position, duration):
+    def updateSlider(self):
         """Met à jour la position du slider, le temps affiché et détecte la fin de lecture"""
+        position = self.user.audio_player.get_position()
+        sample_id = self.user.audio_player.current_sample_id
+        duration = self.user.audio_player.current_sample_duration
         if sample_id == self.sample.id and duration > 0:
             self.playback_slider.setValue(int((position / duration) * 100))
             self.time_label.setText(f"{position//1000:02}:{position%1000//10:02}/{duration//1000:02}:{duration%1000//10:02}")
@@ -265,7 +270,9 @@ class SampleCard(QWidget):
             # Détection de la fin de lecture
             if position >= duration:
                 print(f"Lecture terminée pour le sample {sample_id}")
+                self.user.audio_player.clear_audio()
                 self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
                 self.playback_slider.setValue(int((0 / duration) * 100))
                 self.time_label.setText(f"{0:02}:{0:02}/{duration//1000:02}:{duration%1000//10:02}")
-    
+        if self.user.audio_player.is_playing:
+             QTimer.singleShot(100, self.updateSlider)

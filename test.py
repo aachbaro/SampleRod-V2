@@ -1,102 +1,92 @@
-import soundfile as sf
-import sounddevice as sd
-import numpy as np
+import pygame
+import time
+from PyQt6.QtWidgets import QApplication, QWidget, QSlider, QVBoxLayout
+from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal
+
 
 class AudioPlayer:
-    def __init__(self, filepath):
-        self.filepath = filepath
-        self.data, self.samplerate = sf.read(filepath)  # Lire le fichier audio
-        self.current_position = 0  # Position actuelle en échantillons
-        self.playing = False
-        self.paused = False
-        self.stream = None
+    def __init__(self):
+        pygame.mixer.init()
+        self.is_playing = False
+        self.is_paused = False
+        self.current_time = 0
+        self.sample_duration = 0
 
-    def _audio_callback(self, outdata, frames, time, status):
-        """ Callback pour lire les données audio """
-        if self.paused:  # Si on est en pause, on ne joue pas d'audio
-            outdata.fill(0)
-            return
+    def play_audio(self, file_path):
+        """ Démarre la lecture de l'audio """
+        pygame.mixer.music.load(file_path)  # Charge le fichier audio
+        pygame.mixer.music.play()  # Démarre la lecture
+        self.is_playing = True
+        self.is_paused = False
+        self.sample_duration = pygame.mixer.Sound(file_path).get_length()  # Durée du fichier
+        print(f"Lecture démarrée, durée : {self.sample_duration} secondes.")
+        
+    def set_position(self, position_seconds):
+        """ Change la position de lecture """
+        if self.is_playing:
+            pygame.mixer.music.set_pos(position_seconds)  # Change la position de lecture en secondes
+            print(f"Position changée à {position_seconds} secondes.")
 
-        start = self.current_position
-        end = start + frames
+    def get_position(self):
+        """ Obtient la position actuelle en secondes """
+        return pygame.mixer.music.get_pos() / 1000  # Renvoie la position en secondes
 
-        # S'assurer qu'on ne dépasse pas la fin des données
-        if end > len(self.data):
-            outdata[:len(self.data) - start] = self.data[start:]
-            outdata[len(self.data) - start:] = 0
-            self.current_position = len(self.data)
-            self.stop_audio()  # Arrêter la lecture quand on a atteint la fin
-        else:
-            outdata[:] = self.data[start:end]
-            self.current_position = end
 
-    def play_audio(self):
-        """ Démarre la lecture audio dans un flux """
-        if self.playing:
-            print("Audio déjà en lecture.")
-            return
+class AudioPlayerWidget(QWidget):
+    def __init__(self):
+        super().__init__()
 
-        self.playing = True
-        self.paused = False
-        self.stream = sd.OutputStream(samplerate=self.samplerate, channels=1, dtype='float32', callback=self._audio_callback)
-        self.stream.start()
-        print("Lecture audio démarrée.")
+        self.audio_player = AudioPlayer()
 
-    def pause_audio(self):
-        """ Met en pause la lecture audio """
-        if not self.playing or self.paused:
-            print("Audio déjà en pause ou non en lecture.")
-            return
-        self.paused = True
-        print("Lecture audio en pause.")
+        # Setup de l'interface graphique
+        self.setWindowTitle("Audio Player")
+        self.setGeometry(300, 300, 400, 100)
 
-    def resume_audio(self):
-        """ Reprend la lecture audio """
-        if not self.playing or not self.paused:
-            print("Audio déjà en lecture ou non démarré.")
-            return
-        self.paused = False
-        print("Reprise de la lecture audio.")
+        self.slider = QSlider(Qt.Orientation.Horizontal, self)
+        self.slider.setRange(0, 1000)
+        self.slider.setValue(0)
+        self.slider.setTickInterval(10)
+        self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
 
-    def stop_audio(self):
-        """ Arrête la lecture audio """
-        if not self.playing:
-            print("Audio déjà arrêté.")
-            return
-        self.playing = False
-        self.paused = False
-        if self.stream is not None:
-            self.stream.stop()
-        print("Lecture audio arrêtée.")
+        layout = QVBoxLayout()
+        layout.addWidget(self.slider)
+        self.setLayout(layout)
 
-    def set_position(self, position_ms):
-        """ Change la position de lecture en millisecondes """
-        position_samples = int(position_ms * self.samplerate / 1000)  # Convertir la position en échantillons
-        if 0 <= position_samples < len(self.data):
-            self.current_position = position_samples
-            print(f"Position de lecture changée à {position_ms} ms.")
-        else:
-            print("Position en dehors des limites du fichier audio.")
+        # Connexion du slider à la méthode set_position
+        self.slider.valueChanged.connect(self.slider_changed)
 
-# Exemple d'utilisation :
-player = AudioPlayer('exemple.wav')
+    def play_sample(self, file_path):
+        """ Demande la lecture d'un sample """
+        self.audio_player.play_audio(file_path)
 
-# Démarre la lecture
-player.play_audio()
+    def slider_changed(self):
+        """ Met à jour la position de la lecture lorsque le slider est déplacé """
+        position = self.slider.value() / 1000  # Convertir la position du slider en secondes
+        self.audio_player.set_position(position)
 
-# Met en pause après 5 secondes
-import time
-time.sleep(5)
-player.pause_audio()
+    def update_slider_position(self):
+        """ Met à jour la position du slider pendant la lecture """
+        if self.audio_player.is_playing:
+            position = self.audio_player.get_position()
+            slider_value = int((position / self.audio_player.sample_duration) * 1000)
+            self.slider.setValue(slider_value)
 
-# Reprend après 2 secondes
-time.sleep(2)
-player.resume_audio()
 
-# Change la position après 3 secondes
-time.sleep(3)
-player.set_position(5000)  # Se mettre à 5 secondes (5000 ms)
+# Exemple d'utilisation
+if __name__ == "__main__":
+    app = QApplication([])
+    widget = AudioPlayerWidget()
+    
+    # Démarre la lecture d'un fichier audio
+    widget.play_sample("/home/aachbaro/sgoinfre/sample2/SMPL_2025-03-25_19h00.16.wav")
 
-# Arrête après 3 secondes
-time.sleep(3)
-player.stop_audio()
+    # Mise à jour périodique du slider pour suivre la position de lecture
+    def update_position():
+        widget.update_slider_position()
+        QTimer.singleShot(100, update_position)  # Mise à jour toutes les 100ms
+
+    update_position()
+
+    widget.show()
+    app.exec()
