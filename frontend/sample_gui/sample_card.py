@@ -250,9 +250,11 @@ class SampleCard(QWidget):
     def seekAudio(self, value):
         """Déplace la position de lecture lorsque l'utilisateur interagit avec le slider"""
         new_position = int((value / 100) * (self.sample.duration * 1000))
-        # is_playing = self.user.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
-        # icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
-        # self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
+        is_playing = self.user.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
+        icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
+        self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
+        if is_playing:
+            self.updateSlider()
 
     def keyPressEvent(self, event):
         if self.isRenaming and event.key() == Qt.Key.Key_Escape:
@@ -260,19 +262,21 @@ class SampleCard(QWidget):
 
     def updateSlider(self):
         """Met à jour la position du slider, le temps affiché et détecte la fin de lecture"""
-        position = self.user.audio_player.get_position()
+        position = int(self.user.audio_player.get_position())
         sample_id = self.user.audio_player.current_sample_id
-        duration = self.user.audio_player.current_sample_duration
-        if sample_id == self.sample.id and duration > 0:
+        duration = int(self.user.audio_player.current_sample_duration * 1000)
+        if sample_id == self.sample.id:
             self.playback_slider.setValue(int((position / duration) * 100))
-            self.time_label.setText(f"{position//1000:02}:{position%1000//10:02}/{duration//1000:02}:{duration%1000//10:02}")
-
-            # Détection de la fin de lecture
-            if position >= duration:
-                print(f"Lecture terminée pour le sample {sample_id}")
-                self.user.audio_player.clear_audio()
-                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
-                self.playback_slider.setValue(int((0 / duration) * 100))
-                self.time_label.setText(f"{0:02}:{0:02}/{duration//1000:02}:{duration%1000//10:02}")
-        if self.user.audio_player.is_playing:
+            self.time_label.setText(f"{format_time(position)} / {format_time(int(self.sample.duration * 1000))}")
+        else:
+            self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+            self.playback_slider.setValue(int((0 / duration) * 100))
+            self.time_label.setText(f"{format_time(0)} / {format_time(int(self.sample.duration * 1000))}")
+        if self.user.audio_player.is_playing and self.sample.id == sample_id:
              QTimer.singleShot(100, self.updateSlider)
+
+def format_time(milliseconds):
+    minutes = (milliseconds // 1000) // 60
+    seconds = (milliseconds // 1000) % 60
+
+    return f"{minutes:02}:{seconds:02}"

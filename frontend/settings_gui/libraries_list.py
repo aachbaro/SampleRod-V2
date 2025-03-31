@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, 
     QHBoxLayout, QFrame, QScrollArea, QGroupBox, QComboBox, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread
 from PyQt6.QtGui import QIcon
 from backend.models.SampleLibrary import SampleBank
 from backend.models.User import User
@@ -75,7 +75,7 @@ class SettingsLibrariesList(QWidget):
     def selectDirectory(self):
         """ Ouvrir un dialogue pour choisir un répertoire """
         try: 
-            directory = QFileDialog.getExistingDirectory(self, "Select Folder")
+            directory = QFileDialog.getExistingDirectory(self, "Select Folder", options=QFileDialog.Option.DontUseNativeDialog)
             if directory:
                 new_library = SampleBank(directory)
                 if  new_library:
