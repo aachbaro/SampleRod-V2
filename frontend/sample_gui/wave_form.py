@@ -1,15 +1,18 @@
 from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout,
                              QVBoxLayout, QSpacerItem, QSizePolicy, QFrame)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QIcon
 import qtawesome as qta
 import librosa
+import pyqtgraph as pg
+import numpy as np
+
 
 class WaveformWidget(QWidget):
-    def __init__(self, parent=None, audio_file_path=None):
-        super().__init__(parent)
+    def __init__(self, audio_file_path=None):
+        super().__init__()
         self.audio_file_path = audio_file_path
-        self.init_ui(audio_file_path)
+        self.init_ui()
 
     def init_ui(self):
         self.load_audio_data(self.audio_file_path)
@@ -19,6 +22,10 @@ class WaveformWidget(QWidget):
             print(f"Données de forme d'onde : {self.waveform_data[:10]}")
             print(f"Fréquence d'échantillonnage : {self.sample_rate} Hz")
             print(f"Durée : {self.duration:.2f} secondes")
+
+            # Créer un tableau vide
+            self.empty_waveform = np.zeros_like(self.waveform_data)
+            self.display_empty = False
 
 
         main_layout = QVBoxLayout(self)
@@ -30,6 +37,21 @@ class WaveformWidget(QWidget):
         self.waveform_frame.setFrameShadow(QFrame.Shadow.Sunken)
         self.waveform_frame.setStyleSheet("background-color: #333;")  # Couleur de fond sombre
         main_layout.addWidget(self.waveform_frame)
+
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('w')  # Arrière-plan blanc
+        main_layout.addWidget(self.plot_widget)
+
+        if self.waveform_data is not None:
+            self.plot_item = self.plot_widget.plot(self.waveform_data) # stocke l'objet PlotItem
+            # Définir la plage de l'axe X
+            total_samples = int(self.duration * self.sample_rate)
+            self.plot_widget.getViewBox().setXRange(0, total_samples)
+
+            # Timer pour réafficher la forme d'onde
+            # self.timer = QTimer(self)
+            # self.timer.timeout.connect(self.update_plot)
+            # self.timer.start(100)
 
         # Layout pour les boutons de gestion
         button_layout = QHBoxLayout()
@@ -91,3 +113,13 @@ class WaveformWidget(QWidget):
             self.waveform_data = None
             self.sample_rate = None
             self.duration = None
+    
+    def update_plot(self):
+        """Met à jour le tracé avec les données de forme d'onde."""
+        print("updplot")
+        if self.waveform_data is not None:
+            if self.display_empty:
+                self.plot_item.setData(self.empty_waveform)
+            else:
+                self.plot_item.setData(self.waveform_data)
+            self.display_empty = not self.display_empty

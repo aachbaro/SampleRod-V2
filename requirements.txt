@@ -5,3 +5,4 @@ soundcard
 pygame
 qtawesome
 librosa
+pyqtgraph
