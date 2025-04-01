@@ -10,6 +10,7 @@ import os
 from backend.models.User import User
 from backend.models.sample import Sample
 from frontend.custom_widgets import CustomSlider
+from frontend.sample_gui.wave_form import WaveformWidget
 
 
 class SampleCard(QWidget):
@@ -18,6 +19,7 @@ class SampleCard(QWidget):
     renameSample = pyqtSignal(object, str)   # émet l'objet sample et le nouveau nom
     playSample = pyqtSignal(object)          # émet l'objet sample à jouer
     sampleMoved = pyqtSignal(int, str)
+    
 
     def __init__(self, sample:Sample, user: User, parent=None):
         """
@@ -28,6 +30,9 @@ class SampleCard(QWidget):
         self.user = user
         self.sample = sample
         self.isRenaming = False
+        self.showWaveform = False
+        self.wave_edition_widget = None
+
 
         # self.user.audio_player.signals.positionChanged.connect(self.updateSlider)
 
@@ -94,13 +99,6 @@ class SampleCard(QWidget):
 # ------------------------- Détails : Dossier, durée, date de création
         details_layout = QHBoxLayout()
 
-        # Ajouter un espace entre les labels
-        # self.directory_label = QLabel(f"{SampleCard.get_folder_name(self.sample.path)}/")
-        # self.directory_label.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")  # Ajouter des marges verticales
-        # self.directory_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)  # Aligner verticalement
-        # self.directory_label.setFixedHeight(30)
-        # details_layout.addWidget(self.directory_label)
-
         # library selector
         self.change_dir_combobox = QComboBox()
         self.change_dir_combobox.addItem(f"{SampleCard.get_folder_name(self.sample.path)}/")
@@ -145,6 +143,7 @@ class SampleCard(QWidget):
         self.waveform_button.setIconSize(QSize(26, 26))
         self.waveform_button.setFixedSize(30, 30)  # Augmenter la taille du bouton
         details_layout.addWidget(self.waveform_button)
+        self.waveform_button.clicked.connect(self.toggleWaveform)
 
         main_layout.addLayout(details_layout)
 
@@ -173,7 +172,13 @@ class SampleCard(QWidget):
 
         self.updateSlider()
         self.playback_slider.sliderMoved.connect(self.seekAudio)
-    
+
+# --------------------------- WaveForm
+        self.waveform_layout = QHBoxLayout()
+
+
+        main_layout.addLayout(self.waveform_layout)
+
 #------------------- Style général du SampleCard pour fond sombre
         self.setStyleSheet("""
             QWidget {
@@ -252,6 +257,31 @@ class SampleCard(QWidget):
 
         self.name_label.setVisible(True)
         self.rename_button.setVisible(True)
+
+    def toggleWaveform(self):
+        self.showWaveform = not self.showWaveform
+
+        if self.showWaveform:
+            # Masquer les widgets de lecture
+            self.play_button.setVisible(False)
+            self.playback_slider.setVisible(False)
+            self.time_label.setVisible(False)
+
+            # Ajouter le widget de forme d'onde
+            self.wave_edition_widget = WaveformWidget(self.sample.path)
+            self.waveform_layout.addWidget(self.wave_edition_widget)
+        else:
+            # Afficher les widgets de lecture
+            self.play_button.setVisible(True)
+            self.playback_slider.setVisible(True)
+            self.time_label.setVisible(True)
+
+            # Supprimer le widget de forme d'onde
+            if self.wave_edition_widget:
+                self.waveform_layout.removeWidget(self.wave_edition_widget)
+                self.wave_edition_widget.deleteLater()
+                self.wave_edition_widget = None
+            
 
     def confirmDelete(self):
         """Appelle la méthode delete_sample et émet le signal."""
