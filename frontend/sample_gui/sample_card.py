@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, QSlider, QLineEdit, QFrame
+from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, QSlider, QLineEdit, QFrame, QMessageBox
 from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
 import qtawesome as qta
@@ -225,7 +225,6 @@ class SampleCard(QWidget):
         new_name = self.rename_input.text().strip()
         if new_name and new_name != self.get_sample_name():
             self.renameSample.emit(self.sample.id, new_name)
-            self.name_label.setText(new_name)
         self.isRenaming = False
 
         self.rename_input.setVisible(False)
@@ -274,6 +273,21 @@ class SampleCard(QWidget):
             self.time_label.setText(f"{format_time(0)} / {format_time(int(self.sample.duration * 1000))}")
         if self.user.audio_player.is_playing and self.sample.id == sample_id:
              QTimer.singleShot(100, self.updateSlider)
+
+    def onRenameSuccess(self, sample_id, new_name):
+        if self.sample.id == sample_id:
+            self.name_label.setText(new_name)  # Met à jour l'affichage
+            self.sample.name = new_name  # Mets à jour l'objet
+            self.cancelRename()  # Cache les champs de renommage
+
+    def onRenameError(self, sample_id, error_msg):
+        if self.sample.id == sample_id:
+            QMessageBox.critical(self, "Erreur de renommage", f"Impossible de renommer: {error_msg}")
+    
+    def refresh_display(self):
+        """Met à jour l'affichage du nom du sample."""
+        self.name_label.setText(self.sample.name)
+
 
 def format_time(milliseconds):
     minutes = (milliseconds // 1000) // 60

@@ -111,10 +111,10 @@ class Recorder:
                     print("recorder: record stopped from bac_rec_thread")
                     record_started = False
                     sound_started = False
-                    # if self.retro_time_selected > 0:
-                    #     pre_frames = pre_frames[-self.retro_time_selected:]
-                    # else: 
-                    #     pre_frames = []
+                    if self.retro_time_selected > 0:
+                        pre_frames = pre_frames[-self.retro_time_selected:]
+                    else: 
+                        pre_frames = []
                     self.last_audio_recorded_frames = pre_frames + frames
                     self.last_audio_recorded_name = self.create_file_name()
                     frames.clear()

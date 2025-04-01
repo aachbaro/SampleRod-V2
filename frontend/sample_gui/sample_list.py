@@ -8,9 +8,8 @@ from backend.models.User import User
 
 class SampleListWidget(QWidget):
     # Signal pour notifier des actions sur un sample, à connecter aux fonctions de ton store/backend
-    sampleDeleted = pyqtSignal(object)
-    sampleRenamed = pyqtSignal(object, str)
-    samplePlayed = pyqtSignal(object)
+    sampleRenameSuccess = pyqtSignal(int, str)  # ID et nouveau nom
+    sampleRenameError = pyqtSignal(int, str)
 
     def __init__(self, samples, user: User, parent=None):
         """
@@ -50,8 +49,8 @@ class SampleListWidget(QWidget):
                     card = SampleCard(sample, self.user)
                     card.deleteSample.connect(self.delete_sample)
                     card.renameSample.connect(self.rename_sample)
-                    card.renameSample.connect(self.sampleRenamed.emit)
-                    card.playSample.connect(self.samplePlayed.emit)
+                    self.sampleRenameSuccess.connect(card.onRenameSuccess)
+                    self.sampleRenameError.connect(card.onRenameError)
 
                     self.content_layout.addWidget(card)
 
@@ -111,37 +110,50 @@ class SampleListWidget(QWidget):
             # Trouver le sample dans la base de données
             sample = session.query(Sample).filter(Sample.id == sample_id).first()
 
-            if sample:
-                old_path = sample.path
-                dir_name = os.path.dirname(old_path)  # Répertoire du fichier
-                file_ext = os.path.splitext(old_path)[1]  # Extension du fichier
-                new_path = os.path.join(dir_name, new_name + file_ext)  # Nouveau chemin
+            if not sample:
+                print(f"Sample introuvable en base : {sample_id}")
+                return
 
-                if os.path.exists(old_path):
-                    try:
-                        os.rename(old_path, new_path)  # Renommer le fichier
-                        print(f"Fichier renommé : {old_path} -> {new_path}")
+            old_path = sample.path
 
-                        # Mettre à jour le sample dans la base de données
-                        sample.name = new_name
-                        sample.path = new_path
-                        session.commit()
-                    except Exception as e:
-                        print(f"Erreur lors du renommage du fichier : {str(e)}")
-                else:
-                    print(f"Fichier introuvable : {old_path}. Mise à jour uniquement en base de données.")
+            if not old_path or not os.path.exists(old_path):
+                print(f"Fichier introuvable : {old_path}. Mise à jour uniquement en base de données.")
+                sample.name = new_name
+                session.commit()
+                self.update_sample_card(sample_id, new_name)
+                return
 
-                    # Mettre à jour seulement en base de données
-                    sample.name = new_name
-                    session.commit()
+            dir_name = os.path.dirname(old_path)  # Répertoire du fichier
+            file_ext = os.path.splitext(old_path)[1]  # Extension du fichier
+            new_path = os.path.join(dir_name, new_name + file_ext)  # Nouveau chemin
 
-                # Mettre à jour l'affichage du SampleCard correspondant
-                for i in range(self.content_layout.count()):
-                    item = self.content_layout.itemAt(i)
-                    if item and item.widget():
-                        widget = item.widget()
-                        if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
-                            break  # Arrêter après mise à jour du bon widget
+            if os.path.exists(new_path):
+                print(f"Erreur : un fichier avec ce nom existe déjà -> {new_path}")
+                return
+
+            try:
+                os.rename(old_path, new_path)  # Renommer le fichier
+                print(f"Fichier renommé : {old_path} -> {new_path}")
+
+                # Mettre à jour le sample dans la base de données
+                sample.name = new_name
+                sample.path = new_path
+                session.commit()
+            except Exception as e:
+                print(f"Erreur lors du renommage du fichier : {str(e)}")
+            finally:
+                self.update_sample_card(sample_id, new_name)
 
         finally:
             session.close()
+
+    def update_sample_card(self, sample_id, new_name):
+        """Met à jour le SampleCard correspondant à l'ID donné."""
+        for i in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
+                    widget.sample.name = new_name  # Mise à jour du modèle de données
+                    widget.refresh_display()  # Ajoute cette ligne si une méthode similaire existe
+                    break
