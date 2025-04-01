@@ -5,11 +5,13 @@ from backend.models.sample import Sample
 from backend.db import Base, SessionLocal
 import os
 from backend.models.User import User
+import shutil
 
 class SampleListWidget(QWidget):
     # Signal pour notifier des actions sur un sample, à connecter aux fonctions de ton store/backend
     sampleRenameSuccess = pyqtSignal(int, str)  # ID et nouveau nom
     sampleRenameError = pyqtSignal(int, str)
+    sampleMoved = pyqtSignal(int, str)
 
     def __init__(self, samples, user: User, parent=None):
         """
@@ -49,8 +51,10 @@ class SampleListWidget(QWidget):
                     card = SampleCard(sample, self.user)
                     card.deleteSample.connect(self.delete_sample)
                     card.renameSample.connect(self.rename_sample)
+                    card.sampleMoved.connect(self.move_sample)
                     self.sampleRenameSuccess.connect(card.onRenameSuccess)
                     self.sampleRenameError.connect(card.onRenameError)
+                    self.sampleMoved.connect(card.onMoveSuccess)
 
                     self.content_layout.addWidget(card)
 
@@ -147,6 +151,52 @@ class SampleListWidget(QWidget):
         finally:
             session.close()
 
+    def move_sample(self, sample_id, new_dir):
+        """Déplace le fichier associé à un sample et met à jour l'interface et la base de données."""
+        print(f"frontend: sample_list: move sample {sample_id} -> {new_dir}")
+
+        try:
+            session = SessionLocal()
+            session.expire_on_commit = False
+
+            sample = session.query(Sample).filter(Sample.id == sample_id).first()
+
+            if not sample:
+                print(f"Sample introuvable en base : {sample_id}")
+                return
+
+            old_path = sample.path
+
+            if not old_path or not os.path.exists(old_path):
+                print(f"Fichier introuvable : {old_path}. Mise à jour uniquement en base de données.")
+                sample.path = os.path.join(new_dir, os.path.basename(old_path))
+                session.commit()
+                self.update_sample_card_move(sample_id, new_dir)
+                return
+
+            new_path = os.path.join(new_dir, os.path.basename(old_path))
+            print("new_dir:", new_dir)
+            print("basename etc..:",os.path.basename(old_path))
+            print("new_path: ", new_path)
+
+            if os.path.exists(new_path):
+                print(f"Erreur : un fichier avec ce nom existe déjà dans le répertoire de destination -> {new_path}")
+                return
+
+            try:
+                shutil.move(old_path, new_path)
+                print(f"Fichier déplacé : {old_path} -> {new_path}")
+
+                sample.path = new_path
+                session.commit()
+            except Exception as e:
+                print(f"Erreur lors du déplacement du fichier : {str(e)}")
+            finally:
+                self.update_sample_card_move(sample_id, new_dir)
+
+        finally:
+            session.close()
+
     def update_sample_card(self, sample_id, new_name):
         """Met à jour le SampleCard correspondant à l'ID donné."""
         for i in range(self.content_layout.count()):
@@ -156,4 +206,15 @@ class SampleListWidget(QWidget):
                 if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
                     widget.sample.name = new_name  # Mise à jour du modèle de données
                     widget.refresh_display()  # Ajoute cette ligne si une méthode similaire existe
+                    break
+
+    def update_sample_card_move(self, sample_id, new_dir):
+        """Met à jour le SampleCard correspondant à l'ID donné après le déplacement."""
+        for i in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
+                    widget.sample.path = os.path.join(new_dir, os.path.basename(widget.sample.path))
+                    widget.refresh_display()
                     break

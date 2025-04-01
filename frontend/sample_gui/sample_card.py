@@ -1,4 +1,6 @@
-from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, QSlider, QLineEdit, QFrame, QMessageBox
+from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton,
+                             QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, 
+                             QSlider, QLineEdit, QFrame, QMessageBox, QComboBox)
 from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon
 import qtawesome as qta
@@ -9,11 +11,13 @@ from backend.models.User import User
 from backend.models.sample import Sample
 from frontend.custom_widgets import CustomSlider
 
+
 class SampleCard(QWidget):
     # Signaux pour communiquer avec la liste
     deleteSample = pyqtSignal(object)      # émet l'objet sample à supprimer
     renameSample = pyqtSignal(object, str)   # émet l'objet sample et le nouveau nom
     playSample = pyqtSignal(object)          # émet l'objet sample à jouer
+    sampleMoved = pyqtSignal(int, str)
 
     def __init__(self, sample:Sample, user: User, parent=None):
         """
@@ -91,11 +95,26 @@ class SampleCard(QWidget):
         details_layout = QHBoxLayout()
 
         # Ajouter un espace entre les labels
-        self.directory_label = QLabel(f"{SampleCard.get_folder_name(self.sample.path)}/")
-        self.directory_label.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")  # Ajouter des marges verticales
-        self.directory_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)  # Aligner verticalement
-        self.directory_label.setFixedHeight(30)
-        details_layout.addWidget(self.directory_label)
+        # self.directory_label = QLabel(f"{SampleCard.get_folder_name(self.sample.path)}/")
+        # self.directory_label.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")  # Ajouter des marges verticales
+        # self.directory_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)  # Aligner verticalement
+        # self.directory_label.setFixedHeight(30)
+        # details_layout.addWidget(self.directory_label)
+
+        # library selector
+        self.change_dir_combobox = QComboBox()
+        self.change_dir_combobox.addItem(f"{SampleCard.get_folder_name(self.sample.path)}/")
+        for library in sorted(self.user.libraries, key=lambda lib: lib.position):
+            library_dir_name = os.path.basename(library.path)
+            # self.change_dir_combobox.addItem(library_dir_name + "/")
+            # if library_dir_name != SampleCard.get_folder_name(self.sample.path):
+            self.change_dir_combobox.addItem(library_dir_name + "/")
+        self.change_dir_combobox.setFixedSize(80, 30)
+        self.change_dir_combobox.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")
+        
+        self.change_dir_combobox.currentIndexChanged.connect(self.move_sample)
+        
+        details_layout.addWidget(self.change_dir_combobox)
 
         spacer1 = QSpacerItem(20, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
         details_layout.addItem(spacer1)
@@ -287,6 +306,17 @@ class SampleCard(QWidget):
     def refresh_display(self):
         """Met à jour l'affichage du nom du sample."""
         self.name_label.setText(self.sample.name)
+    
+    def move_sample(self, index):
+        new_dir = self.user.libraries[index - 1].path  # -1 car index 0 est le dossier actuel
+        print(new_dir)
+        print(self.sample.path)
+        self.sampleMoved.emit(self.sample.id, new_dir)
+
+    def onMoveSuccess(self, sample_id, new_dir):
+        if self.sample.id == sample_id:
+            self.sample.path = os.path.join(new_dir, os.path.basename(self.sample.path))
+            self.refresh_display()
 
 
 def format_time(milliseconds):
