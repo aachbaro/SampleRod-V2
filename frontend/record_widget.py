@@ -19,8 +19,9 @@ class RecordWidgetWindow(QMainWindow):
         super().__init__()
 
 # ------------------------------------------------------------------------ Geometrie de la fenetre
+        self.scale = 1.3
         self.setWindowTitle("Record Widget")
-        self.setGeometry(150, 150, 80, 40)
+        self.setGeometry(int(150 * self.scale), int(150 * self.scale), int(80 * self.scale), int(40 * self.scale))
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)              # Supprime la bordure de la fenêtre
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)      # Transparence de la fenêtre
         self.setStyleSheet("background: transparent;")                     # Fond transparent
@@ -41,10 +42,10 @@ class RecordWidgetWindow(QMainWindow):
         self.timer.start(1000)
 # ------------------------------------------------------------------------ Container a boutons
 
-        self.base_geometry = QRect(0, 0, 26, 26)
+        self.base_geometry = QRect(0, 0, int(26 * self.scale), int(26 * self.scale))
         self.button_container.setGeometry(self.base_geometry)
         self.button_container.setStyleSheet(
-            "background: transparent; "
+            "background: black; "
             "opacity: 10%;"
             "border: 1px solid white; "
             "border-radius: 4px;"
@@ -53,12 +54,12 @@ class RecordWidgetWindow(QMainWindow):
 
         # ----- Bouton d'enregistrement placé à l'intérieur du conteneur
 
-        self.recordButton.setGeometry(4, 4, 18, 18)
+        self.recordButton.setGeometry(int(4 * self.scale), int(4 * self.scale), int(18 * self.scale), int(18 * self.scale))
         self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
-        self.recordButton.setIconSize(QSize(14, 14))
+        self.recordButton.setIconSize(QSize(int(14 * self.scale), int(14 * self.scale)))
         self.recordButton.setCursor(Qt.CursorShape.PointingHandCursor)
         self.recordButton.setStyleSheet(
-            "background: transparent; "
+            "background: black; "
             "color: white; "
             "border: 1px solid white; "
             "border-radius: 8px;"
@@ -67,11 +68,11 @@ class RecordWidgetWindow(QMainWindow):
 
         # ----- Indicateur de repertoire
 
-        self.library_indicator.setGeometry(26, 0, 26, 26)
-        self.library_indicator.setPixmap(qta.icon('fa5s.folder', color='white').pixmap(20, 23))
+        self.library_indicator.setGeometry(int(26 * self.scale), int(0 * self.scale), int(26 * self.scale), int(26 * self.scale))
+        self.library_indicator.setPixmap(qta.icon('fa5s.folder', color='white').pixmap(int(20 * self.scale), int(23 * self.scale)))
         self.library_indicator.setCursor(Qt.CursorShape.SplitVCursor)
 
-        self.library_number_label.setGeometry(3, 2, 25, 25)  # Positionner le label à l'intérieur du `library_indicator`
+        self.library_number_label.setGeometry(int(3 * self.scale), int(2 * self.scale), int(25 * self.scale), int(25 * self.scale))  # Positionner le label à l'intérieur du `library_indicator`
         self.library_number_label.setStyleSheet(
             "background: transparent; "
             "color: black; "
@@ -95,9 +96,9 @@ class RecordWidgetWindow(QMainWindow):
 # ------------------------------------------------------------------------ Zone draggable
 
         self.drag_area = QLabel(self)
-        self.drag_areaBase_geometry = QRect(30, 0, 10, 26)
-        self.drag_area.setGeometry(30, 0, 10, 26)
-        self.drag_area.setPixmap(qta.icon('fa5s.ellipsis-v', color='white').pixmap(10, 20))
+        self.drag_areaBase_geometry = QRect(int(30 * self.scale), int(0 * self.scale), int(10 * self.scale), int(26 * self.scale))
+        self.drag_area.setGeometry(int(30 * self.scale), int(0 * self.scale), int(10 * self.scale), int(26 * self.scale))
+        self.drag_area.setPixmap(qta.icon('fa5s.ellipsis-v', color='white').pixmap(int(10 * self.scale), int(20 * self.scale)))
         self.drag_area.setCursor(Qt.CursorShape.SizeAllCursor)
         self.drag_area.setStyleSheet(
             "background: transparent;"
@@ -107,7 +108,7 @@ class RecordWidgetWindow(QMainWindow):
         self.drag_offset = QPoint(0, 0)
 
 # ------------------------------------------------------------------------ Indicateur de nom
-        self.library_name.setGeometry(0, 26, 100, 10)  # Définir la géométrie correctement
+        self.library_name.setGeometry(int(0 * self.scale), int(26 * self.scale), int(100 * self.scale), int(10 * self.scale))  # Définir la géométrie correctement
         if (self.user.libraries):
             self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
         else:
@@ -127,7 +128,7 @@ class RecordWidgetWindow(QMainWindow):
 
         # ------------------------------------------------ lIBRARY INDICATOR
 
-        elif source == self.library_indicator:
+        if source == self.library_indicator:
             if event.type() == QEvent.Type.Wheel:
                 # event est déjà un QWheelEvent, pas besoin de le recréer
                 delta = event.angleDelta().y()
@@ -148,7 +149,7 @@ class RecordWidgetWindow(QMainWindow):
 
         # ----------------------------------------------- RecordButton
 
-        elif source == self.recordButton:
+        if source == self.recordButton:
             if event.type() == QEvent.Type.MouseButtonPress:
                 print(self.user.recorder.is_recording)
                 last_record_data = None
@@ -198,11 +199,11 @@ class RecordWidgetWindow(QMainWindow):
             end_geom = QRect(
                 self.base_geometry.x(),
                 self.base_geometry.y(),
-                self.base_geometry.width() + 26,
+                self.base_geometry.width() + int(26  * self.scale),
                 self.base_geometry.height()
             )
             end_geomDragZone = QRect(
-                start_geomDragZone.x() + 26,
+                start_geomDragZone.x() + int(26 * self.scale),
                 start_geomDragZone.y(),
                 start_geomDragZone.width(),
                 start_geomDragZone.height()
@@ -243,7 +244,7 @@ class RecordWidgetWindow(QMainWindow):
                 self.updateRecordButtonDisplay()
             if self.user.settings.retro_recording_enabled:
                 self.button_container.setStyleSheet(
-                    "background: transparent; "
+                    "background: black; "
                     "border: 1px solid #40E0D0; "
                     "border-radius: 4px;"
                 )
@@ -251,7 +252,7 @@ class RecordWidgetWindow(QMainWindow):
                 self.recordButton.setText("")  # Supprime le texte
                 self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
                 self.button_container.setStyleSheet(
-                    "background: transparent; "
+                    "background: black; "
                     "border: 1px solid white; "
                     "border-radius: 4px;"
                 )
@@ -299,7 +300,7 @@ class RecordWidgetWindow(QMainWindow):
                 self.recordButton.setIcon(QIcon())
                 self.recordButton.setText(str(self.retro_time_selected))
                 self.recordButton.setStyleSheet(
-                    "background: transparent; "
+                    "background: black; "
                     "color: red; "
                     "border: 1px solid red; "
                     "border-radius: 8px;"
@@ -311,7 +312,7 @@ class RecordWidgetWindow(QMainWindow):
                 self.recordButton.setIcon(QIcon())
                 self.recordButton.setText(str(self.retro_time_selected))
                 self.recordButton.setStyleSheet(
-                    "background: transparent; "
+                    "background: black; "
                     "color: white; "
                     "border: 1px solid white; "
                     "border-radius: 8px;"
