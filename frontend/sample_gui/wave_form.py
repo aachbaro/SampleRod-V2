@@ -43,10 +43,20 @@ class WaveformWidget(QWidget):
         main_layout.addWidget(self.plot_widget)
 
         if self.waveform_data is not None:
-            self.plot_item = self.plot_widget.plot(self.waveform_data) # stocke l'objet PlotItem
+            self.plot_item = self.plot_widget.plot(self.waveform_data)  # stocke l'objet PlotItem
             # Définir la plage de l'axe X
             total_samples = int(self.duration * self.sample_rate)
             self.plot_widget.getViewBox().setXRange(0, total_samples)
+
+            # Masquer les axes et la grille
+            self.plot_widget.hideAxis('bottom')
+            self.plot_widget.hideAxis('left')
+            self.plot_widget.showGrid(x=False, y=False)
+
+            # Supprimer les marges
+            self.plot_widget.setContentsMargins(0, 0, 0, 0)
+            self.plot_widget.setYRange(min(self.waveform_data), max(self.waveform_data))
+            self.plot_widget.getViewBox().setAutoVisible(y=True)
 
             # Timer pour réafficher la forme d'onde
             # self.timer = QTimer(self)
@@ -100,8 +110,9 @@ class WaveformWidget(QWidget):
             y, sr = librosa.load(audio_path)
 
             # Stocker les données utiles dans des attributs self
-            self.waveform_data = y
+            self.waveform_data = y[:20]
             self.sample_rate = sr
+            print("len wfd", len(self.waveform_data))
             self.duration = librosa.get_duration(y=y, sr=sr)
 
             print(f"Fichier audio chargé : {audio_path}")
