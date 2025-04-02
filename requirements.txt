@@ -6,3 +6,4 @@ pygame
 qtawesome
 librosa
 pyqtgraph
+sounddevice
