@@ -31,3 +31,5 @@ Thumbs.db
 
 # Ignorer les fichiers de cache de l'application
 .cache/
+
+sample.db

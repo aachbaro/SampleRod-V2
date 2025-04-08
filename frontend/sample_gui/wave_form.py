@@ -28,7 +28,10 @@ class WaveformWidget(QWidget):
         self.audio_file_path = audio_file_path
         self.stream = None
         self.current_time = 0
+        self.play_start = 0
+        self.play_end = 0
         self.is_playing = False
+        self.start_marker = None
         self.init_ui()
 
     def init_ui(self):
@@ -53,12 +56,29 @@ class WaveformWidget(QWidget):
 
         # Boutons de zoom
         btn_layout = QHBoxLayout()
+        # BOUTON PLAY
         self.play_button = QPushButton()
         self.play_button.setFixedSize(30, 30)
         self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
         self.play_button.setToolTip("Lire")
         self.play_button.clicked.connect(self.toggle_playback)
         btn_layout.addWidget(self.play_button)
+
+        # BOUTON PAUSE
+        self.pause_button = QPushButton()
+        self.pause_button.setFixedSize(30, 30)
+        self.pause_button.setIcon(qta.icon('fa5s.pause', color='lightgray'))
+        self.pause_button.setToolTip("Pause")
+        self.pause_button.clicked.connect(self.pause_audio)
+        btn_layout.addWidget(self.pause_button)
+
+        # BOUTON STOP
+        self.stop_button = QPushButton()
+        self.stop_button.setFixedSize(30, 30)
+        self.stop_button.setIcon(qta.icon('fa5s.stop', color='lightgray'))
+        self.stop_button.setToolTip("Stop")
+        self.stop_button.clicked.connect(self.stop_and_reset)
+        btn_layout.addWidget(self.stop_button)
 
         self.layout.addLayout(btn_layout)
 
@@ -101,6 +121,16 @@ class WaveformWidget(QWidget):
         self.plot_widget.getViewBox().wheelEvent = self.zoom_or_pan
         self.plot_widget.scene().sigMouseClicked.connect(self.on_waveform_click)
 
+        # Ajoute la zone de sélection (par défaut, rien de sélectionné)
+        self.selection_region = pg.LinearRegionItem([1, 2])  # Intervalle de départ par défaut
+        self.selection_region.setZValue(10)  # Au-dessus des autres éléments
+        self.selection_region.setBrush(pg.mkBrush(255, 255, 255, 40))  # Couleur semi-transparente
+        self.selection_region.setMovable(True)
+        self.selection_region.setBounds([0, self.duration])  # Limiter aux bords du son
+        self.plot_widget.addItem(self.selection_region)
+
+        self.selection_region.sigRegionChanged.connect(self.on_selection_changed)
+
     def zoom_or_pan(self, event, **kwargs):  # <-- Capture les arguments non attendus
         """Gère le zoom normal et le déplacement latéral avec Shift."""
         vb = self.plot_widget.getViewBox()
@@ -114,27 +144,31 @@ class WaveformWidget(QWidget):
             pg.ViewBox.wheelEvent(vb, event)
 
     def on_waveform_click(self, event):
-        """Affiche la position dans l'audio lorsque la forme d'onde est cliquée."""
+        """Place la tête de lecture à la position cliquée et met à jour la lecture."""
         pos = event.scenePos()
         data_pos = self.plot_widget.getViewBox().mapSceneToView(pos)
         audio_position = data_pos.x()
 
-        # Convertir la position en un index dans waveform_data
-        sample_index = int(audio_position * self.sample_rate)  # Position en échantillons
-        sample_value = self.waveform_data[sample_index] if 0 <= sample_index < len(self.waveform_data) else None
+        # Clamp la valeur pour ne pas sortir du signal
+        audio_position = max(0, min(audio_position, self.duration))
+        self.play_start = audio_position
+        sample_index = int(audio_position * self.sample_rate)
 
-        print(f"Position dans l'audio : {audio_position:.2f} secondes")
-        print(f"Index dans waveform_data : {sample_index} / {len(self.waveform_data)}")
-        print(f"Valeur de l'échantillon à cet index : {sample_value}")
+        # Supprime le marqueur précédent s’il existe
+        if self.start_marker is not None:
+            self.plot_widget.removeItem(self.start_marker)
+
+        # Crée un nouveau marqueur vertical bleu
+        self.start_marker = pg.InfiniteLine(pos=audio_position, angle=90, pen=pg.mkPen('b', width=1, style=Qt.PenStyle.DashLine))
+        self.plot_widget.addItem(self.start_marker)
 
 
 # ------------------------------------------------------------- PLAYBACK LOGIC
 
     def toggle_playback(self):
-        if self.is_playing:
-            self.stop_audio()
-        else:
-            self.play_audio()
+        """Joue le sample depuis self.play_start"""
+        self.stop_audio()
+        self.play_audio(start_time=self.play_start)
 
     def play_audio(self, start_time=0):
         if self.waveform_data is None:
@@ -158,7 +192,7 @@ class WaveformWidget(QWidget):
             self.start_sample += frames  # Mise à jour correcte
             self.current_time += frames / self.sample_rate
 
-        self.stream = sd.OutputStream(samplerate=self.sample_rate, channels=2, callback=callback)
+        self.stream = sd.OutputStream(samplerate=self.sample_rate, channels=1, callback=callback)
         self.stream.start()
 
     def stop_audio(self):
@@ -172,4 +206,28 @@ class WaveformWidget(QWidget):
     def update_read_head(self):
         if self.is_playing:
             self.read_head.setPos(self.current_time)
+
+    def pause_audio(self):
+        """Pause ou reprend depuis self.current_time"""
+        if self.stream is not None and self.is_playing:
+            # Pause
+            self.stream.stop()
+            self.is_playing = False
+            self.timer.stop()
+        elif not self.is_playing:
+            # Reprise
+            self.play_audio(start_time=self.current_time)
+
+    def stop_and_reset(self):
+        """Stoppe l'audio et remet à zéro"""
+        self.stop_audio()
+        self.current_time = self.play_start
+        self.read_head.setPos(self.play_start)
+
+    def on_selection_changed(self):
+        region = self.selection_region.getRegion()
+        print(f"Région sélectionnée : {region[0]:.2f}s à {region[1]:.2f}s")
+        # Tu peux stocker les valeurs comme:
+        self.selection_start = region[0]
+        self.selection_end = region[1]
 
