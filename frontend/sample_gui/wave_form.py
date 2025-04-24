@@ -1,7 +1,9 @@
 from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout,
                              QVBoxLayout, QSpacerItem, QSizePolicy, QFrame)
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
 from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QMouseEvent
 import qtawesome as qta
 import librosa
 import pyqtgraph as pg
@@ -15,10 +17,8 @@ import numpy as np
 import sounddevice as sd
 
 import os
-# os.environ["SDL_AUDIODRIVER"] = "pulseaudio"
 
 import sounddevice as sd
-# sd.default.device = "pulse"
 
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
@@ -32,6 +32,14 @@ class WaveformWidget(QWidget):
         self.play_end = 0
         self.is_playing = False
         self.start_marker = None
+        self.mouse_down = False
+        self.drag_start_x = None
+        self.mouse_pressed = False
+
+        self.mouse_dragging = False
+        self.region_start_x = None
+        self.temp_region = None
+        self.region = None
         self.init_ui()
 
     def init_ui(self):
@@ -41,7 +49,7 @@ class WaveformWidget(QWidget):
         self.layout = QVBoxLayout(self)
 
         # Création du widget de tracé
-        self.plot_widget = pg.PlotWidget()
+        self.plot_widget = pg.PlotWidget(viewBox=NoLeftDragViewBox())
         self.plot_widget.setFixedHeight(150)
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.setBackground('#222')  # Fond sombre
@@ -54,9 +62,9 @@ class WaveformWidget(QWidget):
         if self.waveform_data is not None:
             self.print_wave_form()
 
-        # Boutons de zoom
+        # -------------------------------------------------------- Boutons
         btn_layout = QHBoxLayout()
-        # BOUTON PLAY
+        # --------------- BOUTON PLAY
         self.play_button = QPushButton()
         self.play_button.setFixedSize(30, 30)
         self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
@@ -64,7 +72,7 @@ class WaveformWidget(QWidget):
         self.play_button.clicked.connect(self.toggle_playback)
         btn_layout.addWidget(self.play_button)
 
-        # BOUTON PAUSE
+        # --------------- BOUTON PAUSE
         self.pause_button = QPushButton()
         self.pause_button.setFixedSize(30, 30)
         self.pause_button.setIcon(qta.icon('fa5s.pause', color='lightgray'))
@@ -72,7 +80,7 @@ class WaveformWidget(QWidget):
         self.pause_button.clicked.connect(self.pause_audio)
         btn_layout.addWidget(self.pause_button)
 
-        # BOUTON STOP
+        # --------------- BOUTON STOP
         self.stop_button = QPushButton()
         self.stop_button.setFixedSize(30, 30)
         self.stop_button.setIcon(qta.icon('fa5s.stop', color='lightgray'))
@@ -82,7 +90,7 @@ class WaveformWidget(QWidget):
 
         self.layout.addLayout(btn_layout)
 
-        # Tête de lecture (ligne infinie qui se déplace)
+        # ---------------------------- Tête de lecture
         self.read_head = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=2))
         self.plot_widget.addItem(self.read_head)
 
@@ -120,16 +128,12 @@ class WaveformWidget(QWidget):
 
         self.plot_widget.getViewBox().wheelEvent = self.zoom_or_pan
         self.plot_widget.scene().sigMouseClicked.connect(self.on_waveform_click)
+        self.plot_widget.getViewBox().scene().installEventFilter(self)
 
-        # Ajoute la zone de sélection (par défaut, rien de sélectionné)
-        self.selection_region = pg.LinearRegionItem([1, 2])  # Intervalle de départ par défaut
-        self.selection_region.setZValue(10)  # Au-dessus des autres éléments
-        self.selection_region.setBrush(pg.mkBrush(255, 255, 255, 40))  # Couleur semi-transparente
-        self.selection_region.setMovable(True)
-        self.selection_region.setBounds([0, self.duration])  # Limiter aux bords du son
-        self.plot_widget.addItem(self.selection_region)
 
-        self.selection_region.sigRegionChanged.connect(self.on_selection_changed)
+# --------------- SIGNAL RESPONSE
+
+    # ------ ZOOM LOGIC
 
     def zoom_or_pan(self, event, **kwargs):  # <-- Capture les arguments non attendus
         """Gère le zoom normal et le déplacement latéral avec Shift."""
@@ -143,8 +147,12 @@ class WaveformWidget(QWidget):
             # Appel du comportement par défaut de PyQtGraph
             pg.ViewBox.wheelEvent(vb, event)
 
+    # ------ LEFT CLICK LOGIC
+
     def on_waveform_click(self, event):
         """Place la tête de lecture à la position cliquée et met à jour la lecture."""
+        print("mouse clicked")
+        self.mouse_pressed = True
         pos = event.scenePos()
         data_pos = self.plot_widget.getViewBox().mapSceneToView(pos)
         audio_position = data_pos.x()
@@ -153,6 +161,7 @@ class WaveformWidget(QWidget):
         audio_position = max(0, min(audio_position, self.duration))
         self.play_start = audio_position
         sample_index = int(audio_position * self.sample_rate)
+        print("on_waveform_click: sample_index: ", sample_index)
 
         # Supprime le marqueur précédent s’il existe
         if self.start_marker is not None:
@@ -161,7 +170,49 @@ class WaveformWidget(QWidget):
         # Crée un nouveau marqueur vertical bleu
         self.start_marker = pg.InfiniteLine(pos=audio_position, angle=90, pen=pg.mkPen('b', width=1, style=Qt.PenStyle.DashLine))
         self.plot_widget.addItem(self.start_marker)
+        self.mouse_pressed = False
 
+    def eventFilter(self, source, event):
+        if event.type() == QEvent.GraphicsSceneMousePress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                print("eventFilter: ", source, event)
+                self.mouse_pressed = True
+                pos = self.plot_widget.getViewBox().mapSceneToView(event.scenePos())
+                self.region_start_x = pos.x()
+                self.mouse_dragging = True
+                if self.temp_region:
+                    self.plot_widget.removeItem(self.temp_region)
+                self.temp_region = pg.LinearRegionItem([self.region_start_x, self.region_start_x])
+                self.temp_region.setZValue(10)
+                self.temp_region.setBrush(pg.mkBrush(255, 255, 255, 40))
+                self.temp_region.setMovable(False)
+                self.plot_widget.addItem(self.temp_region)
+
+        elif event.type() == QEvent.GraphicsSceneMouseMove:
+            if self.mouse_pressed and self.mouse_dragging:
+                pos = self.plot_widget.getViewBox().mapSceneToView(event.scenePos())
+                current_x = pos.x()
+                self.temp_region.setRegion([min(self.region_start_x, current_x),
+                                            max(self.region_start_x, current_x)])
+
+        elif event.type() == QEvent.GraphicsSceneMouseRelease:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.mouse_pressed = False
+                self.mouse_dragging = False
+                self.temp_region.setMovable(True)
+                # Ici tu peux récupérer la région sélectionnée
+                if self.temp_region:
+                    region = self.temp_region.getRegion()
+
+                    print(f"Région sélectionnée de {region[0]:.2f}s à {region[1]:.2f}s")
+        return False
+
+    # def on_selection_changed(self):
+    #     region = self.selection_region.getRegion()
+    #     print(f"Région sélectionnée : {region[0]:.2f}s à {region[1]:.2f}s")
+    #     # Tu peux stocker les valeurs comme:
+    #     self.selection_start = region[0]
+    #     self.selection_end = region[1]
 
 # ------------------------------------------------------------- PLAYBACK LOGIC
 
@@ -224,10 +275,16 @@ class WaveformWidget(QWidget):
         self.current_time = self.play_start
         self.read_head.setPos(self.play_start)
 
-    def on_selection_changed(self):
-        region = self.selection_region.getRegion()
-        print(f"Région sélectionnée : {region[0]:.2f}s à {region[1]:.2f}s")
-        # Tu peux stocker les valeurs comme:
-        self.selection_start = region[0]
-        self.selection_end = region[1]
 
+
+class NoLeftDragViewBox(pg.ViewBox):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mouseDragEvent(self, event, axis=None):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # On ignore complètement les drags avec clic gauche
+            event.ignore()
+        else:
+            # Comportement normal pour les autres boutons
+            super().mouseDragEvent(event, axis)
