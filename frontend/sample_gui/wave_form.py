@@ -15,10 +15,32 @@ import librosa
 import pyqtgraph as pg
 import numpy as np
 import sounddevice as sd
+import time
 
 import os
 
 import sounddevice as sd
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class WaveformLoaderThread(QThread):
+    waveformReady = pyqtSignal(np.ndarray, int, float)  # (waveform, sample_rate, duration)
+
+    def __init__(self, audio_path):
+        super().__init__()
+        self.audio_path = audio_path
+
+    def run(self):
+        try:
+            y, sr = librosa.load(self.audio_path, sr=None)
+            if np.max(np.abs(y)) > 0:
+                y = y / np.max(np.abs(y))
+            else:
+                y = y * 0
+            duration = librosa.get_duration(y=y, sr=sr)
+            self.waveformReady.emit(y, sr, duration)
+        except Exception as e:
+            print(f"[WaveformLoaderThread] Erreur: {e}")
+            self.waveformReady.emit(np.array([]), 0, 0.0)
 
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
@@ -40,11 +62,16 @@ class WaveformWidget(QWidget):
         self.region_start_x = None
         self.temp_region = None
         self.region = None
+
+        self.waveform_data = None
+        self.sample_rate = None
+        self.duration = None
+        self.loader = None    # Ajouté : pour stocker le thread
+
         self.init_ui()
 
     def init_ui(self):
         """Initialise l'interface utilisateur et charge l'audio."""
-        self.load_audio_data(self.audio_file_path)
 
         self.layout = QVBoxLayout(self)
 
@@ -55,16 +82,14 @@ class WaveformWidget(QWidget):
         self.plot_widget.setBackground('#222')  # Fond sombre
         vb = self.plot_widget.getViewBox()
         vb.setMouseEnabled(x=True, y=False)  # Zoom seulement sur X
-        vb.setLimits(xMin=0, xMax=self.duration, yMin=-1, yMax=1)
         self.plot_widget.hideAxis('left')
         self.layout.addWidget(self.plot_widget)
 
-        if self.waveform_data is not None:
-            self.print_wave_form()
+        # --------- Lance le chargement de la waveform en thread
+        self.load_audio_data(self.audio_file_path)
 
         # -------------------------------------------------------- Boutons
         btn_layout = QHBoxLayout()
-        # --------------- BOUTON PLAY
         self.play_button = QPushButton()
         self.play_button.setFixedSize(30, 30)
         self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
@@ -72,7 +97,6 @@ class WaveformWidget(QWidget):
         self.play_button.clicked.connect(self.toggle_playback)
         btn_layout.addWidget(self.play_button)
 
-        # --------------- BOUTON PAUSE
         self.pause_button = QPushButton()
         self.pause_button.setFixedSize(30, 30)
         self.pause_button.setIcon(qta.icon('fa5s.pause', color='lightgray'))
@@ -80,7 +104,6 @@ class WaveformWidget(QWidget):
         self.pause_button.clicked.connect(self.pause_audio)
         btn_layout.addWidget(self.pause_button)
 
-        # --------------- BOUTON STOP
         self.stop_button = QPushButton()
         self.stop_button.setFixedSize(30, 30)
         self.stop_button.setIcon(qta.icon('fa5s.stop', color='lightgray'))
@@ -90,35 +113,37 @@ class WaveformWidget(QWidget):
 
         self.layout.addLayout(btn_layout)
 
-        # ---------------------------- Tête de lecture
         self.read_head = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=2))
         self.plot_widget.addItem(self.read_head)
 
-        # Timer pour mettre à jour la position de la tête de lecture
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_read_head)
         self.stop_timer_signal.connect(self.timer.stop)
 
-        self.timer.start(50)  # Mettre à jour toutes les 50ms
-
-        self.current_time = 0  # Temps actuel de lecture
-
+        self.timer.start(50)
+        self.current_time = 0
 
     def load_audio_data(self, audio_path):
-        """Charge les données audio et les prépare pour l'affichage."""
-        try:
-            y, sr = librosa.load(audio_path, sr=None)  # Garder le sample rate d'origine
-            y = y / np.max(np.abs(y))  # Normaliser entre -1 et 1
-            self.waveform_data = y
-            self.sample_rate = sr
-            self.duration = librosa.get_duration(y=y, sr=sr)
-            print(f"Fichier chargé: {audio_path}, Durée: {self.duration:.2f}s")
-            print(f"{y.shape}")
-        except Exception as e:
-            print(f"Erreur de chargement: {e}")
+        """Charge les données audio dans un thread séparé."""
+        self.loader = WaveformLoaderThread(audio_path)
+        self.loader.waveformReady.connect(self.set_waveform_data)
+        self.loader.start()
+
+    def set_waveform_data(self, y, sr, duration):
+        """Callback du thread quand la waveform est prête."""
+        if y is None or len(y) == 0 or sr == 0:
+            print("[WaveformWidget] Fichier vide ou erreur de chargement")
             self.waveform_data = None
             self.sample_rate = None
             self.duration = None
+            return
+        self.waveform_data = y
+        self.sample_rate = sr
+        self.duration = duration
+
+        vb = self.plot_widget.getViewBox()
+        vb.setLimits(xMin=0, xMax=self.duration, yMin=-1, yMax=1)
+        self.print_wave_form()
 
     def print_wave_form(self):
         self.x_axis = np.linspace(0, self.duration, len(self.waveform_data))
@@ -173,6 +198,7 @@ class WaveformWidget(QWidget):
         self.mouse_pressed = False
 
     def eventFilter(self, source, event):
+        # t0 = time.perf_counter()
         if event.type() == QEvent.GraphicsSceneMousePress:
             if event.button() == Qt.MouseButton.LeftButton:
                 print("eventFilter: ", source, event)
@@ -205,6 +231,7 @@ class WaveformWidget(QWidget):
                     region = self.temp_region.getRegion()
 
                     print(f"Région sélectionnée de {region[0]:.2f}s à {region[1]:.2f}s")
+        # print("eventFilter duration:", time.perf_counter() - t0)
         return False
 
     # def on_selection_changed(self):

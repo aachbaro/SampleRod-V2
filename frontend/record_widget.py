@@ -118,7 +118,7 @@ class RecordWidgetWindow(QMainWindow):
 
 # ------------------------------------------------------------------------ Extension du container a bouton
     def eventFilter(self, source, event):
-
+        """Filtre les événements pour gérer le survol et le clic sur le conteneur de boutons."""
         # ------------------------------------------------ Button container
         if source == self.button_container:
             if event.type() == QEvent.Type.Enter:
