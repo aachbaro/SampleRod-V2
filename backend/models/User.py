@@ -12,6 +12,7 @@ from backend.db import SessionLocal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtCore import QUrl, pyqtSignal, QObject
 import pygame
+from backend.services.recorder_service import RecorderService
 
 class User:
     def __init__(self):
@@ -25,17 +26,27 @@ class User:
 
         self.libraries = SampleBank.get_all_libraries()
 
-        self.recorder = Recorder(self.settings)  # Maintenant, settings est bien lié à une session
+        self.recorder = RecorderService(
+            pre_seconds=self.settings.pre_recording_seconds,
+            sample_rate=44100,
+            block_size=512
+        )
         print("User: Settings:", self.settings.to_dict())
         
         self.audio_player = AudioPlayer()
 
         if self.settings.retro_recording_enabled:
-            self.recorder.bac_rec_activated()
+            self.recorder.enable_retro()
 
     def play_sample(self, file_path):
         """ Demande la lecture d'un sample """
         self.audio_player.play_sample(file_path)
+
+    def enable_retro(self):    self.recorder.enable_retro()
+    def disable_retro(self):   self.recorder.disable_retro()
+    def start_record(self, folder, retro_time): return self.recorder.start(folder, retro_time)
+    def stop_record(self):      return self.recorder.stop()
+    def shutdown_recorder(self): return self.recorder.shutdown()
 
 class AudioPlayer:
 

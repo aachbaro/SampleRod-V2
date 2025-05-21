@@ -1,7 +1,10 @@
+# /backend/settings_gui/retro_recording_settings.py
+
 from PyQt6.QtWidgets import QWidget, QLabel, QSpinBox, QPushButton, QVBoxLayout, QHBoxLayout, QCheckBox
 from PyQt6.QtGui import QIcon
 from PyQt6.QtCore import Qt, pyqtSignal
 from backend.models.User import User
+from PyQt6.QtCore import QTimer
 
 class RetroRecordingWidget(QWidget):
     retroRecordingUpdated = pyqtSignal()
@@ -13,6 +16,9 @@ class RetroRecordingWidget(QWidget):
 
         self.init_ui()
         self.load_settings()
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._poll_retro)
+        self._poll_timer.start(300)  # toutes les 300 ms
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -80,11 +86,20 @@ class RetroRecordingWidget(QWidget):
         self.user.settings.retro_recording_enabled = bool(state)
 
         if self.user.settings.retro_recording_enabled:
-            self.user.recorder.bac_rec_activated()
+            # on active le retro dans le worker
+            self.user.recorder.enable_retro()
         else:
-            self.user.recorder.bac_rec_deactivated()
+            # on désactive le retro dans le worker
+            self.user.recorder.disable_retro()
 
         # Réactiver le bouton après l'opération
         self.toggle_checkbox.setEnabled(True)
 
         self.retroRecordingUpdated.emit()
+
+    def _poll_retro(self):
+        for msg, payload in self.user.recorder.poll():
+            if msg == 'retro_enabled':
+                # met à jour le checkbox *SEULEMENT* si différent
+                if self.toggle_checkbox.isChecked() != payload:
+                    self.toggle_checkbox.setChecked(payload)

@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBox
 from PyQt6.QtCore import Qt
 from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
-from frontend.settings_gui.retro_recording import RetroRecordingWidget
+from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
 from backend.models.User import User
 from backend.models.sample import Sample
 from frontend.sample_gui.sample_list import SampleListWidget
@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
         if self.user.settings:
             self.user.settings.retro_recording_enabled = False
             self.user.settings.set_retro_recording_state(False)
-            self.user.recorder.bac_rec_deactivated()
+            self.user.recorder.disable_retro()
         if self.user.recorder.is_recording:
             self.user.recorder.is_recording = False
         # Ajoutez ici d'éventuelles actions de nettoyage (sauvegarde, fermeture de connexion, etc.)
