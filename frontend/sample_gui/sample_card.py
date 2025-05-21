@@ -266,6 +266,10 @@ class SampleCard(QWidget):
             self.play_button.setVisible(False)
             self.playback_slider.setVisible(False)
             self.time_label.setVisible(False)
+            try:
+                self.user.audio_player.clear_audio()
+            except Exception:
+                pass
 
             # Ajouter le widget de forme d'onde
             self.wave_edition_widget = WaveformWidget(self.sample.path)
@@ -278,6 +282,19 @@ class SampleCard(QWidget):
 
             # Supprimer le widget de forme d'onde
             if self.wave_edition_widget:
+                # 1) stopper la lecture en cours
+                try:
+                    self.wave_edition_widget.stop_audio()
+                except Exception:
+                    pass
+
+                # 2) arrêter aussi le timer de mise à jour
+                try:
+                    self.wave_edition_widget.timer.stop()
+                except Exception:
+                    pass
+
+                # 3) enfin retirer et détruire le widget
                 self.waveform_layout.removeWidget(self.wave_edition_widget)
                 self.wave_edition_widget.deleteLater()
                 self.wave_edition_widget = None
@@ -325,9 +342,19 @@ class SampleCard(QWidget):
 
     def onRenameSuccess(self, sample_id, new_name):
         if self.sample.id == sample_id:
-            self.name_label.setText(new_name)  # Met à jour l'affichage
-            self.sample.name = new_name  # Mets à jour l'objet
-            self.cancelRename()  # Cache les champs de renommage
+            # 1) reconstruire le nouveau chemin
+            old_path = self.sample.path
+            directory = os.path.dirname(old_path)
+            ext = os.path.splitext(old_path)[1]
+            new_path = os.path.join(directory, new_name + ext)
+
+            # 2) mettre à jour le modèle et l'affichage
+            self.sample.name = new_name
+            self.sample.path = new_path
+            self.name_label.setText(new_name)
+
+            # réinitialiser l'UI de renommage
+            self.cancelRename()
 
     def onRenameError(self, sample_id, error_msg):
         if self.sample.id == sample_id:

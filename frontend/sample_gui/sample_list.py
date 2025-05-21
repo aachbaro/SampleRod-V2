@@ -69,37 +69,73 @@ class SampleListWidget(QWidget):
         self.refreshList()
 
     def delete_sample(self, sample_to_delete_id):
-        """Supprime le sample de self.samples, rafraîchit la liste et émet le signal."""
-        # Supprime l'objet sample de la liste en utilisant l'ID
-        print("frontend: sample_list: delete sample: ", sample_to_delete_id)
-
-        # Trouver et supprimer le SampleCard correspondant
-        for i in range(self.content_layout.count()):
-            item = self.content_layout.itemAt(i)
-            if item and item.widget():
-                widget = item.widget()
-                if isinstance(widget, SampleCard) and widget.sample.id == sample_to_delete_id:
-                    widget.deleteLater()
-                    self.content_layout.removeWidget(widget)
-                    break  # Arrêter dès qu'on a supprimé le bon widget
-
-        # Supprimer aussi le sample de self.samples
-        self.samples = [s for s in self.samples if s.id != sample_to_delete_id]
+        print("frontend: sample_list: delete sample:", sample_to_delete_id)
+        session = SessionLocal()
         try:
-            session = SessionLocal()
             session.expire_on_commit = False
-            sample = session.query(Sample).filter(Sample.id == sample_to_delete_id).first()
-            if sample:
-                if os.path.exists(sample.path):
-                    try:
-                        os.remove(sample.path)
-                        print(f"Fichier {sample.path} supprimé du système de fichiers.")
-                    except Exception as e:
-                        print(f"Erreur lors de la suppression du fichier {sample.path}: {str(e)}")
-                else:
-                    print(f"Fichier {sample.path} introuvable dans le système de fichiers. Suppression uniquement dans la base de données.")
-                session.delete(sample)
-                session.commit()
+            sample = session.query(Sample).get(sample_to_delete_id)
+            if not sample:
+                print(f"Sample {sample_to_delete_id} introuvable en DB.")
+                return
+
+            # 1) Si on est en train de lire CE sample, on stoppe et on unload
+            if getattr(self.user.audio_player, "current_sample_path", None) == sample.path:
+                self.user.audio_player.clear_audio()
+                try:
+                    # pygame 2.1+ : décharge le fichier de la mémoire  
+                    import pygame
+                    pygame.mixer.music.unload()
+                except Exception:
+                    pass
+
+            # 2) Fermer tout WaveformWidget éventuel dans les SampleCard
+            #    (si tu as un signal pour ça, tu peux l'émettre ici)
+            #    Par exemple :
+            self.close_waveforms_for_path(sample.path)
+
+            # 3) Supprimer le fichier du disque
+            if os.path.exists(sample.path):
+                try:
+                    os.remove(sample.path)
+                    print(f"Fichier {sample.path} supprimé du disque.")
+                except Exception as e:
+                    print(f"Erreur suppr. fichier : {e}")
+            else:
+                print(f"Fichier introuvable: {sample.path}")
+
+            # 4) Supprimer l’entrée en base
+            session.delete(sample)
+            session.commit()
+        finally:
+            session.close()
+
+        # 5) Recharger la liste depuis la base et rafraîchir l'UI
+        self.reload_samples_from_db()
+        self.refreshList()
+
+    def close_waveforms_for_path(self, path):
+        for i in range(self.content_layout.count()):
+            w = self.content_layout.itemAt(i).widget()
+            if isinstance(w, SampleCard) and w.sample.path == path and w.wave_edition_widget:
+                # stoppe la lecture
+                try:
+                    w.wave_edition_widget.stop_audio()
+                except:
+                    pass
+                try:
+                    w.wave_edition_widget.timer.stop()
+                except:
+                    pass
+
+                w.waveform_layout.removeWidget(w.wave_edition_widget)
+                w.wave_edition_widget.deleteLater()
+                w.wave_edition_widget = None
+
+    def reload_samples_from_db(self):
+        """Recharge self.samples depuis la base."""
+        session = SessionLocal()
+        try:
+            self.samples = session.query(Sample).all()
         finally:
             session.close()
 
@@ -126,6 +162,20 @@ class SampleListWidget(QWidget):
                 session.commit()
                 self.update_sample_card(sample_id, new_name)
                 return
+
+            if getattr(self.user.audio_player, "current_sample_path", None) == sample.path:
+                self.user.audio_player.clear_audio()
+                try:
+                    # pygame 2.1+ : décharge le fichier de la mémoire  
+                    import pygame
+                    pygame.mixer.music.unload()
+                except Exception:
+                    pass
+
+            self.close_waveforms_for_path(sample.path)
+
+            # 🛑 Etape 2 : fermer tout WaveformWidget affichant ce fichier
+            self.close_waveforms_for_path(old_path)
 
             dir_name = os.path.dirname(old_path)  # Répertoire du fichier
             file_ext = os.path.splitext(old_path)[1]  # Extension du fichier
@@ -198,15 +248,21 @@ class SampleListWidget(QWidget):
             session.close()
 
     def update_sample_card(self, sample_id, new_name):
-        """Met à jour le SampleCard correspondant à l'ID donné."""
         for i in range(self.content_layout.count()):
             item = self.content_layout.itemAt(i)
-            if item and item.widget():
-                widget = item.widget()
-                if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
-                    widget.sample.name = new_name  # Mise à jour du modèle de données
-                    widget.refresh_display()  # Ajoute cette ligne si une méthode similaire existe
-                    break
+            widget = item.widget()
+            if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
+                # ancien path
+                old = widget.sample.path
+                directory = os.path.dirname(old)
+                ext = os.path.splitext(old)[1]
+                new_path = os.path.join(directory, new_name + ext)
+
+                widget.sample.name = new_name
+                widget.sample.path = new_path
+
+                widget.refresh_display()
+                break
 
     def update_sample_card_move(self, sample_id, new_dir):
         """Met à jour le SampleCard correspondant à l'ID donné après le déplacement."""

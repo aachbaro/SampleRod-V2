@@ -117,7 +117,18 @@ class AudioPlayer:
         return self.current_sample_id
     
     def clear_audio(self):
+        """Stoppe la lecture et décharge le fichier pour libérer le lock Windows."""
+        # 1) Stoppe la lecture
         pygame.mixer.music.stop()
+
+        # 2) Décharge le fichier de la mémoire (pygame >= 2.1)
+        try:
+            pygame.mixer.music.unload()
+        except Exception:
+            # si la version de pygame ne supporte pas unload(), on ignore
+            pass
+
+        # 3) Réinitialisation de l'état interne
         self.current_sample_id = -1
         self.current_sample_duration = -1
         self.current_sample_path = None
