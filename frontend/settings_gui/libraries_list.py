@@ -1,5 +1,6 @@
 # ./frontend/settings_gui/libraries_list.py
 
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, 
     QHBoxLayout, QFrame, QScrollArea, QGroupBox, QComboBox, QListWidget, QListWidgetItem
@@ -25,7 +26,7 @@ class SettingsLibrariesList(QWidget):
         # En-tête pour la liste des bibliothèques
         self.header_layout = QHBoxLayout()
         self.toggle_button = QPushButton("▲")  # Pour simuler le changement d'icône
-        self.scroll_area = QScrollArea()
+        # self.scroll_area = QScrollArea()
         self.add_library_button = QPushButton("Add Sample Library")
         self.header_label = QLabel("Sample Libraries")
         self.library_list_widget = QListWidgetDragBugFix()
@@ -43,15 +44,15 @@ class SettingsLibrariesList(QWidget):
 
         self.library_list_widget.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.library_list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
-        self.library_list_widget.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.library_list_widget.model().rowsMoved.connect(self.updateLibraryOrder)
 
 
 
         # Zone de défilement
-        self.scroll_area.setWidget(self.library_list_widget)
-        self.scroll_area.setWidgetResizable(True)
-        self.layout().addWidget(self.scroll_area)
+        # self.scroll_area.setWidget(self.library_list_widget)
+        # self.scroll_area.setWidgetResizable(True)
+        # self.layout().addWidget(self.scroll_area)
+        self.layout().addWidget(self.library_list_widget)
 
         # Ajouter un bouton pour ajouter une bibliothèque
         self.add_library_button.setIcon(QIcon("folder-plus.png"))
@@ -62,31 +63,20 @@ class SettingsLibrariesList(QWidget):
 
 
     def toggleList(self):
-        """ Toggle affichage de la liste """
-        if self.scroll_area.isVisible():
-            self.scroll_area.setVisible(False)
-            self.toggle_button.setText("▼")
-            self.add_library_button.setVisible(False)
-        else:
-            self.scroll_area.setVisible(True)
-            self.toggle_button.setText("▲")
-            self.add_library_button.setVisible(True)
+        vis = self.library_list_widget.isVisible()
+        self.library_list_widget.setVisible(not vis)
+        self.add_library_button.setVisible(not vis)
+        self.toggle_button.setText("▼" if vis else "▲")
 
     def selectDirectory(self):
-        """ Ouvrir un dialogue pour choisir un répertoire """
-        try: 
-            directory = QFileDialog.getExistingDirectory(self, "Select Folder", options=QFileDialog.Option.DontUseNativeDialog)
-            if directory:
-                new_library = SampleBank(directory)
-                if  new_library:
-                    print("Library succesfully added: ", directory)
-                    self.user.libraries = SampleBank.get_all_libraries()
-                    self.refreshLibraryList()
-                    self.updateLibraryOrder()
-                    self.librariesUpdated.emit()
-                
-        except Exception as error:
-            print("Add Sample library: ", error)
+        d = QFileDialog.getExistingDirectory(self, "Select Folder",
+                                             options=QFileDialog.Option.DontUseNativeDialog)
+        if d:
+            SampleBank(d)  # enregistre en base
+            self.user.libraries = SampleBank.get_all_libraries()
+            self.refreshLibraryList()
+            self.updateLibraryOrder()
+            self.librariesUpdated.emit()
 
     def deleteLibrary(self, library_to_delete):
         """ Supprime une bibliothèque """
@@ -106,25 +96,19 @@ class SettingsLibrariesList(QWidget):
             print(f"Error deleting library: {e}")
 
     def updateLibraryOrder(self):
-        """ Met à jour l'ordre des bibliothèques après un drag & drop """
         session = SessionLocal()
-        for index in range(self.library_list_widget.count()):
-            item = self.library_list_widget.item(index)
-            library = item.data(Qt.ItemDataRole.UserRole)
-
-            if library is None:
-                print(f"Erreur : Impossible de récupérer la bibliothèque pour l'index {index}")
-                continue
-
-            library.position = index  # Mise à jour de la position
-            session.merge(library)  # Mise à jour de l'objet dans la session SQLAlchemy
-        
+        for idx in range(self.library_list.count()):
+            item = self.library_list.item(idx)
+            lib  = item.data(Qt.ItemDataRole.UserRole)
+            lib.position = idx
+            session.merge(lib)
         session.commit()
         session.close()
-        self.librariesUpdated.emit()
+
+        # re-rafraîchir si besoin
         time.sleep(0.1)
         self.refreshLibraryList()
-        print("Ordre des bibliothèques mis à jour !")
+        self.librariesUpdated.emit()
 
 
     def refreshLibraryList(self):

@@ -7,3 +7,4 @@ qtawesome
 librosa
 pyqtgraph
 sounddevice
+pythoncom
