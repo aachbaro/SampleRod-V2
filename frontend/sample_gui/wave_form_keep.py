@@ -1,0 +1,334 @@
+from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton, QHBoxLayout,
+                             QVBoxLayout, QSpacerItem, QSizePolicy, QFrame)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
+from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QMouseEvent
+import qtawesome as qta
+import librosa
+import pyqtgraph as pg
+import numpy as np
+
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt6.QtCore import Qt
+import librosa
+import pyqtgraph as pg
+import numpy as np
+import sounddevice as sd
+import time
+
+import os
+
+import sounddevice as sd
+from PyQt6.QtCore import QThread, pyqtSignal
+
+class WaveformLoaderThread(QThread):
+    waveformReady = pyqtSignal(np.ndarray, int, float)  # (waveform, sample_rate, duration)
+
+    def __init__(self, audio_path):
+        super().__init__()
+        self.audio_path = audio_path
+
+    def run(self):
+        try:
+            y, sr = librosa.load(self.audio_path, sr=None)
+            if np.max(np.abs(y)) > 0:
+                y = y / np.max(np.abs(y))
+            else:
+                y = y * 0
+            duration = librosa.get_duration(y=y, sr=sr)
+            self.waveformReady.emit(y, sr, duration)
+        except Exception as e:
+            print(f"[WaveformLoaderThread] Erreur: {e}")
+            self.waveformReady.emit(np.array([]), 0, 0.0)
+
+class WaveformWidget(QWidget):
+    stop_timer_signal = pyqtSignal()
+
+    def __init__(self, audio_file_path):
+        super().__init__()
+        self.audio_file_path = audio_file_path
+        self.stream = None
+        self.current_time = 0
+        self.play_start = 0
+        self.play_end = 0
+        self.is_playing = False
+        self.start_marker = None
+        self.mouse_down = False
+        self.drag_start_x = None
+        self.mouse_pressed = False
+
+        self.mouse_dragging = False
+        self.region_start_x = None
+        self.temp_region = None
+        self.region = None
+
+        self.waveform_data = None
+        self.sample_rate = None
+        self.duration = None
+        self.loader = None    # Ajouté : pour stocker le thread
+
+        self.init_ui()
+
+    def init_ui(self):
+        """Initialise l'interface utilisateur et charge l'audio."""
+
+        self.layout = QVBoxLayout(self)
+
+        # Création du widget de tracé
+        self.plot_widget = pg.PlotWidget(viewBox=NoLeftDragViewBox())
+        self.plot_widget.setFixedHeight(150)
+        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
+        self.plot_widget.setBackground('#222')  # Fond sombre
+        vb = self.plot_widget.getViewBox()
+        vb.setMouseEnabled(x=True, y=False)  # Zoom seulement sur X
+        self.plot_widget.hideAxis('left')
+        self.layout.addWidget(self.plot_widget)
+
+        # --------- Lance le chargement de la waveform en thread
+        self.load_audio_data(self.audio_file_path)
+
+        # -------------------------------------------------------- Boutons
+        btn_layout = QHBoxLayout()
+        self.play_button = QPushButton()
+        self.play_button.setFixedSize(30, 30)
+        self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+        self.play_button.setToolTip("Lire")
+        self.play_button.clicked.connect(self.toggle_playback)
+        btn_layout.addWidget(self.play_button)
+
+        self.pause_button = QPushButton()
+        self.pause_button.setFixedSize(30, 30)
+        self.pause_button.setIcon(qta.icon('fa5s.pause', color='lightgray'))
+        self.pause_button.setToolTip("Pause")
+        self.pause_button.clicked.connect(self.pause_audio)
+        btn_layout.addWidget(self.pause_button)
+
+        self.stop_button = QPushButton()
+        self.stop_button.setFixedSize(30, 30)
+        self.stop_button.setIcon(qta.icon('fa5s.stop', color='lightgray'))
+        self.stop_button.setToolTip("Stop")
+        self.stop_button.clicked.connect(self.stop_and_reset)
+        btn_layout.addWidget(self.stop_button)
+
+        self.layout.addLayout(btn_layout)
+
+        self.read_head = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=2))
+        self.plot_widget.addItem(self.read_head)
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_read_head)
+        self.stop_timer_signal.connect(self.timer.stop)
+
+        self.timer.start(50)
+        self.current_time = 0
+
+    def load_audio_data(self, audio_path):
+        """Charge les données audio dans un thread séparé."""
+        self.loader = WaveformLoaderThread(audio_path)
+        self.loader.waveformReady.connect(self.set_waveform_data)
+        self.loader.start()
+
+    def set_waveform_data(self, y, sr, duration):
+        """Callback du thread quand la waveform est prête."""
+        if y is None or len(y) == 0 or sr == 0:
+            print("[WaveformWidget] Fichier vide ou erreur de chargement")
+            self.waveform_data = None
+            self.sample_rate = None
+            self.duration = None
+            return
+        self.waveform_data = y
+        self.sample_rate = sr
+        self.duration = duration
+
+        vb = self.plot_widget.getViewBox()
+        vb.setLimits(xMin=0, xMax=self.duration, yMin=-1, yMax=1)
+        self.print_wave_form()
+
+    def print_wave_form(self):
+        self.x_axis = np.linspace(0, self.duration, len(self.waveform_data))
+        self.plot_item = self.plot_widget.plot(self.x_axis, self.waveform_data, pen=pg.mkPen('w', width=1))
+        self.plot_widget.setXRange(0, self.duration, padding=0)
+        self.plot_widget.setYRange(-1, 1, padding=0)
+
+        self.plot_widget.getViewBox().wheelEvent = self.zoom_or_pan
+        self.plot_widget.scene().sigMouseClicked.connect(self.on_waveform_click)
+        self.plot_widget.getViewBox().scene().installEventFilter(self)
+
+
+# --------------- SIGNAL RESPONSE
+
+    # ------ ZOOM LOGIC
+
+    def zoom_or_pan(self, event, **kwargs):  # <-- Capture les arguments non attendus
+        """Gère le zoom normal et le déplacement latéral avec Shift."""
+        vb = self.plot_widget.getViewBox()
+
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            # Shift pressé → déplacement horizontal
+            delta_x = -0.1 if event.delta() > 0 else 0.1  # Gauche/Droite
+            vb.translateBy(x=delta_x * self.duration, y=0)
+        else:
+            # Appel du comportement par défaut de PyQtGraph
+            pg.ViewBox.wheelEvent(vb, event)
+
+    # ------ LEFT CLICK LOGIC
+
+    def on_waveform_click(self, event):
+        """Place la tête de lecture à la position cliquée et met à jour la lecture."""
+        print("mouse clicked")
+        self.mouse_pressed = True
+        pos = event.scenePos()
+        data_pos = self.plot_widget.getViewBox().mapSceneToView(pos)
+        audio_position = data_pos.x()
+
+        # Clamp la valeur pour ne pas sortir du signal
+        audio_position = max(0, min(audio_position, self.duration))
+        self.play_start = audio_position
+        sample_index = int(audio_position * self.sample_rate)
+        print("on_waveform_click: sample_index: ", sample_index)
+
+        # Supprime le marqueur précédent s’il existe
+        if self.start_marker is not None:
+            self.plot_widget.removeItem(self.start_marker)
+
+        # Crée un nouveau marqueur vertical bleu
+        self.start_marker = pg.InfiniteLine(pos=audio_position, angle=90, pen=pg.mkPen('b', width=1, style=Qt.PenStyle.DashLine))
+        self.plot_widget.addItem(self.start_marker)
+        self.mouse_pressed = False
+
+    def eventFilter(self, source, event):
+        # t0 = time.perf_counter()
+        if event.type() == QEvent.GraphicsSceneMousePress:
+            if event.button() == Qt.MouseButton.LeftButton:
+                print("eventFilter: ", source, event)
+                self.mouse_pressed = True
+                pos = self.plot_widget.getViewBox().mapSceneToView(event.scenePos())
+                self.region_start_x = pos.x()
+                self.mouse_dragging = True
+                if self.temp_region:
+                    self.plot_widget.removeItem(self.temp_region)
+                self.temp_region = pg.LinearRegionItem([self.region_start_x, self.region_start_x])
+                self.temp_region.setZValue(10)
+                self.temp_region.setBrush(pg.mkBrush(255, 255, 255, 40))
+                self.temp_region.setMovable(False)
+                self.plot_widget.addItem(self.temp_region)
+
+        elif event.type() == QEvent.GraphicsSceneMouseMove:
+            if self.mouse_pressed and self.mouse_dragging:
+                pos = self.plot_widget.getViewBox().mapSceneToView(event.scenePos())
+                current_x = pos.x()
+                self.temp_region.setRegion([min(self.region_start_x, current_x),
+                                            max(self.region_start_x, current_x)])
+
+        elif event.type() == QEvent.GraphicsSceneMouseRelease:
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.mouse_pressed = False
+                self.mouse_dragging = False
+                self.temp_region.setMovable(True)
+                # Ici tu peux récupérer la région sélectionnée
+                if self.temp_region:
+                    region = self.temp_region.getRegion()
+
+                    print(f"Région sélectionnée de {region[0]:.2f}s à {region[1]:.2f}s")
+        # print("eventFilter duration:", time.perf_counter() - t0)
+        return False
+
+    # def on_selection_changed(self):
+    #     region = self.selection_region.getRegion()
+    #     print(f"Région sélectionnée : {region[0]:.2f}s à {region[1]:.2f}s")
+    #     # Tu peux stocker les valeurs comme:
+    #     self.selection_start = region[0]
+    #     self.selection_end = region[1]
+
+# ------------------------------------------------------------- PLAYBACK LOGIC
+
+    def toggle_playback(self):
+        """Joue le sample depuis self.play_start"""
+        self.stop_audio()
+        self.play_audio(start_time=self.play_start)
+
+    def play_audio(self, start_time=0):
+        if self.waveform_data is None:
+            return
+        self.start_sample = int(start_time * self.sample_rate)  # Stocke start_sample comme un attribut
+        self.current_time = start_time
+        self.is_playing = True
+        self.timer.start(50)
+
+        def callback(outdata, frames, time, status):
+            if status:
+                print(status)
+            end_sample = self.start_sample + frames  # Utilisation correcte de self.start_sample
+            chunk = self.waveform_data[self.start_sample:end_sample]
+            if len(chunk) < frames:
+                outdata[:len(chunk), 0] = chunk.astype('float32')
+                outdata[len(chunk):, 0] = 0
+                self.stop_audio()
+            else:
+                outdata[:, 0] = chunk.astype('float32')
+            self.start_sample += frames  # Mise à jour correcte
+            self.current_time += frames / self.sample_rate
+
+        self.stream = sd.OutputStream(samplerate=self.sample_rate, channels=1, callback=callback)
+        self.stream.start()
+
+    def stop_audio(self):
+        """Arrête et ferme le stream audio en toute sécurité."""
+        # Si aucun stream n'est actif, on sort immédiatement
+        if self.stream is None:
+            self.is_playing = False
+            return
+
+        # Tentative d'arrêt propre
+        try:
+            if self.stream.active:
+                self.stream.stop()
+        except Exception as e:
+            print(f"[WaveformWidget] Erreur lors de l'arrêt du stream: {e}")
+
+        # Tentative de fermeture propre
+        try:
+            self.stream.close()
+        except Exception as e:
+            print(f"[WaveformWidget] Erreur lors de la fermeture du stream: {e}")
+        finally:
+            self.stream = None
+
+        self.is_playing = False
+        self.stop_timer_signal.emit()
+
+    def update_read_head(self):
+        if self.is_playing:
+            self.read_head.setPos(self.current_time)
+
+    def pause_audio(self):
+        """Pause ou reprend depuis self.current_time"""
+        if self.stream is not None and self.is_playing:
+            # Pause
+            self.stream.stop()
+            self.is_playing = False
+            self.timer.stop()
+        elif not self.is_playing:
+            # Reprise
+            self.play_audio(start_time=self.current_time)
+
+    def stop_and_reset(self):
+        """Stoppe l'audio et remet à zéro"""
+        self.stop_audio()
+        self.current_time = self.play_start
+        self.read_head.setPos(self.play_start)
+
+
+
+class NoLeftDragViewBox(pg.ViewBox):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def mouseDragEvent(self, event, axis=None):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # On ignore complètement les drags avec clic gauche
+            event.ignore()
+        else:
+            # Comportement normal pour les autres boutons
+            super().mouseDragEvent(event, axis)
