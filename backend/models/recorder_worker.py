@@ -1,4 +1,5 @@
 # backend/recorder_worker.py
+
 import soundcard as sc
 import soundfile as sf
 import numpy as np
@@ -6,8 +7,6 @@ import os
 import time
 from datetime import datetime
 from collections import deque
-import multiprocessing as mp
-
 
 def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size):
     """
@@ -15,89 +14,95 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size):
     Listens on cmd_q for commands and writes WAV on 'stop'.
     """
     print("recorder_worker: Starting...")
-    # Initialize loopback microphone
-    mic = sc.get_microphone(
-        id=str(sc.default_speaker().name),
-        include_loopback=True
-    ).recorder(samplerate=sample_rate)
 
-    # Retro buffer
+    # Nombre de blocs pour le buffer rétrospectif
     maxlen = int(pre_seconds * sample_rate / block_size)
-    retro_buf = deque(maxlen=maxlen)
-    live_buf = []
 
-    is_recording = False
-    retro_enabled = False
-    output_folder = None
-    retro_time = 0
+    while True:
+        try:
+            # 1) On récupère la liste de tous les "microphones" WASAPI (incluant loopback)
+            mics = sc.all_microphones(include_loopback=True)
 
-    # **Ouvre le recorder** — initialise _pending_chunk, etc.
-    with mic:
-        while True:
-            # Capture audio block
-            data = mic.record(numframes=block_size)
-            if retro_enabled:
-                retro_buf.append(data)
-            if is_recording:
-                live_buf.append(data)
+            # 2) On tente de prendre en priorité celui qui correspond au haut-parleur par défaut
+            speaker = sc.default_speaker()
+            mic_info = next(
+                (m for m in mics if speaker.name in m.name),
+                mics[0]  # fallback si on ne trouve pas
+            )
+            print(f"recorder_worker: Opening mic '{mic_info.name}'")
 
-            # Process commands non-blocking
-            try:
-                cmd = cmd_q.get_nowait()
-            except Exception:
-                cmd = None
+            # 3) On ouvre un contexte d'enregistrement qui se ferme proprement
+            with mic_info.recorder(samplerate=sample_rate) as mic:
+                retro_buf = deque(maxlen=maxlen)
+                live_buf = []
+                is_recording = False
+                retro_enabled = False
+                output_folder = None
+                retro_time = 0
 
-            if cmd:
-                action = cmd[0]
+                while True:
+                    # --- capture d'un bloc audio
+                    data = mic.record(numframes=block_size)
 
-                if action == 'enable_retro':
-                    retro_enabled = True
-                    resp_q.put(('retro_enabled', True))
+                    # --- enregistrement live si demandé
+                    if is_recording:
+                        live_buf.append(data)
+                    # --- gestion du buffer rétrospectif
+                    elif retro_enabled:
+                        retro_buf.append(data)
+                    # --- traitement non bloquant des commandes
+                    try:
+                        cmd = cmd_q.get_nowait()
+                    except Exception:
+                        cmd = None
 
-                elif action == 'disable_retro':
-                    retro_enabled = False
-                    retro_buf.clear()
-                    resp_q.put(('retro_enabled', False))
+                    if cmd:
+                        action = cmd[0]
+                        if action == 'enable_retro':
+                            retro_enabled = True
+                            resp_q.put(('retro_enabled', True))
+                        elif action == 'disable_retro':
+                            retro_enabled = False
+                            retro_buf.clear()
+                            resp_q.put(('retro_enabled', False))
+                        elif action == 'start':
+                            _, folder, rt = cmd
+                            is_recording = True
+                            live_buf = []
+                            output_folder = folder
+                            retro_time = rt
+                            resp_q.put(('started', None))
+                        elif action == 'stop' and is_recording:
+                            is_recording = False
+                            resp_q.put(('stopped', None))
 
-                elif action == 'start':
-                    print("recorder: start recording")
-                    _, folder, rt = cmd
-                    is_recording = True
-                    live_buf = []
-                    output_folder = folder
-                    retro_time = rt
-                    resp_q.put(('started', None))        # <-- envoi d’un ack
+                            # on compile rétro + live
+                            blocks = int(retro_time * sample_rate / block_size)
+                            pre = list(retro_buf)[-blocks:] if retro_time > 0 else []
+                            combined = pre + live_buf
 
-                elif action == 'stop' and is_recording:
-                    print("recorder: stop recording")
+                            # écriture WAV
+                            ts = datetime.now().strftime("SMPL_%Y-%m-%d_%Hh%M.%S.wav")
+                            path = os.path.join(output_folder, ts)
+                            os.makedirs(output_folder, exist_ok=True)
+                            sf.write(path, np.vstack(combined), samplerate=sample_rate)
+                            print(f"recorder_worker: Audio saved in {path}.")
+                            resp_q.put(('done', path))
 
-                    # Stop recording
-                    is_recording = False
-                    resp_q.put(('stopped', None))     # <-- envoi d’un ack
+                            live_buf = []
+                        elif action == 'shutdown':
+                            raise KeyboardInterrupt()
 
-                    # Combine retro + live
-                    blocks = int(retro_time * sample_rate / block_size)
-                    pre = list(retro_buf)[-blocks:] if retro_time > 0 else []
-                    combined = pre + live_buf
+                    time.sleep(0.001)
 
-                    # Build filename
-                    ts = datetime.now().strftime("SMPL_%Y-%m-%d_%Hh%M.%S.wav")
-                    path = os.path.join(output_folder, ts)
-                    os.makedirs(output_folder, exist_ok=True)
-                    # Write WAV
-                    sf.write(path, np.vstack(combined), samplerate=sample_rate)
-                    print(f"recorder: Audio saved in {path}.")
+        except KeyboardInterrupt:
+            # shutdown demandé, on sort des deux boucles
+            break
 
-                    # Respond with result
-                    resp_q.put(('done', path))
+        except Exception as e:
+            # en cas d'erreur (ex. déconnexion de périphérique), on ré-essaie
+            print(f"recorder_worker: Error, reinitializing mic: {e}")
+            time.sleep(0.5)
+            continue
 
-                    # Reset live buffer, keep retro buffer
-                    live_buf = []
-                elif action == 'shutdown':
-                    break
-
-            # Small sleep to reduce CPU
-            time.sleep(0.001)
-
-    # Clean exit
     resp_q.put(('shutdown_ack', None))

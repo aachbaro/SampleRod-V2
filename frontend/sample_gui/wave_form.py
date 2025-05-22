@@ -274,10 +274,27 @@ class WaveformWidget(QWidget):
         self.stream.start()
 
     def stop_audio(self):
-        if self.stream:
-            self.stream.stop()
+        """Arrête et ferme le stream audio en toute sécurité."""
+        # Si aucun stream n'est actif, on sort immédiatement
+        if self.stream is None:
+            self.is_playing = False
+            return
+
+        # Tentative d'arrêt propre
+        try:
+            if self.stream.active:
+                self.stream.stop()
+        except Exception as e:
+            print(f"[WaveformWidget] Erreur lors de l'arrêt du stream: {e}")
+
+        # Tentative de fermeture propre
+        try:
             self.stream.close()
+        except Exception as e:
+            print(f"[WaveformWidget] Erreur lors de la fermeture du stream: {e}")
+        finally:
             self.stream = None
+
         self.is_playing = False
         self.stop_timer_signal.emit()
 

@@ -58,11 +58,12 @@ class RecorderService:
         """Stop recording and return filepath when done."""
         self.is_recording = False
         self.cmd_queue.put(('stop',))
-        # Wait for worker to respond with done message
-        msg, payload = self.resp_queue.get()
-        if msg == 'done':
-            return payload
-        return None
+        # # Wait for worker to respond with done message
+        # msg, payload = self.resp_queue.get()
+        # if msg == 'done':
+        #     print(f"recorder_service: Audio saved in {payload}.")
+        #     return payload
+        # return None
 
     def shutdown(self, timeout=2):
         """Shut down the worker process cleanly."""
@@ -87,15 +88,17 @@ class RecorderService:
                 msg, payload = self.resp_queue.get_nowait()
             except Exception:
                 break
-            print(f"poll: {msg}, {payload}")
+            print(f"recorder_service: poll: {msg}, {payload}")
 
             if msg == 'started':
+                print("recorder_service: started receveid from worker.")
                 self.is_recording = True
             elif msg == 'stopped':
+                print("recorder_service: stopped receveid from worker.")
                 self.is_recording = False
             elif msg == 'retro_enabled':
                 self.retro_enabled = payload
             elif msg == 'done':
+                print("recorder_service: done receveid from worker.")
                 others.append(('done', payload))
-            # on ignore shutdown_ack ici
         return others

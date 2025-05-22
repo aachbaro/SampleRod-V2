@@ -317,10 +317,7 @@ class RecordWidgetWindow(QMainWindow):
 
     def _poll_worker(self):
         for msg, payload in self.user.recorder.poll():
-            print(f"polling {msg} {payload}")
-            if msg == 'started' or msg == 'stopped':
-                # À chaque changement d’état on met à jour le bouton
-                print("update record button display")
-                self.updateRecordButtonDisplay()
-            elif msg == 'done':
+            print(f"record_widget: polling {msg} {payload}")
+            if msg == 'done':
+                print("record_widget: done received from service.")
                 self.newSampleRecorded.emit(payload)

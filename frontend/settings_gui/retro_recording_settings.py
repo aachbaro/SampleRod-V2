@@ -16,9 +16,6 @@ class RetroRecordingWidget(QWidget):
 
         self.init_ui()
         self.load_settings()
-        self._poll_timer = QTimer(self)
-        self._poll_timer.timeout.connect(self._poll_retro)
-        self._poll_timer.start(300)  # toutes les 300 ms
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -96,10 +93,3 @@ class RetroRecordingWidget(QWidget):
         self.toggle_checkbox.setEnabled(True)
 
         self.retroRecordingUpdated.emit()
-
-    def _poll_retro(self):
-        for msg, payload in self.user.recorder.poll():
-            if msg == 'retro_enabled':
-                # met à jour le checkbox *SEULEMENT* si différent
-                if self.toggle_checkbox.isChecked() != payload:
-                    self.toggle_checkbox.setChecked(payload)
