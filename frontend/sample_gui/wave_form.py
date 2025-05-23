@@ -206,44 +206,89 @@ class WaveformWidget(QWidget):
                 return False
 
         # 2) Sinon, on est en mode region : clic-drag → création/redimensionnement
-        if event.type() == QEvent.GraphicsSceneMousePress and event.button() == Qt.MouseButton.LeftButton:
-            pos = vb.mapSceneToView(event.scenePos()).x()
-            self._press_x = float(np.clip(pos, 0, self.duration))
-            self._dragging = True
-            # supprime ancienne région et marqueur
+        if event.type() == QEvent.GraphicsSceneMousePress \
+        and event.button() == Qt.MouseButton.LeftButton:
+
+            pos_scene = event.scenePos()
+            vb = self.plot.getViewBox()
+            data_x = vb.mapSceneToView(pos_scene).x()
+            press_x = float(np.clip(data_x, 0, self.duration))
+
+            # Si on a déjà une région...
             if self.region:
+                r0, r1 = self.region.getRegion()
+
+                # On calcule la position en pixels des deux handles
+                line0, line1 = self.region.lines
+                # boundingRect en coords locales, puis centre, puis en scene
+                scene_handle0 = line0.mapToScene(line0.boundingRect()).boundingRect().center().x()
+                scene_handle1 = line1.mapToScene(line1.boundingRect()).boundingRect().center().x()
+                tol = 5  # tolérance en pixels
+
+                # Si clic SUR un handle (gauche OU droit), on laisse LinearRegionItem gérer le resize
+                if abs(pos_scene.x() - scene_handle0) < tol or abs(pos_scene.x() - scene_handle1) < tol:
+                    return False
+
+                # Sinon (clic dans le body), on SUPPRIME l'ancienne région
                 self.plot.removeItem(self.region)
-            if hasattr(self, 'marker') and self.marker:
+                self.region = None
+                self._dragging = False
+                self._creating = False
+
+                # et on supprime aussi le marker (au cas où)
+            if self.marker:
                 self.plot.removeItem(self.marker)
-            # crée une mini-région [x, x]
-            self.region = pg.LinearRegionItem([self._press_x, self._press_x],
-                                              brush=pg.mkBrush(255,255,255,40),
-                                              pen=pg.mkPen('c', width=1))
+                self.marker = None
+
+            # À partir d'ici, on sait qu'il n'y a plus de région → on crée une nouvelle
+            self._dragging = True
+            self._creating = True
+            self._press_x = press_x
+
+            self.region = pg.LinearRegionItem([press_x, press_x],
+                                            brush=pg.mkBrush(255,255,255,40),
+                                            pen=pg.mkPen('c', width=1))
             self.region.setBounds([0, self.duration])
+            self.region.sigRegionChanged.connect(self.on_region_changed)
             self.region.sigRegionChangeFinished.connect(self.on_region_changed)
             self.plot.addItem(self.region)
             return True
 
-        elif event.type() == QEvent.GraphicsSceneMouseMove and self._dragging and self.region:
-            pos = vb.mapSceneToView(event.scenePos()).x()
-            x = float(np.clip(pos, 0, self.duration))
-            self.region.setRegion([min(self._press_x, x), max(self._press_x, x)])
+        # 2) Redimensionnement **durant** le drag de création
+        elif event.type() == QEvent.GraphicsSceneMouseMove \
+            and self._dragging and self._creating \
+            and self.region is not None:
+
+            pos = self.plot.getViewBox().mapSceneToView(event.scenePos())
+            x   = float(np.clip(pos.x(), 0, self.duration))
+            self.region.setRegion([min(self._press_x, x),
+                                max(self._press_x, x)])
             return True
 
-        elif event.type() == QEvent.GraphicsSceneMouseRelease and event.button() == Qt.MouseButton.LeftButton and self._dragging:
+        # 3) Fin du drag (Release) → région validée ou simple clic
+        elif event.type() == QEvent.GraphicsSceneMouseRelease \
+             and event.button() == Qt.MouseButton.LeftButton \
+             and self._creating:
+
+            print("Fin du drag")
+
+            pos       = self.plot.getViewBox().mapSceneToView(event.scenePos())
+            release_x = float(np.clip(pos.x(), 0, self.duration))
             self._dragging = False
-            # si c’était un simple clic (pas de vrai drag), on vire la région et on pose un marker
-            start, end = self.region.getRegion()
-            if abs(end - start) < 1e-3:
+            self._creating = False
+            self.on_region_changed()
+
+            # si c’était un clic « sans drag »: on détruit la mini-région et pose un marker
+            if abs(release_x - self._press_x) < 1e-3:
                 self.plot.removeItem(self.region)
                 self.region = None
-                self._set_marker(start)
-            else:
-                # on garde la région et on met à jour play_start / play_end
-                self.on_region_changed()
+                self._dragging = False
+                self._creating = False
+                self._set_marker(release_x)
+            # sinon on garde la région telle quelle (handles actifs)
             return True
 
-        # 3) tout le reste → laisser PyQtGraph gérer (zoom/pan right-click, etc.)
+        # 4) tout le reste passe à la moulinette par défaut
         return False
 
     def _set_marker(self, x):
