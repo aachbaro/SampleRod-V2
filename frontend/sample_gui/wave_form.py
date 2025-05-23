@@ -33,6 +33,7 @@ class WaveformWidget(QWidget):
         self.stream = None
         self.current_time = 0.0
         self.is_playing = False
+        self.loop_enabled  = False # → boucle de lecture
 
         # → attributs sélection
         self.play_start = 0.0
@@ -64,15 +65,24 @@ class WaveformWidget(QWidget):
         # boutons play / pause / stop
         h = QHBoxLayout()
         btns = [
-            ('fa5s.play', self.toggle_playback),
-            ('fa5s.pause', self.pause_audio),
-            ('fa5s.stop', self.stop_and_reset)
+            ('fa5s.play',  self.play_from_start),    # toujours lancer depuis play_start
+            ('fa5s.pause', self.pause_or_resume),    # toggler pause / reprise
+            ('fa5s.stop',  self.stop_and_reset)
         ]
         for ico, cb in btns:
             b = QPushButton(); b.setFixedSize(30,30)
             b.setIcon(qta.icon(ico, color='lightgray'))
-            b.clicked.connect(cb)
+            b.clicked.connect(cb)   # cb est maintenant play_from_start ou pause_or_resume
             h.addWidget(b)
+
+        # ← Nouveau bouton Loop
+        self.loop_button = QPushButton()
+        self.loop_button.setCheckable(True)
+        self.loop_button.setFixedSize(30,30)
+        self.loop_button.setIcon(qta.icon('fa5s.sync', color='lightgray'))
+        self.loop_button.setToolTip("Loop ON/OFF")
+        self.loop_button.toggled.connect(self.toggle_loop)
+        h.addWidget(self.loop_button)
         self.layout.addLayout(h)
 
         # tête de lecture
@@ -113,53 +123,65 @@ class WaveformWidget(QWidget):
             vb.translateBy(x=dx * self.duration, y=0)
         else:
             pg.ViewBox.wheelEvent(vb, ev)
-
+        
     def eventFilter(self, source, event):
-        # 1) Début de création de région ou simple clic hors-région
         if event.type() == QEvent.GraphicsSceneMousePress \
-           and event.button() == Qt.MouseButton.LeftButton:
+        and event.button() == Qt.MouseButton.LeftButton:
 
-            pos     = self.plot.getViewBox().mapSceneToView(event.scenePos())
-            press_x = float(np.clip(pos.x(), 0, self.duration))
+            pos_scene = event.scenePos()
+            vb = self.plot.getViewBox()
+            data_x = vb.mapSceneToView(pos_scene).x()
+            press_x = float(np.clip(data_x, 0, self.duration))
 
-            # Si on clique DANS la région existante, on LÂCHE le filtre
+            # Si on a déjà une région...
             if self.region:
                 r0, r1 = self.region.getRegion()
-                if r0 <= press_x <= r1:
-                    # on laisse LinearRegionItem gérer ses propres drags
+
+                # On calcule la position en pixels des deux handles
+                line0, line1 = self.region.lines
+                # boundingRect en coords locales, puis centre, puis en scene
+                scene_handle0 = line0.mapToScene(line0.boundingRect()).boundingRect().center().x()
+                scene_handle1 = line1.mapToScene(line1.boundingRect()).boundingRect().center().x()
+                tol = 5  # tolérance en pixels
+
+                # Si clic SUR un handle (gauche OU droit), on laisse LinearRegionItem gérer le resize
+                if abs(pos_scene.x() - scene_handle0) < tol or abs(pos_scene.x() - scene_handle1) < tol:
                     return False
 
-                # sinon, clic en dehors → on supprime l'ancienne
+                # Sinon (clic dans le body), on SUPPRIME l'ancienne région
                 self.plot.removeItem(self.region)
                 self.region = None
+                self._dragging = False
+                self._creating = False
 
+                # et on supprime aussi le marker (au cas où)
             if self.marker:
                 self.plot.removeItem(self.marker)
                 self.marker = None
 
-            # … ici, on est sûr de créer une NOUVELLE région …
+            # À partir d'ici, on sait qu'il n'y a plus de région → on crée une nouvelle
             self._dragging = True
             self._creating = True
-            self._press_x  = press_x
+            self._press_x = press_x
 
-            self.region = pg.LinearRegionItem(
-                [press_x, press_x],
-                movable=True,
-                brush=pg.mkBrush(255,255,255,40),
-                pen=pg.mkPen('c', width=1)
-            )
+            self.region = pg.LinearRegionItem([press_x, press_x],
+                                            brush=pg.mkBrush(255,255,255,40),
+                                            pen=pg.mkPen('c', width=1))
             self.region.setBounds([0, self.duration])
+            self.region.sigRegionChanged.connect(self.on_region_changed)
+            self.region.sigRegionChangeFinished.connect(self.on_region_changed)
             self.plot.addItem(self.region)
-            return True        # on consomme l’événement
+            return True
 
         # 2) Redimensionnement **durant** le drag de création
         elif event.type() == QEvent.GraphicsSceneMouseMove \
-             and self._dragging and self._creating:
+            and self._dragging and self._creating \
+            and self.region is not None:
 
             pos = self.plot.getViewBox().mapSceneToView(event.scenePos())
             x   = float(np.clip(pos.x(), 0, self.duration))
             self.region.setRegion([min(self._press_x, x),
-                                   max(self._press_x, x)])
+                                max(self._press_x, x)])
             return True
 
         # 3) Fin du drag (Release) → région validée ou simple clic
@@ -179,6 +201,8 @@ class WaveformWidget(QWidget):
             if abs(release_x - self._press_x) < 1e-3:
                 self.plot.removeItem(self.region)
                 self.region = None
+                self._dragging = False
+                self._creating = False
                 self._set_marker(release_x)
             # sinon on garde la région telle quelle (handles actifs)
             return True
@@ -194,6 +218,7 @@ class WaveformWidget(QWidget):
 
         # pose du marker
         self.play_start = x
+        self._loop_start_sample = int(x * self.sample_rate)
         print(f"Région : début {self.play_start:.3f}s")
         if self.marker:
             self.plot.removeItem(self.marker)
@@ -204,42 +229,84 @@ class WaveformWidget(QWidget):
         self.plot.addItem(self.marker)
 
     def on_region_changed(self):
-        """appelé après drag ou redimensionnement terminé"""
+        if not self.region:
+            return
         start, end = self.region.getRegion()
-        print(f"Région : début {start:.3f}s — fin {end:.3f}s")
         self.play_start = start
         self.play_end   = end
+        # stocke aussi en samples
+        self._loop_start_sample = int(start * self.sample_rate)
+        self._loop_end_sample   = int(end   * self.sample_rate)
         print(f"Région : début {start:.3f}s — fin {end:.3f}s")
 
     # ----------------- PLAYBACK -----------------
 
-    def toggle_playback(self):
+    def toggle_loop(self, checked: bool):
+        self.loop_enabled = checked
+        color = 'lightgreen' if checked else 'lightgray'
+        self.loop_button.setIcon(qta.icon('fa5s.sync', color=color))
+
+    def play_from_start(self):
+        """Lance la lecture depuis play_start, même si on était déjà en pause ou stop."""
+        # arrête tout ancien flux
+        self.stop_audio()
+        # relance depuis la borne de début
+        self.play_audio(self.play_start)
+
+    def pause_or_resume(self):
+        """Pause si on joue, ou reprend depuis current_time si on est en pause."""
         if self.is_playing:
-            self.pause_audio()
+            # mettre en pause : stoppe et garde current_time intact
+            if self.stream:
+                self.stream.stop()
+            self.timer.stop()
+            self.is_playing = False
         else:
-            self.play_audio(self.play_start)
+            # reprise : ouvre un nouveau stream depuis current_time
+            self.play_audio(self.current_time)
 
     def play_audio(self, start_time=0.0):
         if self.waveform_data is None:
             return
+
+        # position de départ à partir de start_time (pour pause / reprise)
         self.start_sample = int(start_time * self.sample_rate)
         self.current_time = start_time
-        self.is_playing = True
+        self.is_playing   = True
         self.timer.start(50)
 
-        def callback(outdata, frames, time, status):
+        def callback(outdata, frames, time_info, status):
             if status:
                 print(status)
-            end = self.start_sample + frames
-            chunk = self.waveform_data[self.start_sample:end]
-            if len(chunk) < frames:
-                outdata[:len(chunk),0] = chunk.astype('float32')
-                outdata[len(chunk):,0] = 0
-                self.is_playing = False
-            else:
-                outdata[:,0] = chunk.astype('float32')
-            self.start_sample += frames
-            self.current_time += frames / self.sample_rate
+            buf = np.zeros(frames, dtype='float32')
+            idx = 0
+
+            # À chaque boucle, récupère les bornes dynamiques
+            loop_start = getattr(self, '_loop_start_sample', 0)
+            loop_end   = getattr(self, '_loop_end_sample', len(self.waveform_data))
+
+            # si pas de région fixe on boucle sur tout le sample
+            if loop_end <= loop_start:
+                loop_end = len(self.waveform_data)
+
+            while idx < frames:
+                # si on dépasse la borne de fin
+                if self.start_sample >= loop_end:
+                    if not self.loop_enabled:
+                        self.is_playing = False
+                        break
+                    # reboucle
+                    self.start_sample = loop_start
+
+                remaining = loop_end - self.start_sample
+                to_read = min(frames - idx, remaining)
+                chunk = self.waveform_data[self.start_sample:self.start_sample + to_read]
+                buf[idx:idx+to_read] = chunk.astype('float32')
+                idx               += to_read
+                self.start_sample += to_read
+
+            outdata[:,0] = buf
+            self.current_time = self.start_sample / self.sample_rate
 
         self.stream = sd.OutputStream(
             samplerate=self.sample_rate,
@@ -290,3 +357,29 @@ class NoLeftDragViewBox(pg.ViewBox):
             ev.ignore()
         else:
             super().mouseDragEvent(ev, axis)
+
+
+class StretchOnlyRegion(pg.LinearRegionItem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # stocke une référence aux poignées
+        self.handles = [h for h in self.lines if isinstance(h, pg.SegmentROI)]
+        # sous PyQtGraph >= 0.12, ce sont des QGraphicsRectItem
+        # mais on peut simplement récupérer self.lines (deux segments verts)
+
+    def mouseDragEvent(self, ev):
+        # si on vient de cliquer, on vérifie si c'était sur un handle
+        if ev.isStart():
+            scene_pos = ev.scenePos()
+            # pour chaque ligne-poignée, test si la souris est dessus
+            for line in self.lines:
+                pts = line.mapToScene(line.boundingRect()).toList()
+                if line.mapFromScene(scene_pos) in line.mapFromScene(scene_pos):
+                    # si sur un handle, on laisse PyQtGraph faire le resizing
+                    super().mouseDragEvent(ev)
+                    return
+            # sinon, on ignore le drag pour la zone entière
+            ev.ignore()
+        else:
+            # si on est déjà en train de dragger (drag move / end), on laisse faire
+            super().mouseDragEvent(ev)
