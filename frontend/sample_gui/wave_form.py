@@ -156,15 +156,32 @@ class WaveformWidget(QWidget):
         self.marker_mode_button.setIcon(qta.icon('fa5s.map-marker-alt', color=c))
 
     def add_marker(self, t: float):
-        """Pose un marqueur à t (en secondes) et rafraîchit la liste."""
+        """Pose un marqueur à t (en secondes), le rend draggable et rafraîchit la liste."""
         import bisect
+        # 1) Insère t de façon triée
         bisect.insort(self.markers, t)
-        # on reclasse la liste QtWidget
+        # 2) Recrée la liste pour qu'elle soit dans l'ordre
         self._refresh_marker_list()
-        # Plot line
+        # 3) Crée la ligne draggable
         line = pg.InfiniteLine(pos=t, angle=90, pen=pg.mkPen('y', width=2))
+        line.setMovable(True)
+        line.sigPositionChanged.connect(lambda _, l=line: self.on_marker_moved(l))
         self.plot.addItem(line)
         self.marker_lines[t] = line
+
+    def on_marker_moved(self, line: pg.InfiniteLine):
+        """Quand on déplace un marker, on met à jour son temps et la liste."""
+        # trouve l'ancien time
+        old_t = next(t for t, ln in self.marker_lines.items() if ln is line)
+        new_t = float(line.value())
+        # remplace dans self.markers
+        self.markers.remove(old_t)
+        del self.marker_lines[old_t]
+        import bisect
+        bisect.insort(self.markers, new_t)
+        self.marker_lines[new_t] = line
+        # rafraîchit la liste
+        self._refresh_marker_list()
 
     def remove_marker(self, t: float):
         """Supprime le marqueur à t et rafraîchit la liste."""
@@ -217,16 +234,20 @@ class WaveformWidget(QWidget):
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
 
-        # 1) Si on est en mode marker, on gère uniquement les clics simples
+        # 1) En mode marker, on intercepte seulement les clics hors des lignes existantes
         if self.marker_mode:
-            if event.type() == QEvent.GraphicsSceneMousePress and event.button() == Qt.MouseButton.LeftButton:
-                pos = vb.mapSceneToView(event.scenePos()).x()
-                t = float(np.clip(pos, 0, self.duration))
+            if event.type() == QEvent.GraphicsSceneMousePress \
+               and event.button() == Qt.MouseButton.LeftButton:
+                pos = event.scenePos()
+                # si on a cliqué SUR un marker existant, on laisse InfiniteLine gérer le drag
+                for line in self.marker_lines.values():
+                    if line.sceneBoundingRect().contains(pos):
+                        return False
+                # sinon, on créé un nouveau marker
+                t = float(np.clip(vb.mapSceneToView(pos).x(), 0, self.duration))
                 self.add_marker(t)
                 return True
-            else:
-                # on laisse le reste passer au ViewBox (panning, zoom, etc.)
-                return False
+            return False
 
         # 2) Sinon, on est en mode region : clic-drag → création/redimensionnement
         if event.type() == QEvent.GraphicsSceneMousePress \
