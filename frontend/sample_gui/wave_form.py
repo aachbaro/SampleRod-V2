@@ -156,40 +156,63 @@ class WaveformWidget(QWidget):
         self.marker_mode_button.setIcon(qta.icon('fa5s.map-marker-alt', color=c))
 
     def add_marker(self, t: float):
-        """Pose un marqueur à t (en secondes)."""
+        """Pose un marqueur à t (en secondes) et rafraîchit la liste."""
         import bisect
         bisect.insort(self.markers, t)
-        # Qt List
-        item = QListWidgetItem(f"M{len(self.markers)} — {t:.3f}s")
-        item.setData(Qt.ItemDataRole.UserRole, t)
-        self.marker_list.addItem(item)
+        # on reclasse la liste QtWidget
+        self._refresh_marker_list()
         # Plot line
         line = pg.InfiniteLine(pos=t, angle=90, pen=pg.mkPen('y', width=2))
         self.plot.addItem(line)
         self.marker_lines[t] = line
 
     def remove_marker(self, t: float):
-        """Supprime le marqueur à t."""
+        """Supprime le marqueur à t et rafraîchit la liste."""
         if t in self.markers:
-            idx = self.markers.index(t)
-            self.markers.pop(idx)
+            self.markers.remove(t)
             line = self.marker_lines.pop(t)
             self.plot.removeItem(line)
-            # Qt ListItem
-            items = self.marker_list.findItems(f"M{idx+1} — {t:.3f}s", Qt.MatchExactly)
-            if items:
-                self.marker_list.takeItem(self.marker_list.row(items[0]))
+            # on reclasse la liste QtWidget
+            self._refresh_marker_list()
 
     def on_marker_list_clicked(self, item: QListWidgetItem):
-        t_item = item.data(Qt.ItemDataRole.UserRole)
-        # recherche de l'index du marqueur le plus proche
-        idx = min(range(len(self.markers)), key=lambda i: abs(self.markers[i] - t_item))
+        t = item.data(Qt.ItemDataRole.UserRole)
+        # trouve l'indice exact
+        idx = self.markers.index(t)
         self.current_marker_idx = idx
-        self.read_head.setPos(self.markers[idx])
+        # next bound
+        if idx+1 < len(self.markers):
+            t2 = self.markers[idx+1]
+        else:
+            t2 = self.duration
+
+        # supprime l'ancienne région
+        if self.region:
+            self.plot.removeItem(self.region)
+        # crée la nouvelle région
+        self.region = pg.LinearRegionItem([t, t2],
+                                          brush=pg.mkBrush(255,255,255,40),
+                                          pen=pg.mkPen('c', width=1))
+        self.region.setBounds([0, self.duration])
+        self.region.sigRegionChangeFinished.connect(self.on_region_changed)
+        self.plot.addItem(self.region)
+
+        # mets à jour play_start / play_end et place la tête de lecture
+        self.play_start, self.play_end = t, t2
+        self.read_head.setPos(t)
+        print(f"Région mise à jour: {t:.3f}s → {t2:.3f}s")
 
     def on_marker_list_double_clicked(self, item: QListWidgetItem):
         t = item.data(Qt.ItemDataRole.UserRole)
         self.remove_marker(t)
+
+    def _refresh_marker_list(self):
+        """Vide et remplit la QListWidget en ordre chronologique."""
+        self.marker_list.clear()
+        for i, t in enumerate(self.markers):
+            item = QListWidgetItem(f"M{i+1} — {t:.3f}s")
+            item.setData(Qt.ItemDataRole.UserRole, t)
+            self.marker_list.addItem(item)
 
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
