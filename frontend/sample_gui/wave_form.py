@@ -546,6 +546,9 @@ class WaveformWidget(QWidget):
             self.waveform_data[s1:]
         ])
         self.duration = len(self.waveform_data)/self.sample_rate
+        vb = self.plot.getViewBox()
+        vb.setLimits(xMin=0, xMax=self.duration, yMin=-1, yMax=1)
+        self.plot.setXRange(0, self.duration, padding=0)
 
         # 2) supprime visuel et interne les markers dans [start,end]
         to_remove = [t for t in self.markers if start <= t <= end]
@@ -592,6 +595,9 @@ class WaveformWidget(QWidget):
             self.waveform_data[s0:]
         ])
         self.duration = len(self.waveform_data)/self.sample_rate
+        vb = self.plot.getViewBox()
+        vb.setLimits(xMin=0, xMax=self.duration, yMin=-1, yMax=1)
+        self.plot.setXRange(0, self.duration, padding=0)
 
         # 2) décale en arrière tous les markers > start
         new_markers, new_lines = [], {}
