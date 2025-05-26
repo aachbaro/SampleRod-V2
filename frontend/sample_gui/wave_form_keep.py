@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QListWidget, QListWidgetItem, QMenu
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QThread
 import pyqtgraph as pg
 import numpy as np

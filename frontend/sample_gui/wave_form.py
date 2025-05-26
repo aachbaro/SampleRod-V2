@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QListWidget, QListWidgetItem
+    QListWidget, QListWidgetItem, QMenu
 )
+from PyQt6.QtGui import QCursor
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QThread
 import pyqtgraph as pg
 import numpy as np
@@ -26,6 +27,34 @@ class WaveformLoaderThread(QThread):
         except Exception as e:
             print(f"[WaveformLoaderThread] Erreur: {e}")
             self.waveformReady.emit(np.array([]), 0, 0.0)
+
+class ContextMenuLinearRegionItem(pg.LinearRegionItem):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setAcceptedMouseButtons(
+            Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton
+        )
+
+    def contextMenuEvent(self, ev):
+
+        start, end = self.getRegion()
+
+        menu = QMenu()
+
+        cut = menu.addAction("Cut   Ctrl + x")
+
+        # place ici tes autres actions...
+
+
+        # récupère la position globale du curseur
+        global_pos = QCursor.pos()
+        action = menu.exec(global_pos)
+
+        if action is cut:
+            # on appelle la méthode _cut_region sur le parent
+            self._parent._cut_region(start, end)
+
+        ev.accept()
 
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
@@ -161,15 +190,33 @@ class WaveformWidget(QWidget):
         self.waveform_data, self.sample_rate, self.duration = y, sr, dur
         vb = self.plot.getViewBox()
         vb.setLimits(xMin=0, xMax=dur, yMin=-1, yMax=1)
-        self._draw_waveform()
+        self._redraw_all()
 
     def _draw_waveform(self):
+        # 1) on vide la vue
+        self.plot.clear()
+
+        # 2) on trace la forme d’onde
         x = np.linspace(0, self.duration, len(self.waveform_data))
         self.plot.plot(x, self.waveform_data, pen=pg.mkPen('w', width=1))
         self.plot.setXRange(0, self.duration, padding=0)
         self.plot.setYRange(-1, 1, padding=0)
+
+        # 3) on ré-initialise le comportement de la molette
         vb = self.plot.getViewBox()
+        vb.setMenuEnabled(False)
         vb.wheelEvent = self._zoom_or_pan
+
+        # 4) on remet toujours la tête de lecture
+        # (même si elle a été supprimée par clear())
+        self.plot.addItem(self.read_head)
+        # et on la positionne où il faut
+        self.read_head.setPos(self.current_time)
+
+    def _redraw_all(self):
+        self._draw_waveform()
+        for line in self.marker_lines.values():
+            self.plot.addItem(line)
 
 # ———————————————————————————————————————————————————— Navigation   -————————————————————————————————————————————————————
 
@@ -299,12 +346,14 @@ class WaveformWidget(QWidget):
         if self.region:
             self.plot.removeItem(self.region)
         # crée la nouvelle région
-        self.region = pg.LinearRegionItem([t, t2],
+        self.region = ContextMenuLinearRegionItem([t, t2],
                                           brush=pg.mkBrush(255,255,255,40),
                                           pen=pg.mkPen('c', width=1))
         self.region.setZValue(1) 
         self.region.setBounds([0, self.duration])
+        # self.region.sigContextMenuRequested.connect(self._on_region_context_menu)
         self.region.sigRegionChangeFinished.connect(self.on_region_changed)
+        self.region._parent = self
         self.plot.addItem(self.region)
 
         # mets à jour play_start / play_end et place la tête de lecture
@@ -424,12 +473,14 @@ class WaveformWidget(QWidget):
             self._creating = True
             self._press_x = press_x
 
-            self.region = pg.LinearRegionItem([press_x, press_x],
+            self.region = ContextMenuLinearRegionItem([press_x, press_x],
                                             brush=pg.mkBrush(255,255,255,40),
                                             pen=pg.mkPen('c', width=1))
             self.region.setBounds([0, self.duration])
             self.region.sigRegionChanged.connect(self.on_region_changed)
             self.region.sigRegionChangeFinished.connect(self.on_region_changed)
+            # self.region.sigContextMenuRequested.connect(self._on_region_context_menu)
+            self.region._parent = self
             self.plot.addItem(self.region)
             return True
 
@@ -470,6 +521,113 @@ class WaveformWidget(QWidget):
         # 4) tout le reste passe à la moulinette par défaut
         return False
 
+    # —————————————————————————————————— menu contextuel region ——————————————————————————————————
+
+    def _cut_region(self, start, end):
+        removed, removed_markers, shift = self._do_cut(start, end)
+        # on enregistre l’action pour undo/redo
+        self._push_history({
+            "action":"cut",
+            "start":start,
+            "removed_samples":removed,
+            "removed_markers":removed_markers,
+            "shift":shift
+        })
+
+    def _do_cut(self, start, end):
+        """Coupe la zone [start,end], supprime les markers dedans et décale les suivants."""
+        s0, s1 = int(start*self.sample_rate), int(end*self.sample_rate)
+        shift = end - start
+
+        # 1) découpe samples
+        removed = self.waveform_data[s0:s1].copy()
+        self.waveform_data = np.concatenate([
+            self.waveform_data[:s0],
+            self.waveform_data[s1:]
+        ])
+        self.duration = len(self.waveform_data)/self.sample_rate
+
+        # 2) supprime visuel et interne les markers dans [start,end]
+        to_remove = [t for t in self.markers if start <= t <= end]
+        for t in to_remove:
+            line = self.marker_lines.pop(t)
+            self.plot.removeItem(line)
+            self.markers.remove(t)
+
+        # 3) décale tous les markers > start
+        new_markers, new_lines = [], {}
+        for t, line in list(self.marker_lines.items()):
+            if t > start:
+                nt = t - shift
+                line.setPos(nt)
+                new_markers.append(nt)
+                new_lines[nt] = line
+            else:
+                new_markers.append(t)
+                new_lines[t] = line
+        self.markers = sorted(new_markers)
+        self.marker_lines = new_lines
+
+        self._refresh_marker_list()
+
+        # 4) redraw complet
+        self._redraw_all()
+        self.read_head.setPos(0.0)
+
+        self.current_time = 0.0
+        self.play_start  = 0.0
+        self.play_end    = self.duration
+        return removed, to_remove, shift
+
+    def _undo_cut(self, cmd):
+        """Restaure un cut précédemment effectué."""
+        start = cmd["start"]
+        s0 = int(start*self.sample_rate)
+        removed, removed_markers, shift = cmd["removed_samples"], cmd["removed_markers"], cmd["shift"]
+
+        # 1) recolle les samples
+        self.waveform_data = np.concatenate([
+            self.waveform_data[:s0],
+            removed,
+            self.waveform_data[s0:]
+        ])
+        self.duration = len(self.waveform_data)/self.sample_rate
+
+        # 2) décale en arrière tous les markers > start
+        new_markers, new_lines = [], {}
+        for t, line in list(self.marker_lines.items()):
+            if t > start:
+                rt = t + shift
+                line.setPos(rt)
+                new_markers.append(rt)
+                new_lines[rt] = line
+            else:
+                new_markers.append(t)
+                new_lines[t] = line
+        self.markers = sorted(new_markers)
+        self.marker_lines = new_lines
+
+        # 3) recrée **sans history** les markers qu’on avait supprimés
+        for t in removed_markers:
+            self._create_marker_line(t)
+
+        self._refresh_marker_list()
+
+        # 4) redraw
+        self._redraw_all()
+        self.read_head.setPos(start)
+
+    def _create_marker_line(self, t):
+        """Créer la ligne d’un marker sans touch­er à l’historique."""
+        import bisect
+        bisect.insort(self.markers, t)
+        line = pg.InfiniteLine(pos=t, angle=90, pen=pg.mkPen('y', width=2))
+        line.setMovable(True)
+        line.old_pos = t
+        line.sigPositionChanged.connect(lambda _, l=line: self.on_marker_moved(l))
+        line.sigPositionChangeFinished.connect(lambda _, l=line: self._on_marker_move_finished(l))
+        self.marker_lines[t] = line
+
 # —————————————————————————————————————————————————————— Playback ——————————————————————————————————————————————————————
 
     def play_from_start(self):
@@ -502,41 +660,60 @@ class WaveformWidget(QWidget):
         self.timer.start(50)
 
         def callback(outdata, frames, time_info, status):
+            # Sorte de silence par défaut
             buf = np.zeros((frames,), dtype='float32')
             idx = 0
 
             # — calcul des bornes en samples
             if self.marker_mode and self.markers:
                 ms = self.markers[self.current_marker_idx]
-                start = int(ms * self.sample_rate)
-                if self.current_marker_idx+1 < len(self.markers):
-                    me = int(self.markers[self.current_marker_idx+1] * self.sample_rate)
+                region_start = int(ms * self.sample_rate)
+                if self.current_marker_idx + 1 < len(self.markers):
+                    region_end = int(self.markers[self.current_marker_idx + 1] * self.sample_rate)
                 else:
-                    me = len(self.waveform_data)
+                    region_end = len(self.waveform_data)
             else:
-                start = int(self.play_start * self.sample_rate)
-                me    = int(self.play_end   * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
+                region_start = int(self.play_start * self.sample_rate)
+                region_end = int(self.play_end * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
 
-            # ← nouvelle partie : si la region est vide, on renvoie du silence et on stoppe
-            if me <= start:
+            # si la région est vide, on renvoie du silence et on stoppe
+            if region_end <= region_start:
                 outdata[:, 0] = buf
                 self.is_playing = False
                 return
 
+            # position de lecture actuelle
+            read_pos = self.start_sample
+
             # — playback + loop
             while idx < frames:
-                if self.start_sample >= me:
+                # si on dépasse la fin de la région
+                if read_pos >= region_end:
                     if not self.loop_enabled:
                         self.is_playing = False
                         break
-                    self.start_sample = start
-                remaining = me - self.start_sample
-                to_read   = min(frames-idx, remaining)
-                chunk     = self.waveform_data[self.start_sample:self.start_sample+to_read]
-                buf[idx:idx+to_read] = chunk.astype('float32')
-                idx += to_read
-                self.start_sample += to_read
+                    read_pos = region_start
 
+                # combien d’échantillons restent dans la région
+                remaining = region_end - read_pos
+                # on ne lit jamais plus que frames-idx ni que remaining
+                to_read = min(frames - idx, remaining)
+
+                # extrait le chunk et en calcule la vraie longueur
+                chunk = self.waveform_data[read_pos:read_pos + to_read].astype('float32')
+                n = chunk.shape[0]
+                if n == 0:
+                    break  # plus rien à jouer
+
+                # copie exactement n échantillons dans le buffer
+                buf[idx:idx + n] = chunk
+                idx += n
+                read_pos += n
+
+            # on met à jour la position de lecture
+            self.start_sample = read_pos
+
+            # on renvoie le buffer et on met à jour current_time
             outdata[:, 0] = buf
             self.current_time = self.start_sample / self.sample_rate
 
@@ -604,25 +781,25 @@ class WaveformWidget(QWidget):
         print("================================")
 
     def undo(self):
-        """Annule la dernière action, si possible."""
         if self._hist_index < 0:
-            print("[WaveformWidget] Rien à annuler")
             return
-
         cmd = self._history[self._hist_index]
-        # on désactive l’historique pendant l’undo
         self._record_history = False
 
         if cmd['action'] == 'add_marker':
             self.remove_marker(cmd['time'])
+
+        elif cmd["action"]=="cut":
+            self._undo_cut(cmd)
+
         elif cmd['action'] == 'remove_marker':
             self.add_marker(cmd['time'])
+
         elif cmd['action'] == 'move_marker':
             line = self.marker_lines[cmd['new']]
             line.setValue(cmd['old'])
             self.on_marker_moved(line)
 
-        # on décrémente l’index après application
         self._hist_index -= 1
         self._record_history = True
         print("=== Historique des commandes ===")
@@ -632,20 +809,22 @@ class WaveformWidget(QWidget):
         print("================================")
 
     def redo(self):
-        """Refait la dernière action annulée, si possible."""
         if self._hist_index + 1 >= len(self._history):
-            print("[WaveformWidget] Rien à refaire")
             return
-
         self._hist_index += 1
         cmd = self._history[self._hist_index]
-        # on désactive l’historique pendant le redo
         self._record_history = False
 
         if cmd['action'] == 'add_marker':
             self.add_marker(cmd['time'])
+
+        elif cmd["action"]=="cut":
+            # on refait exactement le même cut
+            self._do_cut(cmd["start"], cmd["start"]+cmd["shift"])
+
         elif cmd['action'] == 'remove_marker':
             self.remove_marker(cmd['time'])
+
         elif cmd['action'] == 'move_marker':
             line = self.marker_lines[cmd['old']]
             line.setValue(cmd['new'])
@@ -667,3 +846,4 @@ class NoLeftDragViewBox(pg.ViewBox):
             ev.ignore()
         else:
             super().mouseDragEvent(ev, axis)
+
