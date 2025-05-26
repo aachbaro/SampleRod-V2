@@ -30,6 +30,8 @@ class WaveformLoaderThread(QThread):
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
 
+# ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
+
     def __init__(self, audio_file_path):
         super().__init__()
         # → playback
@@ -58,11 +60,36 @@ class WaveformWidget(QWidget):
         self.sample_rate = None
         self.duration = 0.0
 
+        # historique : liste de commandes, et indice courant (-1 = rien)
+        self._history = []
+        self._hist_index = -1
+        self._record_history = True
+
         self._build_ui()
         self._load_audio(audio_file_path)
 
     def _build_ui(self):
         self.layout = QVBoxLayout(self)
+
+        # — Undo / Redo au-dessus de la waveform
+        h_hist = QHBoxLayout()
+        # Undo
+        self.undo_button = QPushButton()
+        self.undo_button.setFixedSize(30, 30)
+        self.undo_button.setIcon(qta.icon('fa5s.undo', color='lightgray'))
+        self.undo_button.setToolTip("Undo")
+        self.undo_button.clicked.connect(self.undo)
+        h_hist.addWidget(self.undo_button)
+        # Redo
+        self.redo_button = QPushButton()
+        self.redo_button.setFixedSize(30, 30)
+        self.redo_button.setIcon(qta.icon('fa5s.redo', color='lightgray'))
+        self.redo_button.setToolTip("Redo")
+        self.redo_button.clicked.connect(self.redo)
+        h_hist.addWidget(self.redo_button)
+
+        # on ajoute la barre d'historique avant la waveform
+        self.layout.addLayout(h_hist)
 
         # — Waveform plot
         self.plot = pg.PlotWidget(viewBox=NoLeftDragViewBox())
@@ -75,14 +102,16 @@ class WaveformWidget(QWidget):
 
         # — Contrôles
         h = QHBoxLayout()
-        for ico, cb in [
-            ('fa5s.play',  self.play_from_start),
-            ('fa5s.pause', self.pause_or_resume),
-            ('fa5s.stop',  self.stop_and_reset)
+        for ico, cb, tip in [
+            ('fa5s.play',  self.play_from_start, "Play"),
+            ('fa5s.pause', self.pause_or_resume, "Pause / Resume"),
+            ('fa5s.stop',  self.stop_and_reset,  "Stop and Reset")
         ]:
-            b = QPushButton(); b.setFixedSize(30,30)
+            b = QPushButton()
+            b.setFixedSize(30,30)
             b.setIcon(qta.icon(ico, color='lightgray'))
             b.clicked.connect(cb)
+            b.setToolTip(tip)                # ← on ajoute le tooltip ici
             h.addWidget(b)
 
         # Loop
@@ -90,6 +119,7 @@ class WaveformWidget(QWidget):
         self.loop_button.setFixedSize(30,30)
         self.loop_button.setIcon(qta.icon('fa5s.sync', color='lightgray'))
         self.loop_button.toggled.connect(self.toggle_loop)
+        self.loop_button.setToolTip("Loop ON/OFF")
         h.addWidget(self.loop_button)
 
         # Marker Mode
@@ -141,6 +171,8 @@ class WaveformWidget(QWidget):
         vb = self.plot.getViewBox()
         vb.wheelEvent = self._zoom_or_pan
 
+# ———————————————————————————————————————————————————— Navigation   -————————————————————————————————————————————————————
+
     def _zoom_or_pan(self, ev, **_):
         vb = self.plot.getViewBox()
         if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
@@ -155,21 +187,39 @@ class WaveformWidget(QWidget):
         c = 'lightgreen' if checked else 'lightgray'
         self.marker_mode_button.setIcon(qta.icon('fa5s.map-marker-alt', color=c))
 
+# ——————————————————————————————————————————————————— Marqueurs —————————————————————————————————————————————————————
+
     def add_marker(self, t: float):
         t = float(np.clip(t, 0.0, self.duration))
+        # —— LOG
+        print(f"Marker ajouté à {t:.3f}s")
+        # —— historique
+        self._push_history({
+            "action": "add_marker",
+            "time": t
+        })
+        # —— insertion dans la liste triée
         import bisect
         bisect.insort(self.markers, t)
         self._refresh_marker_list()
 
+        # —— création de la ligne draggable
         line = pg.InfiniteLine(pos=t, angle=90, pen=pg.mkPen('y', width=2))
         line.setMovable(True)
-        line.setZValue(10)                            # ← le mets au-dessus de la région
+        line.setZValue(10)  # pour qu’il reste au-dessus de la région
+        # on mémorise la position initiale
+        line.old_pos = t
+        # signaux pour update et fin de drag
         line.sigPositionChanged.connect(lambda _, l=line: self.on_marker_moved(l))
+        line.sigPositionChangeFinished.connect(lambda _, l=line: self._on_marker_move_finished(l))
         self.plot.addItem(line)
+
+        # —— on garde la référence
         self.marker_lines[t] = line
 
     def on_marker_moved(self, line: pg.InfiniteLine):
         """Quand on déplace un marker, on met à jour son temps et la liste."""
+        # print("on marker_moved")
         # lit la nouvelle position et la recoupe aux bornes
         new_t = float(np.clip(line.value(), 0.0, self.duration))
         line.setValue(new_t)  # force la ligne à rester dans l’intervalle
@@ -188,13 +238,50 @@ class WaveformWidget(QWidget):
         # rafraîchit la liste
         self._refresh_marker_list()
 
+    def _on_marker_move_finished(self, line):
+        """Quand on a fini de déplacer un marqueur, on met à jour l'historique."""
+        old_t = getattr(line, 'old_pos', None)
+        new_t = float(np.clip(line.value(), 0.0, self.duration))
+        print(f"Marker déplacé de {old_t:.3f}s → {new_t:.3f}s")
+        # ici tu pushes dans l'historique :
+        self._push_history({
+            "action": "move_marker",
+            "old": old_t,
+            "new": new_t
+        })
+        # et tu mets à jour old_pos pour le prochain drag
+        line.old_pos = new_t
+
     def remove_marker(self, t: float):
-        """Supprime le marqueur à t et rafraîchit la liste."""
+        """Supprime le marqueur à t, rafraîchit la liste et push dans l’historique."""
         if t in self.markers:
+            # —— LOG
+            print(f"Marker supprimé à {t:.3f}s")
+            # —— historique
+            self._push_history({
+                "action": "remove_marker",
+                "time": t
+            })
+
+            # —— détermine l’indice avant suppression
+            idx = self.markers.index(t)
+
+            # —— suppression des données
             self.markers.remove(t)
             line = self.marker_lines.pop(t)
             self.plot.removeItem(line)
-            # on reclasse la liste QtWidget
+
+            # —— recale current_marker_idx
+            if not self.markers:
+                self.current_marker_idx = 0
+            else:
+                # si on venait de supprimer un marqueur avant l’index courant, on décrémente
+                if self.current_marker_idx > idx:
+                    self.current_marker_idx -= 1
+                # si on était sur le dernier élément qui a été supprimé, recale au nouveau dernier
+                self.current_marker_idx = min(self.current_marker_idx, len(self.markers)-1)
+
+            # —— mise à jour de la liste QtWidget
             self._refresh_marker_list()
 
     def on_marker_list_clicked(self, item: QListWidgetItem):
@@ -236,6 +323,39 @@ class WaveformWidget(QWidget):
             item = QListWidgetItem(f"M{i+1} — {t:.3f}s")
             item.setData(Qt.ItemDataRole.UserRole, t)
             self.marker_list.addItem(item)
+
+
+# ——————————————————————————————————————— region et dash     ——————————————————————————————————————————————————————
+
+    def _set_marker(self, x):
+        # on détruit la région si elle existait
+        if self.region:
+            self.plot.removeItem(self.region)
+            self.region = None
+
+        # pose du marker
+        self.play_start = x
+        self._loop_start_sample = int(x * self.sample_rate)
+        print(f"Région : début {self.play_start:.3f}s")
+        if self.marker:
+            self.plot.removeItem(self.marker)
+        self.marker = pg.InfiniteLine(
+            pos=x, angle=90,
+            pen=pg.mkPen('b', width=1, style=Qt.PenStyle.DashLine)
+        )
+        self.plot.addItem(self.marker)
+
+    def on_region_changed(self):
+        if not self.region:
+            return
+        start, end = self.region.getRegion()
+        # CLAMP des deux bornes
+        start = max(0.0, min(start, self.duration))
+        end   = max(start, min(end,   self.duration))
+        # remet à jour la région côté visuel
+        self.region.setRegion([start, end])
+        self.play_start, self.play_end = start, end
+        # print(f"Région : début {start:.3f}s — fin {end:.3f}s")
 
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
@@ -350,46 +470,13 @@ class WaveformWidget(QWidget):
         # 4) tout le reste passe à la moulinette par défaut
         return False
 
-    def _set_marker(self, x):
-        # on détruit la région si elle existait
-        if self.region:
-            self.plot.removeItem(self.region)
-            self.region = None
-
-        # pose du marker
-        self.play_start = x
-        self._loop_start_sample = int(x * self.sample_rate)
-        print(f"Région : début {self.play_start:.3f}s")
-        if self.marker:
-            self.plot.removeItem(self.marker)
-        self.marker = pg.InfiniteLine(
-            pos=x, angle=90,
-            pen=pg.mkPen('b', width=1, style=Qt.PenStyle.DashLine)
-        )
-        self.plot.addItem(self.marker)
-
-    def on_region_changed(self):
-        if not self.region:
-            return
-        start, end = self.region.getRegion()
-        # CLAMP des deux bornes
-        start = max(0.0, min(start, self.duration))
-        end   = max(start, min(end,   self.duration))
-        # remet à jour la région côté visuel
-        self.region.setRegion([start, end])
-        self.play_start, self.play_end = start, end
-        print(f"Région : début {start:.3f}s — fin {end:.3f}s")
-
-    # ——————————————————————————————————————————————————————
-    #   PLAYBACK (région ou markers selon mode)
-    # ——————————————————————————————————————————————————————
-
-    # ----------------- PLAY / PAUSE helper methods -----------------
+# —————————————————————————————————————————————————————— Playback ——————————————————————————————————————————————————————
 
     def play_from_start(self):
-        """Lance la lecture depuis play_start (ou depuis le marqueur courant si en mode marker)."""
         self.stop_audio()
         if self.marker_mode and self.markers:
+            # recale l’indice pour ne jamais sortir de bornes
+            self.current_marker_idx = min(self.current_marker_idx, len(self.markers)-1)
             t = self.markers[self.current_marker_idx]
         else:
             t = self.play_start
@@ -499,6 +586,80 @@ class WaveformWidget(QWidget):
         self.loop_enabled = checked
         color = 'lightgreen' if checked else 'lightgray'
         self.loop_button.setIcon(qta.icon('fa5s.sync', color=color))
+    
+# —————————————————————————————————————————————————————— HISTORY ——————————————————————————————————————————————————————
+    def _push_history(self, cmd: dict):
+        """Ajouter une commande à l'historique, invalide tout redo possible."""
+        if not self._record_history:
+            return
+        del self._history[self._hist_index+1:]
+        self._history.append(cmd)
+        self._hist_index += 1
+
+        # DEBUG
+        print("=== Historique des commandes ===")
+        for i, c in enumerate(self._history):
+            marker = " <-" if i == self._hist_index else ""
+            print(f"  [{i}] {c!r}{marker}")
+        print("================================")
+
+    def undo(self):
+        """Annule la dernière action, si possible."""
+        if self._hist_index < 0:
+            print("[WaveformWidget] Rien à annuler")
+            return
+
+        cmd = self._history[self._hist_index]
+        # on désactive l’historique pendant l’undo
+        self._record_history = False
+
+        if cmd['action'] == 'add_marker':
+            self.remove_marker(cmd['time'])
+        elif cmd['action'] == 'remove_marker':
+            self.add_marker(cmd['time'])
+        elif cmd['action'] == 'move_marker':
+            line = self.marker_lines[cmd['new']]
+            line.setValue(cmd['old'])
+            self.on_marker_moved(line)
+
+        # on décrémente l’index après application
+        self._hist_index -= 1
+        self._record_history = True
+        print("=== Historique des commandes ===")
+        for i, c in enumerate(self._history):
+            marker = " <-" if i == self._hist_index else ""
+            print(f"  [{i}] {c!r}{marker}")
+        print("================================")
+
+    def redo(self):
+        """Refait la dernière action annulée, si possible."""
+        if self._hist_index + 1 >= len(self._history):
+            print("[WaveformWidget] Rien à refaire")
+            return
+
+        self._hist_index += 1
+        cmd = self._history[self._hist_index]
+        # on désactive l’historique pendant le redo
+        self._record_history = False
+
+        if cmd['action'] == 'add_marker':
+            self.add_marker(cmd['time'])
+        elif cmd['action'] == 'remove_marker':
+            self.remove_marker(cmd['time'])
+        elif cmd['action'] == 'move_marker':
+            line = self.marker_lines[cmd['old']]
+            line.setValue(cmd['new'])
+            self.on_marker_moved(line)
+
+        self._record_history = True
+
+        print("=== Historique des commandes ===")
+        for i, c in enumerate(self._history):
+            marker = " <-" if i == self._hist_index else ""
+            print(f"  [{i}] {c!r}{marker}")
+        print("================================")
+
+# —————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
 
 class NoLeftDragViewBox(pg.ViewBox):
     def mouseDragEvent(self, ev, axis=None):
