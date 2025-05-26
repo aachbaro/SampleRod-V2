@@ -156,30 +156,35 @@ class WaveformWidget(QWidget):
         self.marker_mode_button.setIcon(qta.icon('fa5s.map-marker-alt', color=c))
 
     def add_marker(self, t: float):
-        """Pose un marqueur à t (en secondes), le rend draggable et rafraîchit la liste."""
+        t = float(np.clip(t, 0.0, self.duration))
         import bisect
-        # 1) Insère t de façon triée
         bisect.insort(self.markers, t)
-        # 2) Recrée la liste pour qu'elle soit dans l'ordre
         self._refresh_marker_list()
-        # 3) Crée la ligne draggable
+
         line = pg.InfiniteLine(pos=t, angle=90, pen=pg.mkPen('y', width=2))
         line.setMovable(True)
+        line.setZValue(10)                            # ← le mets au-dessus de la région
         line.sigPositionChanged.connect(lambda _, l=line: self.on_marker_moved(l))
         self.plot.addItem(line)
         self.marker_lines[t] = line
 
     def on_marker_moved(self, line: pg.InfiniteLine):
         """Quand on déplace un marker, on met à jour son temps et la liste."""
-        # trouve l'ancien time
+        # lit la nouvelle position et la recoupe aux bornes
+        new_t = float(np.clip(line.value(), 0.0, self.duration))
+        line.setValue(new_t)  # force la ligne à rester dans l’intervalle
+
+        # retrouve l’ancien t
         old_t = next(t for t, ln in self.marker_lines.items() if ln is line)
-        new_t = float(line.value())
+
         # remplace dans self.markers
         self.markers.remove(old_t)
         del self.marker_lines[old_t]
+
         import bisect
         bisect.insort(self.markers, new_t)
         self.marker_lines[new_t] = line
+
         # rafraîchit la liste
         self._refresh_marker_list()
 
@@ -210,6 +215,7 @@ class WaveformWidget(QWidget):
         self.region = pg.LinearRegionItem([t, t2],
                                           brush=pg.mkBrush(255,255,255,40),
                                           pen=pg.mkPen('c', width=1))
+        self.region.setZValue(1) 
         self.region.setBounds([0, self.duration])
         self.region.sigRegionChangeFinished.connect(self.on_region_changed)
         self.plot.addItem(self.region)
@@ -233,6 +239,15 @@ class WaveformWidget(QWidget):
 
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
+
+        if event.type() in (QEvent.GraphicsSceneMousePress,
+                            QEvent.GraphicsSceneMouseMove,
+                            QEvent.GraphicsSceneMouseRelease):
+            pos = event.scenePos()
+            # si on clique ou drag sur un marker, on ne filtre pas l'événement
+            for line in self.marker_lines.values():
+                if line.sceneBoundingRect().contains(pos):
+                    return False
 
         # 1) En mode marker, on intercepte seulement les clics hors des lignes existantes
         if self.marker_mode:
@@ -357,11 +372,12 @@ class WaveformWidget(QWidget):
         if not self.region:
             return
         start, end = self.region.getRegion()
-        self.play_start = start
-        self.play_end   = end
-        # stocke aussi en samples
-        self._loop_start_sample = int(start * self.sample_rate)
-        self._loop_end_sample   = int(end   * self.sample_rate)
+        # CLAMP des deux bornes
+        start = max(0.0, min(start, self.duration))
+        end   = max(start, min(end,   self.duration))
+        # remet à jour la région côté visuel
+        self.region.setRegion([start, end])
+        self.play_start, self.play_end = start, end
         print(f"Région : début {start:.3f}s — fin {end:.3f}s")
 
     # ——————————————————————————————————————————————————————
@@ -399,25 +415,28 @@ class WaveformWidget(QWidget):
         self.timer.start(50)
 
         def callback(outdata, frames, time_info, status):
-            # … même code que précédemment …
-            buf = np.zeros(frames, dtype='float32')
+            buf = np.zeros((frames,), dtype='float32')
             idx = 0
 
-            # bornes dynamiques
+            # — calcul des bornes en samples
             if self.marker_mode and self.markers:
-                # début = marker courant
                 ms = self.markers[self.current_marker_idx]
                 start = int(ms * self.sample_rate)
-                # fin = suivant ou fin totale
                 if self.current_marker_idx+1 < len(self.markers):
-                    me = int(self.markers[self.current_marker_idx+1]*self.sample_rate)
+                    me = int(self.markers[self.current_marker_idx+1] * self.sample_rate)
                 else:
                     me = len(self.waveform_data)
             else:
                 start = int(self.play_start * self.sample_rate)
-                me    = int(self.play_end * self.sample_rate) if self.play_end>self.play_start else len(self.waveform_data)
+                me    = int(self.play_end   * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
 
-            # playback + loop
+            # ← nouvelle partie : si la region est vide, on renvoie du silence et on stoppe
+            if me <= start:
+                outdata[:, 0] = buf
+                self.is_playing = False
+                return
+
+            # — playback + loop
             while idx < frames:
                 if self.start_sample >= me:
                     if not self.loop_enabled:
@@ -425,13 +444,13 @@ class WaveformWidget(QWidget):
                         break
                     self.start_sample = start
                 remaining = me - self.start_sample
-                to_read = min(frames-idx, remaining)
-                chunk = self.waveform_data[self.start_sample:self.start_sample+to_read]
+                to_read   = min(frames-idx, remaining)
+                chunk     = self.waveform_data[self.start_sample:self.start_sample+to_read]
                 buf[idx:idx+to_read] = chunk.astype('float32')
                 idx += to_read
                 self.start_sample += to_read
 
-            outdata[:,0] = buf
+            outdata[:, 0] = buf
             self.current_time = self.start_sample / self.sample_rate
 
         self.stream = sd.OutputStream(samplerate=self.sample_rate,
