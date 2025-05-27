@@ -6,6 +6,8 @@ from backend.db import Base, SessionLocal
 import os
 from backend.models.User import User
 import shutil
+from backend.db import SessionLocal
+from backend.models.sample import Sample as DBSample
 
 class SampleListWidget(QWidget):
     # Signal pour notifier des actions sur un sample, à connecter aux fonctions de ton store/backend
@@ -14,12 +16,11 @@ class SampleListWidget(QWidget):
     sampleMoved = pyqtSignal(int, str)
 
     def __init__(self, samples, user: User, parent=None):
-        """
-        samples : liste d'objets Sample.
-        """
         super().__init__(parent)
-        self.samples = samples  # La liste des samples
-        self.user = user
+        self.samples = samples
+        self.user    = user
+        self._card_widgets = {}  
+
         self.init_ui()
 
     def init_ui(self):
@@ -35,38 +36,99 @@ class SampleListWidget(QWidget):
         self.refreshList()
 
     def refreshList(self):
-        # Vider le contenu
-        while self.content_layout.count():
-            item = self.content_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        # 1) on crée la liste inversée des Sample (pour afficher du plus récent au plus ancien)
+        new_samples = list(reversed(self.samples))
 
-        # Inverser l'ordre des samples avant de les parcourir
-        session = SessionLocal()  # Créez une nouvelle session ici
+        # 2) on ouvre une session pour merger et récupérer les ids en session active
+        session = SessionLocal()
         try:
-            for sample in reversed(self.samples):
-                # Rafraîchir l'objet sample avec la session courante
-                sample = session.merge(sample)
-                if sample is not None: #Verifie que le sample n'est pas None
-                    card = SampleCard(sample, self.user)
+            merged = [session.merge(s) for s in new_samples]
+            new_ids = {s.id for s in merged}
+            
+            # 3) on supprime du layout les widgets dont l’id n’est plus dans new_ids
+            for old_id in list(self._card_widgets):
+                if old_id not in new_ids:
+                    w = self._card_widgets.pop(old_id)
+                    self.content_layout.removeWidget(w)
+                    w.deleteLater()
+
+            # 4) on prépare la liste ordonnée des widgets à afficher
+            ordered = []
+            for samp in merged:
+                if samp.id in self._card_widgets:
+                    card = self._card_widgets[samp.id]
+                else:
+                    # nouvelle carte
+                    card = SampleCard(samp, self.user)
                     card.deleteSample.connect(self.delete_sample)
                     card.renameSample.connect(self.rename_sample)
                     card.sampleMoved.connect(self.move_sample)
                     self.sampleRenameSuccess.connect(card.onRenameSuccess)
                     self.sampleRenameError.connect(card.onRenameError)
                     self.sampleMoved.connect(card.onMoveSuccess)
-
-                    self.content_layout.addWidget(card)
+                    card.newSampleSaved.connect(self.addSampleToList)
+                    self._card_widgets[samp.id] = card
+                ordered.append(card)
 
         finally:
-            session.close() #ferme la session
+            session.close()
 
+        # 5) on vide le layout (sans supprimer les widgets)
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                self.content_layout.removeWidget(w)
+
+        # 6) on ré‐insère dans l’ordre
+        for w in ordered:
+            self.content_layout.addWidget(w)
         self.content_layout.addStretch()
 
-    def addSampleToList(self, new_sample):
-        to_add = Sample(new_sample)
-        self.samples.append(to_add)
-        self.refreshList()
+    def addSampleToList(self, new_path: str):
+        """
+        Après avoir sauvegardé un WAV (overwrite ou copy),
+        on met à jour **in-place** la carte existante ou on en crée une nouvelle.
+        """
+        from backend.db import SessionLocal
+        from backend.models.sample import Sample as DBSample
+
+        session = SessionLocal()
+        try:
+            # 1) Récupère l'enregistrement qui vient d’être écrit
+            fresh = session.query(DBSample).filter_by(path=new_path).first()
+            if not fresh:
+                return
+
+            # 2) Si on a déjà une carte pour ce sample → overwrite
+            if fresh.id in self._card_widgets:
+                card = self._card_widgets[fresh.id]
+                # Met à jour à la fois le modèle et l'affichage
+                card.sample.duration   = fresh.duration
+                card.sample.created_at = fresh.created_at
+                card.length_label.setText(f"{fresh.duration:.1f}s")
+                card.date_label.setText(fresh.created_at.strftime("%d/%m/%Y %H:%M"))
+
+            # 3) Sinon c'est une copy → on ajoute un nouveau SampleCard
+            else:
+                # On garde la liste interne à jour
+                self.samples.insert(0, fresh)
+
+                # Création et branchement des signaux
+                card = SampleCard(fresh, self.user)
+                card.deleteSample.connect(self.delete_sample)
+                card.renameSample.connect(self.rename_sample)
+                card.sampleMoved.connect(self.move_sample)
+                self.sampleRenameSuccess.connect(card.onRenameSuccess)
+                self.sampleRenameError.connect(card.onRenameError)
+                self.sampleMoved.connect(card.onMoveSuccess)
+                card.newSampleSaved.connect(self.addSampleToList)
+
+                # On garde la référence puis on insère en haut de la vue
+                self._card_widgets[fresh.id] = card
+                self.content_layout.insertWidget(0, card)
+        finally:
+            session.close()
 
     def delete_sample(self, sample_to_delete_id):
         print("frontend: sample_list: delete sample:", sample_to_delete_id)

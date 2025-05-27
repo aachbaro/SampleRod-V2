@@ -9,6 +9,16 @@ import numpy as np
 import sounddevice as sd
 import qtawesome as qta
 import librosa
+from backend.models.sample import Sample
+from PyQt6.QtWidgets import QMessageBox, QInputDialog
+import os, soundfile as sf
+from backend.db import SessionLocal
+from backend.models.sample import Sample as DBSample
+import librosa
+from backend.models.sample import Sample as SampleModel
+from frontend.custom_widgets import SaveWaveformDialog
+
+
 
 class WaveformLoaderThread(QThread):
     waveformReady = pyqtSignal(np.ndarray, int, float)
@@ -58,11 +68,13 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
 
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
+    waveformSaved    = pyqtSignal(str)
 
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
 
     def __init__(self, audio_file_path):
         super().__init__()
+        self.audio_file_path = audio_file_path
         # → playback
         self.stream = None
         self.current_time = 0.0
@@ -102,6 +114,17 @@ class WaveformWidget(QWidget):
 
     def _build_ui(self):
         self.layout = QVBoxLayout(self)
+
+        # — Save (enregistre l'état actuel de waveform_data)
+        save_layout = QHBoxLayout()
+        save_layout.addStretch()
+        self.save_button = QPushButton()
+        self.save_button.setIcon(qta.icon('fa5s.save', color='lightgray'))
+        self.save_button.setToolTip("Save waveform")
+        self.save_button.setFixedSize(30,30)
+        self.save_button.clicked.connect(self.onSaveClicked)
+        save_layout.addWidget(self.save_button)
+        self.layout.addLayout(save_layout)
 
         # — Undo / Redo au-dessus de la waveform
         h_hist = QHBoxLayout()
@@ -905,7 +928,59 @@ class WaveformWidget(QWidget):
             print(f"  [{i}] {c!r}{marker}")
         print("================================")
 
-# —————————————————————————————————————————————————————————————————————————————————————————————————————————————————————
+# ———————————————————————————————————————————————————————— Save / export ——————————————————————————————————————————————
+
+    def onSaveClicked(self):
+        """
+        Ouvre un dialog Overwrite / Save as copy, écrit le WAV
+        et met à jour la base si overwrite, ou crée un nouveau sample si copy.
+        """
+        from PyQt6.QtWidgets import QMessageBox, QInputDialog
+        import os, soundfile as sf
+        from backend.db import SessionLocal
+        from backend.models.sample import Sample as DBSample
+        import librosa
+
+        # 1) Choix Overwrite vs Copy
+        orig = self.audio_file_path
+        folder = os.path.dirname(orig)
+        ext    = os.path.splitext(orig)[1]
+        default_name = f"SMPL_{DBSample.get_next_id():04d}"
+
+        dlg = SaveWaveformDialog(self, default_name)
+        overwrite, new_name = dlg.choice()
+        if overwrite is None:
+            return  # utilisateur a annulé
+
+        if overwrite:
+            target = orig
+        else:
+            target = os.path.join(folder, new_name + ext)
+
+        try:
+            sf.write(target, self.waveform_data, self.sample_rate)
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", str(e))
+            return
+
+        # mise à jour de la DB
+        session = SessionLocal()
+        try:
+            if overwrite:
+                samp = session.query(DBSample).filter_by(path=orig).first()
+                if samp:
+                    samp.duration   = self.duration
+                    samp.created_at = samp.get_creation_date()
+                    session.commit()
+                    QMessageBox.information(self, "Enregistré", f"Fichier écrasé :\n{target}")
+            else:
+                DBSample(target)
+                QMessageBox.information(self, "Enregistré", f"Copie sauvegardée :\n{target}")
+        finally:
+            session.close()
+
+        self.waveformSaved.emit(target)
+
 
 class NoLeftDragViewBox(pg.ViewBox):
     def mouseDragEvent(self, ev, axis=None):

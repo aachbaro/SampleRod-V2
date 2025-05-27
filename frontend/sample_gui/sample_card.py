@@ -19,6 +19,7 @@ class SampleCard(QWidget):
     renameSample = pyqtSignal(object, str)   # émet l'objet sample et le nouveau nom
     playSample = pyqtSignal(object)          # émet l'objet sample à jouer
     sampleMoved = pyqtSignal(int, str)
+    newSampleSaved = pyqtSignal(str)
     
 
     def __init__(self, sample:Sample, user: User, parent=None):
@@ -273,6 +274,7 @@ class SampleCard(QWidget):
 
             # Ajouter le widget de forme d'onde
             self.wave_edition_widget = WaveformWidget(self.sample.path)
+            self.wave_edition_widget.waveformSaved.connect(self.newSampleSaved)
             self.waveform_layout.addWidget(self.wave_edition_widget)
         else:
             # Afficher les widgets de lecture
