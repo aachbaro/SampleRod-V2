@@ -110,6 +110,8 @@ class SettingsLibrariesList(QWidget):
         session.commit()
         session.close()
 
+        self.user.libraries = SampleBank.get_all_libraries()
+
         # re-rafraîchir si besoin
         time.sleep(0.1)
         self.refreshLibraryList()
