@@ -77,6 +77,9 @@ class WaveformWidget(QWidget):
         self._dragging = False
         self._creating = False
         self._press_x  = 0.0
+        self._shifting = False            # mode “déplacement” activé
+        self._shift_press_x = 0.0         # position d’appui en secondes
+        self._orig_region = (0.0, 0.0)    # bornes initiales de la région
 
         # → marqueurs (clic en mode marker)
         self.marker_mode = False
@@ -408,6 +411,59 @@ class WaveformWidget(QWidget):
 
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
+
+        # 0) Maj + clic gauche DANS le corps (pas sur les handles) → début du déplacement
+        if event.type() == QEvent.GraphicsSceneMousePress \
+        and event.button() == Qt.MouseButton.LeftButton \
+        and event.modifiers() & Qt.KeyboardModifier.ShiftModifier \
+        and self.region:
+
+            pos = event.scenePos()
+            # handles
+            line0, line1 = self.region.lines
+            scene_h0 = line0.mapToScene(line0.boundingRect()).boundingRect().center().x()
+            scene_h1 = line1.mapToScene(line1.boundingRect()).boundingRect().center().x()
+            tol = 5
+            if abs(pos.x() - scene_h0) < tol or abs(pos.x() - scene_h1) < tol:
+                # on est sur un handle → pas notre cas
+                return False
+
+            # on est bien dans le corps de la région
+            self._shifting = True
+            # coordonnée de départ (en secondes)
+            self._shift_press_x = float(vb.mapSceneToView(pos).x())
+            # bornes d’origine
+            self._orig_region = tuple(self.region.getRegion())
+            return True
+
+        # 1) déplacement pendant Maj+glissé
+        if event.type() == QEvent.GraphicsSceneMouseMove \
+        and self._shifting:
+
+            pos = event.scenePos()
+            x = float(vb.mapSceneToView(pos).x())
+            dx = x - self._shift_press_x
+
+            start0, end0 = self._orig_region
+            length = end0 - start0
+            # clamp pour rester dans [0, duration]
+            new_start = max(0.0, min(start0 + dx, self.duration - length))
+            new_end   = new_start + length
+
+            self.region.setRegion([new_start, new_end])
+            # mets à jour play_start/play_end sans déclencher création
+            self.play_start, self.play_end = new_start, new_end
+            return True
+
+        # 2) fin du déplacement
+        if event.type() == QEvent.GraphicsSceneMouseRelease \
+        and event.button() == Qt.MouseButton.LeftButton \
+        and self._shifting:
+
+            self._shifting = False
+            # ici, tu peux pousser dans l'historique si tu veux
+            # self._push_history({...})
+            return True
 
         if event.type() in (QEvent.GraphicsSceneMousePress,
                             QEvent.GraphicsSceneMouseMove,
