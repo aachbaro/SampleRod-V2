@@ -69,8 +69,12 @@ class SettingsLibrariesList(QWidget):
         self.toggle_button.setText("▼" if vis else "▲")
 
     def selectDirectory(self):
-        d = QFileDialog.getExistingDirectory(self, "Select Folder",
-                                             options=QFileDialog.Option.DontUseNativeDialog)
+        d = QFileDialog.getExistingDirectory(
+            self,
+            "Choisir un dossier",
+            "",  # répertoire de départ
+            QFileDialog.Option.ShowDirsOnly
+        )
         if d:
             SampleBank(d)  # enregistre en base
             self.user.libraries = SampleBank.get_all_libraries()
@@ -97,8 +101,9 @@ class SettingsLibrariesList(QWidget):
 
     def updateLibraryOrder(self):
         session = SessionLocal()
-        for idx in range(self.library_list.count()):
-            item = self.library_list.item(idx)
+        # On parcourt la QListWidget qui s'appelle library_list_widget, pas library_list
+        for idx in range(self.library_list_widget.count()):
+            item = self.library_list_widget.item(idx)
             lib  = item.data(Qt.ItemDataRole.UserRole)
             lib.position = idx
             session.merge(lib)

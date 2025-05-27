@@ -1,5 +1,10 @@
 # ./app.py
 
+import sys
+if sys.platform.startswith("win"):
+    import ctypes
+    ctypes.windll.ole32.OleInitialize(0)
+
 from backend.db import engine, Base
 from PyQt6.QtWidgets import QApplication
 import sys
