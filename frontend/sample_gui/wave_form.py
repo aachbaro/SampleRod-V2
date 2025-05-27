@@ -571,6 +571,10 @@ class WaveformWidget(QWidget):
         self.markers = sorted(new_markers)
         self.marker_lines = new_lines
 
+        if self.current_marker_idx >= len(self.markers):
+            # si plus aucun marker, on remet à 0
+            self.current_marker_idx = max(0, len(self.markers) - 1)
+
         self._refresh_marker_list()
 
         # 4) redraw complet
@@ -672,6 +676,7 @@ class WaveformWidget(QWidget):
 
             # — calcul des bornes en samples
             if self.marker_mode and self.markers:
+                self.current_marker_idx = min(self.current_marker_idx, len(self.markers)-1)
                 ms = self.markers[self.current_marker_idx]
                 region_start = int(ms * self.sample_rate)
                 if self.current_marker_idx + 1 < len(self.markers):

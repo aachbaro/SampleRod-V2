@@ -1,6 +1,6 @@
 # /backend/models/sample.py
 
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, func
 from backend.db import Base, SessionLocal
 import os
 import wave
@@ -92,6 +92,19 @@ class Sample(Base):
             except Exception as e:
                 session.rollback()
                 print(f"Erreur lors de la suppression du sample dans la base de données: {str(e)}")
+
+    @staticmethod
+    def get_next_id():
+        """
+        Retourne l'id que prendra le prochain Sample (MAX(id) + 1).
+        Si la table est vide, renvoie 1.
+        """
+        session = SessionLocal()
+        try:
+            max_id = session.query(func.max(Sample.id)).scalar()
+            return (max_id or 0) + 1
+        finally:
+            session.close()
     
     # @staticmethod
     # def rename_sample(sample_id: int, new_name: str):

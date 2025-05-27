@@ -7,6 +7,7 @@ import os
 import time
 from datetime import datetime
 from collections import deque
+from backend.models.sample import Sample
 
 def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size):
     """
@@ -82,11 +83,11 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size):
                             combined = pre + live_buf
 
                             # écriture WAV
-                            ts = datetime.now().strftime("SMPL_%Y-%m-%d_%Hh%M.%S.wav")
-                            path = os.path.join(output_folder, ts)
+                            next_id = Sample.get_next_id()
+                            filename = f"SMPL_{next_id:04d}.wav"
+                            path = os.path.join(output_folder, filename)
                             os.makedirs(output_folder, exist_ok=True)
                             sf.write(path, np.vstack(combined), samplerate=sample_rate)
-                            print(f"recorder_worker: Audio saved in {path}.")
                             resp_q.put(('done', path))
 
                             live_buf = []
