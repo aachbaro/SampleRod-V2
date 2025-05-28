@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, 
     QHBoxLayout, QFrame, QScrollArea, QGroupBox, QComboBox, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QSettings
 from PyQt6.QtGui import QIcon
 from backend.models.SampleLibrary import SampleBank
 from backend.models.User import User
@@ -20,6 +20,7 @@ class SettingsLibrariesList(QWidget):
 
     def __init__(self, user: User):
         super().__init__()
+        self._qs = QSettings("SampleRod", "Main")
         self.setLayout(QVBoxLayout())
         self.user = user
         
@@ -69,18 +70,28 @@ class SettingsLibrariesList(QWidget):
         self.toggle_button.setText("▼" if vis else "▲")
 
     def selectDirectory(self):
+        # 1) Récupère le dernier dossier ou, si vide, le home de l’utilisateur
+        last = self._qs.value("lastLibraryDir", os.path.expanduser("~"), type=str)
+
+        # 2) Ouvre le dialog à partir de last
         d = QFileDialog.getExistingDirectory(
             self,
             "Choisir un dossier",
-            "",  # répertoire de départ
+            last,
             QFileDialog.Option.ShowDirsOnly
         )
-        if d:
-            SampleBank(d)  # enregistre en base
-            self.user.libraries = SampleBank.get_all_libraries()
-            self.refreshLibraryList()
-            self.updateLibraryOrder()
-            self.librariesUpdated.emit()
+        if not d:
+            return
+
+        # 3) Sauvegarde ce choix pour la prochaine fois
+        self._qs.setValue("lastLibraryDir", d)
+
+        # 4) Enregistre en base, rafraîchit l’UI, etc.
+        SampleBank(d)  # enregistre en base
+        self.user.libraries = SampleBank.get_all_libraries()
+        self.refreshLibraryList()
+        self.updateLibraryOrder()
+        self.librariesUpdated.emit()
 
     def deleteLibrary(self, library_to_delete):
         """ Supprime une bibliothèque """

@@ -5,7 +5,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from backend.models.sample import Sample
-from backend.models.recorder import Recorder
+# from backend.models.recorder import Recorder
 from backend.models.SampleLibrary import SampleBank
 from backend.models.Settings import Settings
 from backend.db import SessionLocal

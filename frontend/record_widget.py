@@ -3,9 +3,9 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel
+from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu
 from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal
-from PyQt6.QtGui import QIcon, QWheelEvent
+from PyQt6.QtGui import QIcon, QWheelEvent, QCursor
 import qtawesome as qta
 from backend.models.User import User
 from utils.utils import get_folder_name
@@ -154,11 +154,32 @@ class RecordWidgetWindow(QMainWindow):
         # ----------------------------------------------- RecordButton
 
         if source == self.recordButton:
-            if event.type() == QEvent.Type.MouseButtonPress:
+            if event.type() == QEvent.Type.MouseButtonPress  and event.button() == Qt.MouseButton.LeftButton:
                 selected_library = self.user.libraries[self.library_selected].path
                 self.user.recorder.record_button_clicked(selected_library, self.retro_time_selected)
                 # on sort, on laisse le timer plus tard rafraîchir l'état
                 self.updateRecordButtonDisplay()
+                return True
+
+            # clic droit = toggle rétro-enregistrement
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
+                menu = QMenu(self)
+                enabled = self.user.settings.retro_recording_enabled
+                action = menu.addAction(
+                    "Désactiver rétro-enregistrement" if enabled
+                    else "Activer rétro-enregistrement"
+                )
+                chosen = menu.exec(QCursor.pos())
+                if chosen == action:
+                    # bascule l’état dans la DB et dans le worker
+                    new_state = not enabled
+                    self.user.settings.set_retro_recording_state(new_state)
+                    if new_state:
+                        self.user.recorder.enable_retro()
+                    else:
+                        self.user.recorder.disable_retro()
+                    # met à jour l’UI (bordure, etc.)
+                    self.updateRetroRecording()
                 return True
 
         # -------------------------------- Scroll sur retro recording
