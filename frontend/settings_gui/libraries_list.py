@@ -5,29 +5,29 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, 
     QHBoxLayout, QFrame, QScrollArea, QGroupBox, QComboBox, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QSettings
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QSettings, pyqtSlot
 from PyQt6.QtGui import QIcon
 from backend.models.SampleLibrary import SampleBank
 from backend.models.User import User
 from backend.db import Base, SessionLocal
 from frontend.custom_widgets import QListWidgetDragBugFix
 import time
+from backend.services.settings_service import SettingsService
+
 
 import os
 
 class SettingsLibrariesList(QWidget):
-    librariesUpdated = pyqtSignal()
-
-    def __init__(self, user: User):
+    """ Widget pour gérer la liste des bibliothèques de samples """
+    def __init__(self, settingsService: SettingsService):
         super().__init__()
         self._qs = QSettings("SampleRod", "Main")
         self.setLayout(QVBoxLayout())
-        self.user = user
+        self.settingsService = settingsService
         
         # En-tête pour la liste des bibliothèques
         self.header_layout = QHBoxLayout()
         self.toggle_button = QPushButton("▲")  # Pour simuler le changement d'icône
-        # self.scroll_area = QScrollArea()
         self.add_library_button = QPushButton("Add Sample Library")
         self.header_label = QLabel("Sample Libraries")
         self.library_list_widget = QListWidgetDragBugFix()
@@ -47,12 +47,6 @@ class SettingsLibrariesList(QWidget):
         self.library_list_widget.setDragDropMode(QListWidget.DragDropMode.InternalMove)
         self.library_list_widget.model().rowsMoved.connect(self.updateLibraryOrder)
 
-
-
-        # Zone de défilement
-        # self.scroll_area.setWidget(self.library_list_widget)
-        # self.scroll_area.setWidgetResizable(True)
-        # self.layout().addWidget(self.scroll_area)
         self.layout().addWidget(self.library_list_widget)
 
         # Ajouter un bouton pour ajouter une bibliothèque
@@ -60,7 +54,16 @@ class SettingsLibrariesList(QWidget):
         self.add_library_button.clicked.connect(self.selectDirectory)
         self.layout().addWidget(self.add_library_button)
 
-        self.refreshLibraryList()
+
+        # Connecter le signal de changement de bibliothèques
+        self.settingsService.librariesChanged.connect(self.onLibrariesUpdated)
+
+        self.refreshLibraryList(self.settingsService.libraries)
+
+    @pyqtSlot(list)
+    def onLibrariesUpdated(self, libraries):
+        """Slot appelé à chaque fois que la liste change."""
+        self.refreshLibraryList(libraries)
 
 
     def toggleList(self):
@@ -72,8 +75,6 @@ class SettingsLibrariesList(QWidget):
     def selectDirectory(self):
         # 1) Récupère le dernier dossier ou, si vide, le home de l’utilisateur
         last = self._qs.value("lastLibraryDir", os.path.expanduser("~"), type=str)
-
-        # 2) Ouvre le dialog à partir de last
         d = QFileDialog.getExistingDirectory(
             self,
             "Choisir un dossier",
@@ -82,58 +83,26 @@ class SettingsLibrariesList(QWidget):
         )
         if not d:
             return
-
-        # 3) Sauvegarde ce choix pour la prochaine fois
         self._qs.setValue("lastLibraryDir", d)
-
-        # 4) Enregistre en base, rafraîchit l’UI, etc.
-        SampleBank(d)  # enregistre en base
-        self.user.libraries = SampleBank.get_all_libraries()
-        self.refreshLibraryList()
-        self.updateLibraryOrder()
-        self.librariesUpdated.emit()
+        self.settingsService.addSampleLibrary(d)
 
     def deleteLibrary(self, library_to_delete):
         """ Supprime une bibliothèque """
-        try:
-            session = SessionLocal()
-            session.expire_on_commit = False
-            library = session.query(SampleBank).filter(SampleBank.id == library_to_delete.id).first()
-            if library:
-                session.delete(library)
-                session.commit()
-                self.user.libraries = SampleBank.get_all_libraries()
-                self.refreshLibraryList()
-                self.updateLibraryOrder()
-            session.close()
-            self.librariesUpdated.emit()
-        except Exception as e:
-            print(f"Error deleting library: {e}")
+        self.settingsService.removeSampleLibrary(library_to_delete.id)
 
     def updateLibraryOrder(self):
-        session = SessionLocal()
-        # On parcourt la QListWidget qui s'appelle library_list_widget, pas library_list
+        ordered_ids = []
         for idx in range(self.library_list_widget.count()):
             item = self.library_list_widget.item(idx)
-            lib  = item.data(Qt.ItemDataRole.UserRole)
-            lib.position = idx
-            session.merge(lib)
-        session.commit()
-        session.close()
+            lib  = item.data(Qt.ItemDataRole.UserRole)  # un SampleBank
+            ordered_ids.append(lib.id)
+        self.settingsService.updateLibraryOrder(ordered_ids)
 
-        self.user.libraries = SampleBank.get_all_libraries()
-
-        # re-rafraîchir si besoin
-        time.sleep(0.1)
-        self.refreshLibraryList()
-        self.librariesUpdated.emit()
-
-
-    def refreshLibraryList(self):
+    def refreshLibraryList(self, libraries=None):
         """ Met à jour l'affichage de la liste des bibliothèques """
         self.library_list_widget.clear()
 
-        for library in sorted(self.user.libraries, key=lambda lib: lib.position):
+        for library in sorted(libraries, key=lambda lib: lib.position):
             item_widget = QWidget()
             layout = QHBoxLayout(item_widget)
             layout.setContentsMargins(5, 5, 5, 5)

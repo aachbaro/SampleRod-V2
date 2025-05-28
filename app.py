@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 import sys
 import os
 from backend.models.User import User
+from backend.services.settings_service import SettingsService
 
 from frontend.main_window import MainWindow
 
@@ -21,8 +22,8 @@ def create_database():
 
 if __name__ == '__main__':
     create_database()
-    user = User()
+
     gui = QApplication(sys.argv)
-    main_window = MainWindow(user)
+    main_window = MainWindow()
     main_window.show()
     sys.exit(gui.exec())

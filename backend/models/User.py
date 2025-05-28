@@ -7,46 +7,40 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from backend.models.sample import Sample
 # from backend.models.recorder import Recorder
 from backend.models.SampleLibrary import SampleBank
-from backend.models.Settings import Settings
 from backend.db import SessionLocal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtCore import QUrl, pyqtSignal, QObject
 import pygame
 from backend.services.recorder_service import RecorderService
+from backend.services.settings_service import SettingsService
 
 class User:
-    def __init__(self):
+    def __init__(self, settingsService: SettingsService):
         print("Initialisation du User")
-        session = SessionLocal()
-        self.settings = session.query(Settings).first()
-        if not self.settings:
-            self.settings = Settings(retro_recording_enabled=False, pre_recording_seconds=0)
-            session.add(self.settings)
-            session.commit()
-
-        self.libraries = SampleBank.get_all_libraries()
+        self.settings = settingsService
 
         self.recorder = RecorderService(
-            pre_seconds=self.settings.pre_recording_seconds,
+            self.settings,
             sample_rate=44100,
             block_size=512
         )
-        print("User: Settings:", self.settings.to_dict())
         
         self.audio_player = AudioPlayer()
 
-        if self.settings.retro_recording_enabled:
-            self.recorder.enable_retro()
+        # if self.settings.isRetroEnabled():
+        #     print("Retro recording is enabled, starting recorder")
+        #     self.recorder.enable_retro()
 
-    def play_sample(self, file_path):
-        """ Demande la lecture d'un sample """
-        self.audio_player.play_sample(file_path)
 
-    def enable_retro(self):    self.recorder.enable_retro()
-    def disable_retro(self):   self.recorder.disable_retro()
-    def start_record(self, folder, retro_time): return self.recorder.start(folder, retro_time)
-    def stop_record(self):      return self.recorder.stop()
-    def shutdown_recorder(self): return self.recorder.shutdown()
+    # def play_sample(self, file_path):
+    #     """ Demande la lecture d'un sample """
+    #     self.audio_player.play_sample(file_path)
+
+    # def enable_retro(self):    self.recorder.enable_retro()
+    # def disable_retro(self):   self.recorder.disable_retro()
+    # def start_record(self, folder, retro_time): return self.recorder.start(folder, retro_time)
+    # def stop_record(self):      return self.recorder.stop()
+    # def shutdown_recorder(self): return self.recorder.shutdown()
 
 class AudioPlayer:
 

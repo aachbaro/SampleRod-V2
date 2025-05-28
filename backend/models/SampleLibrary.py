@@ -65,3 +65,42 @@ class SampleBank(Base):
         print("Récupération des librairies depuis la base de données")
         with SessionLocal() as session:
             return session.query(SampleBank).order_by(SampleBank.position).all()
+        
+    @classmethod
+    def delete_library(cls, library_id: int):
+        """
+        Supprime la librairie d'ID donné, et recalcule les positions
+        pour que la suite reste continue (0,1,2,...).
+        """
+        with SessionLocal() as session:
+            # 1) Récupère la librairie
+            lib = session.query(cls).get(library_id)
+            if not lib:
+                raise ValueError(f"Library id={library_id} introuvable")
+
+            deleted_pos = lib.position
+
+            # 2) Supprime-la
+            session.delete(lib)
+
+            # 3) Décale la position de toutes celles après
+            session.query(cls) \
+                .filter(cls.position > deleted_pos) \
+                .update({ cls.position: cls.position - 1 })
+
+            # 4) Commit
+            session.commit()
+
+    @classmethod
+    def reorder_libraries(cls, ordered_ids: list[int]):
+        """
+        Réordonne les SampleBank pour qu'elles aient
+        les positions 0,1,2,… selon la liste d'IDs fournie.
+        """
+        with SessionLocal() as session:
+            # On parcourt la liste d'IDs dans l'ordre désiré
+            for new_pos, lib_id in enumerate(ordered_ids):
+                session.query(cls) \
+                       .filter(cls.id == lib_id) \
+                       .update({ cls.position: new_pos })
+            session.commit()

@@ -8,18 +8,22 @@ from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
 from backend.models.User import User
 from backend.models.sample import Sample
 from frontend.sample_gui.sample_list import SampleListWidget
+from backend.services.settings_service import SettingsService
 
 class MainWindow(QMainWindow):
-    def __init__(self, user: User):
+    def __init__(self):
         super().__init__()
         self.setWindowTitle("SampleRod")
         self.setGeometry(500, 200, 800, 600)
-        self.user = user
+        self.settings_service = SettingsService()
+        self.user = User(self.settings_service)
 
         # Création de l'onglet principal (QTabWidget)
         self.tab_widget = QTabWidget(self)
         self.setCentralWidget(self.tab_widget)
-        self.record_widget = RecordWidgetWindow(self.user)
+        self.record_widget = RecordWidgetWindow(self.user, self.settings_service)
+        self.settings_libraries_list = SettingsLibrariesList(self.settings_service)
+        self.settings_retro_recording = RetroRecordingWidget(self.settings_service)
 
         # Création de l'onglet Liste de Samples
         self.samples_tab = QWidget()
@@ -33,15 +37,15 @@ class MainWindow(QMainWindow):
         self.settings_layout = QVBoxLayout(self.settings_tab)
         self.tab_widget.addTab(self.settings_tab, "Paramètres")
         
-        self.settings_libraries_list = SettingsLibrariesList(self.user)
-        self.settings_retro_recording = RetroRecordingWidget(self.user)
+        # émet l’état initial dans service.retroToggled et .preSecondsChanged
+
 
         self.settings_layout.addWidget(self.settings_libraries_list)
         self.settings_layout.addWidget(self.settings_retro_recording)
 
         # Connecte le signal au widget d'enregistrement
-        self.settings_libraries_list.librariesUpdated.connect(self.record_widget.updateLibraryCount)
-        self.settings_retro_recording.retroRecordingUpdated.connect(self.record_widget.updateRetroRecording)
+        # self.settings_libraries_list.librariesUpdated.connect(self.record_widget.updateLibraryCount)
+        # self.settings_retro_recording.retroRecordingUpdated.connect(self.record_widget.updateRetroRecording)
         self.record_widget.newSampleRecorded.connect(self.sample_list_widget.addSampleToList)
         # Configuration de l'onglet RecordWidget
         self.record_widget.show()
@@ -57,10 +61,6 @@ class MainWindow(QMainWindow):
     def exit_procedure(self):
         """ Fonction de nettoyage lors de la fermeture de l'application """
         print("Fermeture de l'application proprement...")
-        if self.user.settings:
-            self.user.settings.retro_recording_enabled = False
-            self.user.settings.set_retro_recording_state(False)
-            self.user.recorder.disable_retro()
         if self.user.recorder.is_recording:
-            self.user.recorder.is_recording = False
+            self.user.recorder.stop()
         # Ajoutez ici d'éventuelles actions de nettoyage (sauvegarde, fermeture de connexion, etc.)

@@ -59,7 +59,7 @@ class SampleListWidget(QWidget):
                     card = self._card_widgets[samp.id]
                 else:
                     # nouvelle carte
-                    card = SampleCard(samp, self.user)
+                    card = SampleCard(samp, self.user, self.user.settings)
                     card.deleteSample.connect(self.delete_sample)
                     card.renameSample.connect(self.rename_sample)
                     card.sampleMoved.connect(self.move_sample)
@@ -115,7 +115,7 @@ class SampleListWidget(QWidget):
                 self.samples.insert(0, fresh)
 
                 # Création et branchement des signaux
-                card = SampleCard(fresh, self.user)
+                card = SampleCard(fresh, self.user, self.user.settings)
                 card.deleteSample.connect(self.delete_sample)
                 card.renameSample.connect(self.rename_sample)
                 card.sampleMoved.connect(self.move_sample)

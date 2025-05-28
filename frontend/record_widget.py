@@ -11,12 +11,15 @@ from backend.models.User import User
 from utils.utils import get_folder_name
 from backend.models.sample import Sample
 import datetime
+from backend.services.settings_service import SettingsService
 
 class RecordWidgetWindow(QMainWindow):
     newSampleRecorded = pyqtSignal(str)
 
-    def __init__(self, user: User):
+    def __init__(self, user: User, settingsService: SettingsService):
         super().__init__()
+        self.user = user
+        self.settings = settingsService
 
 # ------------------------------------------------------------------------ Geometrie de la fenetre
         self.scale = 1.3
@@ -32,7 +35,6 @@ class RecordWidgetWindow(QMainWindow):
         self.library_indicator = QLabel(self.button_container)
         self.library_number_label = QLabel(self.library_indicator)
         self.library_name = QLabel(self)
-        self.user = user
         self.library_selected = 0
         self.retro_time_selected = 0
 
@@ -40,10 +42,20 @@ class RecordWidgetWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.keep_on_top)
         self.timer.start(1000)
-        # Timer pour poller le worker et mettre à jour l'UI
-        self.poll_timer = QTimer(self)
-        self.poll_timer.timeout.connect(self._poll_worker)
-        self.poll_timer.start(200) # Poll every 200ms
+
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._poll_worker)  # Polling worker
+        self.timer.start(100)
+
+        self.current_animation = None
+        self.current_animation_drag = None
+
+        self.settings.librariesChanged.connect(self.updateLibraryCount)
+        self.settings.retroToggled.connect(self.updateRetroRecording)
+        self.settings.preSecondsChanged.connect(self.updateRetroRecording)
+
+
+
 # ------------------------------------------------------------------------ Container a boutons
 
         self.base_geometry = QRect(0, 0, int(26 * self.scale), int(26 * self.scale))
@@ -84,8 +96,8 @@ class RecordWidgetWindow(QMainWindow):
             "font-size: 14px; "
             "text-align: center;"
         )
-        if (self.user.libraries):
-            self.library_number_label.setText(str(self.user.libraries[self.library_selected].position))
+        if (self.settings.libraries):
+            self.library_number_label.setText(str(self.settings.libraries[self.library_selected].position))
         else:
             self.library_number_label.setText("N")
         self.library_indicator.setStyleSheet(
@@ -113,12 +125,14 @@ class RecordWidgetWindow(QMainWindow):
 
 # ------------------------------------------------------------------------ Indicateur de nom
         self.library_name.setGeometry(int(0 * self.scale), int(26 * self.scale), int(100 * self.scale), int(10 * self.scale))  # Définir la géométrie correctement
-        if (self.user.libraries):
-            self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
+        if (self.settings.libraries):
+            self.library_name.setText(get_folder_name(self.settings.libraries[self.library_selected].path))
         else:
             self.library_name.setText("No library")
         self.library_name.setVisible(False)
         self.library_name.setStyleSheet("font-size: 10px;")
+
+        self.updateRetroRecording()  # Met à jour l'affichage du bouton d'enregistrement
 
 # ------------------------------------------------------------------------ Extension du container a bouton
     def eventFilter(self, source, event):
@@ -136,14 +150,14 @@ class RecordWidgetWindow(QMainWindow):
             if event.type() == QEvent.Type.Wheel:
                 # event est déjà un QWheelEvent, pas besoin de le recréer
                 delta = event.angleDelta().y()
-                if self.user.libraries:
+                if self.settings.libraries:
                     if delta > 0:
-                        self.library_selected = (self.library_selected + 1) % len(self.user.libraries)
+                        self.library_selected = (self.library_selected + 1) % len(self.settings.libraries)
                     else:
-                        self.library_selected = (self.library_selected - 1) % len(self.user.libraries)
+                        self.library_selected = (self.library_selected - 1) % len(self.settings.libraries)
                     self.updateLibraryCount()
-                    if (self.user.libraries):
-                        self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
+                    if (self.settings.libraries):
+                        self.library_name.setText(get_folder_name(self.settings.libraries[self.library_selected].path))
                     else:
                         self.library_name.setText("No library.")
 
@@ -155,38 +169,29 @@ class RecordWidgetWindow(QMainWindow):
 
         if source == self.recordButton:
             if event.type() == QEvent.Type.MouseButtonPress  and event.button() == Qt.MouseButton.LeftButton:
-                selected_library = self.user.libraries[self.library_selected].path
+                selected_library = self.settings.libraries[self.library_selected].path
                 self.user.recorder.record_button_clicked(selected_library, self.retro_time_selected)
-                # on sort, on laisse le timer plus tard rafraîchir l'état
                 self.updateRecordButtonDisplay()
                 return True
 
             # clic droit = toggle rétro-enregistrement
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
                 menu = QMenu(self)
-                enabled = self.user.settings.retro_recording_enabled
+                enabled = self.settings.isRetroEnabled()
                 action = menu.addAction(
                     "Désactiver rétro-enregistrement" if enabled
                     else "Activer rétro-enregistrement"
                 )
                 chosen = menu.exec(QCursor.pos())
                 if chosen == action:
-                    # bascule l’état dans la DB et dans le worker
-                    new_state = not enabled
-                    self.user.settings.set_retro_recording_state(new_state)
-                    if new_state:
-                        self.user.recorder.enable_retro()
-                    else:
-                        self.user.recorder.disable_retro()
-                    # met à jour l’UI (bordure, etc.)
-                    self.updateRetroRecording()
+                    self.settings.toggleRetro()
                 return True
 
         # -------------------------------- Scroll sur retro recording
 
-            elif event.type() == QEvent.Type.Wheel and self.user.settings.retro_recording_enabled:
+            elif event.type() == QEvent.Type.Wheel and self.settings.isRetroEnabled():
                 delta = event.angleDelta().y()
-                if delta > 0 and self.retro_time_selected < self.user.settings.pre_recording_seconds:
+                if delta > 0 and self.retro_time_selected < self.settings.getPreSeconds():
                     self.retro_time_selected += 1
                 elif delta < 0 and self.retro_time_selected > 0:
                     self.retro_time_selected -= 1
@@ -198,35 +203,34 @@ class RecordWidgetWindow(QMainWindow):
 
     def updateLibraryCount(self):
         """Met à jour le nombre de bibliothèques affiché"""
-        if (self.user.libraries):
-            if (len(self.user.libraries) - 1 < self.library_selected):
-                self.library_selected = len(self.user.libraries) - 1
-            self.library_number_label.setText(str(self.user.libraries[self.library_selected].position))
-            self.library_name.setText(get_folder_name(self.user.libraries[self.library_selected].path))
+        if (self.settings.libraries):
+            if (len(self.settings.libraries) - 1 < self.library_selected):
+                self.library_selected = len(self.settings.libraries) - 1
+            self.library_number_label.setText(str(self.settings.libraries[self.library_selected].position))
+            self.library_name.setText(get_folder_name(self.settings.libraries[self.library_selected].path))
         else:
             self.library_number_label.setText('N')
             self.library_name.setText("No library.")
 
     def updateRetroRecording(self):
         print("update Retro Recoring from record widget")
-        if self.user.settings:
-            if self.retro_time_selected > self.user.settings.pre_recording_seconds:
-                self.retro_time_selected = self.user.settings.pre_recording_seconds
-                self.updateRecordButtonDisplay()
-            if self.user.settings.retro_recording_enabled:
-                self.button_container.setStyleSheet(
-                    "background: black; "
-                    "border: 1px solid #40E0D0; "
-                    "border-radius: 4px;"
-                )
-            else:
-                self.recordButton.setText("")  # Supprime le texte
-                self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
-                self.button_container.setStyleSheet(
-                    "background: black; "
-                    "border: 1px solid white; "
-                    "border-radius: 4px;"
-                )
+        if self.retro_time_selected > self.settings.getPreSeconds():
+            self.retro_time_selected = self.settings.getPreSeconds()
+            self.updateRecordButtonDisplay()
+        if self.settings.isRetroEnabled():
+            self.button_container.setStyleSheet(
+                "background: black; "
+                "border: 1px solid #40E0D0; "
+                "border-radius: 4px;"
+            )
+        else:
+            self.recordButton.setText("")  # Supprime le texte
+            self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
+            self.button_container.setStyleSheet(
+                "background: black; "
+                "border: 1px solid white; "
+                "border-radius: 4px;"
+            )
 
 
 # ------------------------------------------------------------------------ Position de la fenetre
@@ -279,7 +283,7 @@ class RecordWidgetWindow(QMainWindow):
             else:
                 self.recordButton.setIcon(qta.icon('fa5s.microphone', color='red'))
         else:
-            if self.retro_time_selected > 0 and self.user.settings.retro_recording_enabled:
+            if self.retro_time_selected > 0 and self.settings.isRetroEnabled():
                 # Si le rétro-enregistrement est activé, on affiche le temps restant
                 self.recordButton.setIcon(QIcon())
                 self.recordButton.setText(str(self.retro_time_selected))

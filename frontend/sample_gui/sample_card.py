@@ -11,6 +11,7 @@ from backend.models.User import User
 from backend.models.sample import Sample
 from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.wave_form import WaveformWidget
+from backend.services.settings_service import SettingsService
 
 
 class SampleCard(QWidget):
@@ -22,18 +23,18 @@ class SampleCard(QWidget):
     newSampleSaved = pyqtSignal(str)
     
 
-    def __init__(self, sample:Sample, user: User, parent=None):
+    def __init__(self, sample: Sample, user: User, settings: SettingsService, parent=None):
         """
         sample : objet Sample, avec au moins les attributs :
             - id, name (ou filename), created_at, duration.
         """
         super().__init__(parent)
         self.user = user
+        self.settings = settings
         self.sample = sample
         self.isRenaming = False
         self.showWaveform = False
         self.wave_edition_widget = None
-
 
         # self.user.audio_player.signals.positionChanged.connect(self.updateSlider)
 
@@ -41,8 +42,6 @@ class SampleCard(QWidget):
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        # main_layout.setSpacing(5)
-        # main_layout.setContentsMargins(10, 10, 10, 10)
 
 # ------------------------- Header : Nom du sample, boutons renommer et supprimer
 
@@ -103,10 +102,8 @@ class SampleCard(QWidget):
         # library selector
         self.change_dir_combobox = QComboBox()
         self.change_dir_combobox.addItem(f"{SampleCard.get_folder_name(self.sample.path)}/")
-        for library in sorted(self.user.libraries, key=lambda lib: lib.position):
+        for library in sorted(self.settings.libraries, key=lambda lib: lib.position):
             library_dir_name = os.path.basename(library.path)
-            # self.change_dir_combobox.addItem(library_dir_name + "/")
-            # if library_dir_name != SampleCard.get_folder_name(self.sample.path):
             self.change_dir_combobox.addItem(library_dir_name + "/")
         self.change_dir_combobox.setFixedSize(80, 30)
         self.change_dir_combobox.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")
@@ -367,7 +364,7 @@ class SampleCard(QWidget):
         self.name_label.setText(self.sample.name)
     
     def move_sample(self, index):
-        new_dir = self.user.libraries[index - 1].path  # -1 car index 0 est le dossier actuel
+        new_dir = self.settings.libraries[index - 1].path  # -1 car index 0 est le dossier actuel
         print(new_dir)
         print(self.sample.path)
         self.sampleMoved.emit(self.sample.id, new_dir)
