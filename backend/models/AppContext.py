@@ -1,4 +1,4 @@
-# /backend/models/User.py
+# /backend/models/AppContext.py
 
 from pathlib import Path
 import sys
@@ -7,17 +7,18 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from backend.models.sample import Sample
 # from backend.models.recorder import Recorder
 from backend.models.SampleLibrary import SampleBank
-from backend.db import SessionLocal
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-from PyQt6.QtCore import QUrl, pyqtSignal, QObject
 import pygame
 from backend.services.recorder_service import RecorderService
 from backend.services.settings_service import SettingsService
 
-class User:
-    def __init__(self, settingsService: SettingsService):
-        print("Initialisation du User")
-        self.settings = settingsService
+class AppContext:
+    """
+    Classe de contexte pour l'application, contenant les services et l'état utilisateur.
+    Cette classe est utilisée pour initialiser les services nécessaires à l'application.
+    """
+    def __init__(self):
+        print("Initialisation de AppContext...")
+        self.settings = SettingsService()
 
         self.recorder = RecorderService(
             self.settings,
@@ -27,20 +28,6 @@ class User:
         
         self.audio_player = AudioPlayer()
 
-        # if self.settings.isRetroEnabled():
-        #     print("Retro recording is enabled, starting recorder")
-        #     self.recorder.enable_retro()
-
-
-    # def play_sample(self, file_path):
-    #     """ Demande la lecture d'un sample """
-    #     self.audio_player.play_sample(file_path)
-
-    # def enable_retro(self):    self.recorder.enable_retro()
-    # def disable_retro(self):   self.recorder.disable_retro()
-    # def start_record(self, folder, retro_time): return self.recorder.start(folder, retro_time)
-    # def stop_record(self):      return self.recorder.stop()
-    # def shutdown_recorder(self): return self.recorder.shutdown()
 
 class AudioPlayer:
 

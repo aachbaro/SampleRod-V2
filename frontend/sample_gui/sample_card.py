@@ -7,11 +7,11 @@ import qtawesome as qta
 from utils.utils import get_folder_name
 from datetime import datetime
 import os
-from backend.models.User import User
 from backend.models.sample import Sample
 from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.wave_form import WaveformWidget
 from backend.services.settings_service import SettingsService
+from backend.models.AppContext import AppContext
 
 
 class SampleCard(QWidget):
@@ -23,20 +23,20 @@ class SampleCard(QWidget):
     newSampleSaved = pyqtSignal(str)
     
 
-    def __init__(self, sample: Sample, user: User, settings: SettingsService, parent=None):
+    def __init__(self, sample: Sample, app_context: AppContext, parent=None):
         """
         sample : objet Sample, avec au moins les attributs :
             - id, name (ou filename), created_at, duration.
         """
         super().__init__(parent)
-        self.user = user
-        self.settings = settings
+        self.app_context = app_context
+        self.settings = self.app_context.settings
         self.sample = sample
         self.isRenaming = False
         self.showWaveform = False
         self.wave_edition_widget = None
 
-        # self.user.audio_player.signals.positionChanged.connect(self.updateSlider)
+        # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
 
         self.init_ui()
 
@@ -265,7 +265,7 @@ class SampleCard(QWidget):
             self.playback_slider.setVisible(False)
             self.time_label.setVisible(False)
             try:
-                self.user.audio_player.clear_audio()
+                self.app_context.audio_player.clear_audio()
             except Exception:
                 pass
 
@@ -305,7 +305,7 @@ class SampleCard(QWidget):
 
     def togglePlay(self):
         self.playSample.emit(self.sample)
-        is_playing = self.user.audio_player.toggle_play(self.sample.id, self.sample.path, self.sample.duration)
+        is_playing = self.app_context.audio_player.toggle_play(self.sample.id, self.sample.path, self.sample.duration)
         icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
         self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
         if is_playing:
@@ -314,7 +314,7 @@ class SampleCard(QWidget):
     def seekAudio(self, value):
         """Déplace la position de lecture lorsque l'utilisateur interagit avec le slider"""
         new_position = int((value / 100) * (self.sample.duration * 1000))
-        is_playing = self.user.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
+        is_playing = self.app_context.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
         icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
         self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
         if is_playing:
@@ -326,9 +326,9 @@ class SampleCard(QWidget):
 
     def updateSlider(self):
         """Met à jour la position du slider, le temps affiché et détecte la fin de lecture"""
-        position = int(self.user.audio_player.get_position())
-        sample_id = self.user.audio_player.current_sample_id
-        duration = int(self.user.audio_player.current_sample_duration * 1000)
+        position = int(self.app_context.audio_player.get_position())
+        sample_id = self.app_context.audio_player.current_sample_id
+        duration = int(self.app_context.audio_player.current_sample_duration * 1000)
         if sample_id == self.sample.id:
             self.playback_slider.setValue(int((position / duration) * 100))
             self.time_label.setText(f"{format_time(position)} / {format_time(int(self.sample.duration * 1000))}")
@@ -336,7 +336,7 @@ class SampleCard(QWidget):
             self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
             self.playback_slider.setValue(int((0 / duration) * 100))
             self.time_label.setText(f"{format_time(0)} / {format_time(int(self.sample.duration * 1000))}")
-        if self.user.audio_player.is_playing and self.sample.id == sample_id:
+        if self.app_context.audio_player.is_playing and self.sample.id == sample_id:
              QTimer.singleShot(100, self.updateSlider)
 
     def onRenameSuccess(self, sample_id, new_name):

@@ -7,19 +7,19 @@ from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu
 from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal
 from PyQt6.QtGui import QIcon, QWheelEvent, QCursor
 import qtawesome as qta
-from backend.models.User import User
 from utils.utils import get_folder_name
 from backend.models.sample import Sample
 import datetime
 from backend.services.settings_service import SettingsService
+from backend.models.AppContext import AppContext
 
 class RecordWidgetWindow(QMainWindow):
     newSampleRecorded = pyqtSignal(str)
 
-    def __init__(self, user: User, settingsService: SettingsService):
+    def __init__(self, app_context: AppContext):
         super().__init__()
-        self.user = user
-        self.settings = settingsService
+        self.app_context = app_context
+        self.settings = self.app_context.settings
 
 # ------------------------------------------------------------------------ Geometrie de la fenetre
         self.scale = 1.3
@@ -170,7 +170,7 @@ class RecordWidgetWindow(QMainWindow):
         if source == self.recordButton:
             if event.type() == QEvent.Type.MouseButtonPress  and event.button() == Qt.MouseButton.LeftButton:
                 selected_library = self.settings.libraries[self.library_selected].path
-                self.user.recorder.record_button_clicked(selected_library, self.retro_time_selected)
+                self.app_context.recorder.record_button_clicked(selected_library, self.retro_time_selected)
                 self.updateRecordButtonDisplay()
                 return True
 
@@ -270,7 +270,7 @@ class RecordWidgetWindow(QMainWindow):
 
     def updateRecordButtonDisplay(self):
         """Met à jour l'affichage du bouton en fonction du mode de rétro-enregistrement et de l'état d'enregistrement."""
-        if self.user.recorder.is_recording:
+        if self.app_context.recorder.is_recording:
             if self.retro_time_selected > 0:
                 self.recordButton.setIcon(QIcon())
                 self.recordButton.setText(str(self.retro_time_selected))
@@ -341,7 +341,7 @@ class RecordWidgetWindow(QMainWindow):
         self.current_animation_drag = animDragZone
 
     def _poll_worker(self):
-        for msg, payload in self.user.recorder.poll():
+        for msg, payload in self.app_context.recorder.poll():
             print(f"record_widget: polling {msg} {payload}")
             if msg == 'done':
                 print("record_widget: done received from service.")

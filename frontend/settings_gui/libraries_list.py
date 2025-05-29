@@ -8,22 +8,23 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QSettings, pyqtSlot
 from PyQt6.QtGui import QIcon
 from backend.models.SampleLibrary import SampleBank
-from backend.models.User import User
+from backend.models.AppContext import AppContext
 from backend.db import Base, SessionLocal
 from frontend.custom_widgets import QListWidgetDragBugFix
 import time
 from backend.services.settings_service import SettingsService
-
+from backend.models.AppContext import AppContext
 
 import os
 
 class SettingsLibrariesList(QWidget):
     """ Widget pour gérer la liste des bibliothèques de samples """
-    def __init__(self, settingsService: SettingsService):
+    def __init__(self, app_context: AppContext):
         super().__init__()
         self._qs = QSettings("SampleRod", "Main")
         self.setLayout(QVBoxLayout())
-        self.settingsService = settingsService
+        self.app_context = app_context
+        self.settings_service = self.app_context.settings
         
         # En-tête pour la liste des bibliothèques
         self.header_layout = QHBoxLayout()
@@ -56,9 +57,9 @@ class SettingsLibrariesList(QWidget):
 
 
         # Connecter le signal de changement de bibliothèques
-        self.settingsService.librariesChanged.connect(self.onLibrariesUpdated)
+        self.settings_service.librariesChanged.connect(self.onLibrariesUpdated)
 
-        self.refreshLibraryList(self.settingsService.libraries)
+        self.refreshLibraryList(self.settings_service.libraries)
 
     @pyqtSlot(list)
     def onLibrariesUpdated(self, libraries):
@@ -84,11 +85,11 @@ class SettingsLibrariesList(QWidget):
         if not d:
             return
         self._qs.setValue("lastLibraryDir", d)
-        self.settingsService.addSampleLibrary(d)
+        self.settings_service.addSampleLibrary(d)
 
     def deleteLibrary(self, library_to_delete):
         """ Supprime une bibliothèque """
-        self.settingsService.removeSampleLibrary(library_to_delete.id)
+        self.settings_service.removeSampleLibrary(library_to_delete.id)
 
     def updateLibraryOrder(self):
         ordered_ids = []
@@ -96,7 +97,7 @@ class SettingsLibrariesList(QWidget):
             item = self.library_list_widget.item(idx)
             lib  = item.data(Qt.ItemDataRole.UserRole)  # un SampleBank
             ordered_ids.append(lib.id)
-        self.settingsService.updateLibraryOrder(ordered_ids)
+        self.settings_service.updateLibraryOrder(ordered_ids)
 
     def refreshLibraryList(self, libraries=None):
         """ Met à jour l'affichage de la liste des bibliothèques """

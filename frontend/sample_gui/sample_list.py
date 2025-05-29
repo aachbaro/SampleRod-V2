@@ -4,10 +4,10 @@ from frontend.sample_gui.sample_card import SampleCard
 from backend.models.sample import Sample
 from backend.db import Base, SessionLocal
 import os
-from backend.models.User import User
 import shutil
 from backend.db import SessionLocal
 from backend.models.sample import Sample as DBSample
+from backend.models.AppContext import AppContext
 
 class SampleListWidget(QWidget):
     # Signal pour notifier des actions sur un sample, à connecter aux fonctions de ton store/backend
@@ -15,10 +15,10 @@ class SampleListWidget(QWidget):
     sampleRenameError = pyqtSignal(int, str)
     sampleMoved = pyqtSignal(int, str)
 
-    def __init__(self, samples, user: User, parent=None):
+    def __init__(self, samples, app_context: AppContext, parent=None):
         super().__init__(parent)
         self.samples = samples
-        self.user    = user
+        self.app_context = app_context
         self._card_widgets = {}  
 
         self.init_ui()
@@ -59,7 +59,7 @@ class SampleListWidget(QWidget):
                     card = self._card_widgets[samp.id]
                 else:
                     # nouvelle carte
-                    card = SampleCard(samp, self.user, self.user.settings)
+                    card = SampleCard(samp, self.app_context)
                     card.deleteSample.connect(self.delete_sample)
                     card.renameSample.connect(self.rename_sample)
                     card.sampleMoved.connect(self.move_sample)
@@ -115,7 +115,7 @@ class SampleListWidget(QWidget):
                 self.samples.insert(0, fresh)
 
                 # Création et branchement des signaux
-                card = SampleCard(fresh, self.user, self.user.settings)
+                card = SampleCard(fresh, self.app_context)
                 card.deleteSample.connect(self.delete_sample)
                 card.renameSample.connect(self.rename_sample)
                 card.sampleMoved.connect(self.move_sample)
@@ -141,8 +141,8 @@ class SampleListWidget(QWidget):
                 return
 
             # 1) Si on est en train de lire CE sample, on stoppe et on unload
-            if getattr(self.user.audio_player, "current_sample_path", None) == sample.path:
-                self.user.audio_player.clear_audio()
+            if getattr(self.app_context.audio_player, "current_sample_path", None) == sample.path:
+                self.app_context.audio_player.clear_audio()
                 try:
                     # pygame 2.1+ : décharge le fichier de la mémoire  
                     import pygame
@@ -225,8 +225,8 @@ class SampleListWidget(QWidget):
                 self.update_sample_card(sample_id, new_name)
                 return
 
-            if getattr(self.user.audio_player, "current_sample_path", None) == sample.path:
-                self.user.audio_player.clear_audio()
+            if getattr(self.app_context.audio_player, "current_sample_path", None) == sample.path:
+                self.app_context.audio_player.clear_audio()
                 try:
                     # pygame 2.1+ : décharge le fichier de la mémoire  
                     import pygame
