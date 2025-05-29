@@ -3,6 +3,7 @@ from PyQt6.QtCore import QObject, pyqtSlot
 import multiprocessing as mp
 from backend.models.recorder_worker import recorder_worker
 from backend.services.settings_service import SettingsService
+from backend.models.sample import Sample
 
 class RecorderService(QObject):
     """

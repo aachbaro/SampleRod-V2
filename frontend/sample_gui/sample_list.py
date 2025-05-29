@@ -1,27 +1,35 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QFrame
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
+from PyQt6.QtCore import pyqtSlot
 from frontend.sample_gui.sample_card import SampleCard
-from backend.models.sample import Sample
-from backend.db import Base, SessionLocal
-import os
-import shutil
-from backend.db import SessionLocal
-from backend.models.sample import Sample as DBSample
 from backend.models.AppContext import AppContext
+from backend.services.sample_service import SampleService
+import os
+
 
 class SampleListWidget(QWidget):
-    # Signal pour notifier des actions sur un sample, à connecter aux fonctions de ton store/backend
-    sampleRenameSuccess = pyqtSignal(int, str)  # ID et nouveau nom
-    sampleRenameError = pyqtSignal(int, str)
-    sampleMoved = pyqtSignal(int, str)
-
-    def __init__(self, samples, app_context: AppContext, parent=None):
+    def __init__(self, app_context: AppContext, parent=None):
         super().__init__(parent)
-        self.samples = samples
-        self.app_context = app_context
-        self._card_widgets = {}  
 
+        # stocke le contexte et le service métier
+        self.app_context  = app_context
+        self.sample_store: SampleService = app_context.sample_store
+        self.samples = []  # liste des samples à afficher
+
+        # 1) abonnements aux signaux du service
+        self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
+        self.sample_store.sampleAdded.      connect(self.onSampleAdded)
+        self.sample_store.sampleDeleted.    connect(self.onSampleDeleted)
+        self.sample_store.sampleRenamed.    connect(self.onSampleRenamed)
+        self.sample_store.sampleMoved.      connect(self.onSampleMoved)
+
+        # 2) stockage des cartes existantes
+        self._card_widgets = {}
+
+        # 3) création de l’UI
         self.init_ui()
+
+        # 4) initialisation de la liste avec le cache actuel
+        self.onSamplesChanged(self.sample_store.get_cached())
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -35,145 +43,144 @@ class SampleListWidget(QWidget):
         layout.addWidget(self.scroll_area)
         self.refreshList()
 
+    @pyqtSlot(list)
+    def onSamplesChanged(self, samples: list):
+        """
+        Slot appelé quand SampleService met à jour son cache.
+        » Met à jour la liste interne et reconstruit les cartes.
+        """
+        # 1) on stocke la nouvelle liste
+        self.samples = samples
+        # 2) on reconstruit l'affichage
+        self.refreshList()
+
+    @pyqtSlot(int)
+    def onSampleAdded(self, sample_id: int):
+        """
+        Quand un nouveau sample est ajouté :
+        - on le récupère dans le cache
+        - on l'ajoute en tête de self.samples
+        - on crée et on affiche sa SampleCard tout en haut
+        """
+        # 1) trouve l'objet Sample dans le cache du service
+        new_sample = next(
+            (s for s in self.sample_store.get_cached() if s.id == sample_id),
+            None
+        )
+        if new_sample is None:
+            return
+
+        # 2) l'ajoute en début de liste interne
+        self.samples.insert(0, new_sample)
+
+        # 3) crée la carte et connecte uniquement ses signaux
+        card = SampleCard(new_sample, self.app_context)
+        card.deleteSample.connect(self.delete_sample)
+        card.renameSample.connect(self.rename_sample)
+        card.sampleMoved.connect(self.move_sample)
+        # signaux retour (rename/move)
+        self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
+        self.sample_store.sampleMoved  .connect(card.onMoveSuccess)
+
+        # 4) stocke la carte et affiche-la en tête du layout
+        self._card_widgets[sample_id] = card
+        self.content_layout.insertWidget(0, card)
+
+    @pyqtSlot(int)
+    def delete_sample(self, sample_id: int):
+        """Déclenche la suppression via le service."""
+        self.sample_store.delete(sample_id)
+
+    @pyqtSlot(int, str)
+    def rename_sample(self, sample_id: int, new_name: str):
+        """Déclenche le renommage via le service."""
+        self.sample_store.rename(sample_id, new_name)
+
+    @pyqtSlot(int, str)
+    def move_sample(self, sample_id: int, target_folder: str):
+        """Déclenche le déplacement via le service."""
+        self.sample_store.move(sample_id, target_folder)
+
     def refreshList(self):
-        # 1) on crée la liste inversée des Sample (pour afficher du plus récent au plus ancien)
-        new_samples = list(reversed(self.samples))
+        # 1) on prend la liste inversée (du plus récent au plus ancien)
+        ordered_samples = list(reversed(self.samples))
 
-        # 2) on ouvre une session pour merger et récupérer les ids en session active
-        session = SessionLocal()
-        try:
-            merged = [session.merge(s) for s in new_samples]
-            new_ids = {s.id for s in merged}
-            
-            # 3) on supprime du layout les widgets dont l’id n’est plus dans new_ids
-            for old_id in list(self._card_widgets):
-                if old_id not in new_ids:
-                    w = self._card_widgets.pop(old_id)
-                    self.content_layout.removeWidget(w)
-                    w.deleteLater()
+        # 2) on supprime les cartes obsolètes
+        ids_courants = {s.id for s in ordered_samples}
+        for ancien_id in list(self._card_widgets):
+            if ancien_id not in ids_courants:
+                w = self._card_widgets.pop(ancien_id)
+                self.content_layout.removeWidget(w)
+                w.deleteLater()
 
-            # 4) on prépare la liste ordonnée des widgets à afficher
-            ordered = []
-            for samp in merged:
-                if samp.id in self._card_widgets:
-                    card = self._card_widgets[samp.id]
-                else:
-                    # nouvelle carte
-                    card = SampleCard(samp, self.app_context)
-                    card.deleteSample.connect(self.delete_sample)
-                    card.renameSample.connect(self.rename_sample)
-                    card.sampleMoved.connect(self.move_sample)
-                    self.sampleRenameSuccess.connect(card.onRenameSuccess)
-                    self.sampleRenameError.connect(card.onRenameError)
-                    self.sampleMoved.connect(card.onMoveSuccess)
-                    card.newSampleSaved.connect(self.addSampleToList)
-                    self._card_widgets[samp.id] = card
-                ordered.append(card)
+        # 3) on (ré)crée / met à jour les cartes dans l'ordre
+        cartes_ordonnees = []
+        for samp in ordered_samples:
+            if samp.id in self._card_widgets:
+                card = self._card_widgets[samp.id]
+                # Si on veut rafraîchir la donnée du sample (en cas de mise à jour)
+                card.sample = samp
+                card.refresh_display()
+            else:
+                # nouvelle carte, connexion des signaux
+                card = SampleCard(samp, self.app_context)
+                card.deleteSample.connect(self.delete_sample)
+                card.renameSample.connect(self.rename_sample)
+                card.sampleMoved.connect(self.move_sample)
+                # Signaux retour du service
+                self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
+                self.sample_store.sampleMoved   .connect(card.onMoveSuccess)
+                # On stocke la carte
+                self._card_widgets[samp.id] = card
+            cartes_ordonnees.append(card)
 
-        finally:
-            session.close()
-
-        # 5) on vide le layout (sans supprimer les widgets)
+        # 4) on vide le layout (sans supprimer les widgets)
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             w = item.widget()
             if w:
                 self.content_layout.removeWidget(w)
 
-        # 6) on ré‐insère dans l’ordre
-        for w in ordered:
+        # 5) on ajoute les cartes dans l’ordre, puis un stretch final
+        for w in cartes_ordonnees:
             self.content_layout.addWidget(w)
         self.content_layout.addStretch()
 
-    def addSampleToList(self, new_path: str):
-        """
-        Après avoir sauvegardé un WAV (overwrite ou copy),
-        on met à jour **in-place** la carte existante ou on en crée une nouvelle.
-        """
-        from backend.db import SessionLocal
-        from backend.models.sample import Sample as DBSample
 
-        session = SessionLocal()
-        try:
-            # 1) Récupère l'enregistrement qui vient d’être écrit
-            fresh = session.query(DBSample).filter_by(path=new_path).first()
-            if not fresh:
-                return
+    # ──────────── SLOTS SERVICE → UI ────────────
+    @pyqtSlot(int)
+    def onSampleDeleted(self, sample_id: int):
+        """Après suppression : ferme la waveform et supprime la carte."""
+        card = self._card_widgets.get(sample_id)
+        if card:
+            self.close_waveforms_for_path(card.sample.path)
+            self.content_layout.removeWidget(card)
+            card.deleteLater()
+            del self._card_widgets[sample_id]
 
-            # 2) Si on a déjà une carte pour ce sample → overwrite
-            if fresh.id in self._card_widgets:
-                card = self._card_widgets[fresh.id]
-                # Met à jour à la fois le modèle et l'affichage
-                card.sample.duration   = fresh.duration
-                card.sample.created_at = fresh.created_at
-                card.length_label.setText(f"{fresh.duration:.1f}s")
-                card.date_label.setText(fresh.created_at.strftime("%d/%m/%Y %H:%M"))
+    @pyqtSlot(int, str)
+    def onSampleRenamed(self, sample_id: int, new_name: str):
+        """Après renommage : ferme la waveform, met à jour nom & chemin, rafraîchit."""
+        card = self._card_widgets.get(sample_id)
+        if card:
+            old_path = card.sample.path
+            self.close_waveforms_for_path(old_path)
+            ext = os.path.splitext(old_path)[1]
+            new_path = os.path.join(os.path.dirname(old_path), new_name + ext)
+            card.sample.name = new_name
+            card.sample.path = new_path
+            card.refresh_display()
 
-            # 3) Sinon c'est une copy → on ajoute un nouveau SampleCard
-            else:
-                # On garde la liste interne à jour
-                self.samples.insert(0, fresh)
-
-                # Création et branchement des signaux
-                card = SampleCard(fresh, self.app_context)
-                card.deleteSample.connect(self.delete_sample)
-                card.renameSample.connect(self.rename_sample)
-                card.sampleMoved.connect(self.move_sample)
-                self.sampleRenameSuccess.connect(card.onRenameSuccess)
-                self.sampleRenameError.connect(card.onRenameError)
-                self.sampleMoved.connect(card.onMoveSuccess)
-                card.newSampleSaved.connect(self.addSampleToList)
-
-                # On garde la référence puis on insère en haut de la vue
-                self._card_widgets[fresh.id] = card
-                self.content_layout.insertWidget(0, card)
-        finally:
-            session.close()
-
-    def delete_sample(self, sample_to_delete_id):
-        print("frontend: sample_list: delete sample:", sample_to_delete_id)
-        session = SessionLocal()
-        try:
-            session.expire_on_commit = False
-            sample = session.query(Sample).get(sample_to_delete_id)
-            if not sample:
-                print(f"Sample {sample_to_delete_id} introuvable en DB.")
-                return
-
-            # 1) Si on est en train de lire CE sample, on stoppe et on unload
-            if getattr(self.app_context.audio_player, "current_sample_path", None) == sample.path:
-                self.app_context.audio_player.clear_audio()
-                try:
-                    # pygame 2.1+ : décharge le fichier de la mémoire  
-                    import pygame
-                    pygame.mixer.music.unload()
-                except Exception:
-                    pass
-
-            # 2) Fermer tout WaveformWidget éventuel dans les SampleCard
-            #    (si tu as un signal pour ça, tu peux l'émettre ici)
-            #    Par exemple :
-            self.close_waveforms_for_path(sample.path)
-
-            # 3) Supprimer le fichier du disque
-            if os.path.exists(sample.path):
-                try:
-                    os.remove(sample.path)
-                    print(f"Fichier {sample.path} supprimé du disque.")
-                except Exception as e:
-                    print(f"Erreur suppr. fichier : {e}")
-            else:
-                print(f"Fichier introuvable: {sample.path}")
-
-            # 4) Supprimer l’entrée en base
-            session.delete(sample)
-            session.commit()
-        finally:
-            session.close()
-
-        # 5) Recharger la liste depuis la base et rafraîchir l'UI
-        self.reload_samples_from_db()
-        self.refreshList()
+    @pyqtSlot(int, str)
+    def onSampleMoved(self, sample_id: int, target_folder: str):
+        """Après déplacement : ferme la waveform, met à jour le chemin, rafraîchit."""
+        card = self._card_widgets.get(sample_id)
+        if card:
+            old_path = card.sample.path
+            self.close_waveforms_for_path(old_path)
+            new_path = os.path.join(target_folder, os.path.basename(old_path))
+            card.sample.path = new_path
+            card.refresh_display()
 
     def close_waveforms_for_path(self, path):
         for i in range(self.content_layout.count()):
@@ -193,146 +200,3 @@ class SampleListWidget(QWidget):
                 w.wave_edition_widget.deleteLater()
                 w.wave_edition_widget = None
 
-    def reload_samples_from_db(self):
-        """Recharge self.samples depuis la base."""
-        session = SessionLocal()
-        try:
-            self.samples = session.query(Sample).all()
-        finally:
-            session.close()
-
-    def rename_sample(self, sample_id, new_name):
-        """Renomme le fichier associé à un sample et met à jour l'interface et la base de données."""
-        print(f"frontend: sample_list: rename sample {sample_id} -> {new_name}")
-
-        try:
-            session = SessionLocal()
-            session.expire_on_commit = False
-
-            # Trouver le sample dans la base de données
-            sample = session.query(Sample).filter(Sample.id == sample_id).first()
-
-            if not sample:
-                print(f"Sample introuvable en base : {sample_id}")
-                return
-
-            old_path = sample.path
-
-            if not old_path or not os.path.exists(old_path):
-                print(f"Fichier introuvable : {old_path}. Mise à jour uniquement en base de données.")
-                sample.name = new_name
-                session.commit()
-                self.update_sample_card(sample_id, new_name)
-                return
-
-            if getattr(self.app_context.audio_player, "current_sample_path", None) == sample.path:
-                self.app_context.audio_player.clear_audio()
-                try:
-                    # pygame 2.1+ : décharge le fichier de la mémoire  
-                    import pygame
-                    pygame.mixer.music.unload()
-                except Exception:
-                    pass
-
-            self.close_waveforms_for_path(sample.path)
-
-            # 🛑 Etape 2 : fermer tout WaveformWidget affichant ce fichier
-            self.close_waveforms_for_path(old_path)
-
-            dir_name = os.path.dirname(old_path)  # Répertoire du fichier
-            file_ext = os.path.splitext(old_path)[1]  # Extension du fichier
-            new_path = os.path.join(dir_name, new_name + file_ext)  # Nouveau chemin
-
-            if os.path.exists(new_path):
-                print(f"Erreur : un fichier avec ce nom existe déjà -> {new_path}")
-                return
-
-            try:
-                os.rename(old_path, new_path)  # Renommer le fichier
-                print(f"Fichier renommé : {old_path} -> {new_path}")
-
-                # Mettre à jour le sample dans la base de données
-                sample.name = new_name
-                sample.path = new_path
-                session.commit()
-            except Exception as e:
-                print(f"Erreur lors du renommage du fichier : {str(e)}")
-            finally:
-                self.update_sample_card(sample_id, new_name)
-
-        finally:
-            session.close()
-
-    def move_sample(self, sample_id, new_dir):
-        """Déplace le fichier associé à un sample et met à jour l'interface et la base de données."""
-        print(f"frontend: sample_list: move sample {sample_id} -> {new_dir}")
-
-        try:
-            session = SessionLocal()
-            session.expire_on_commit = False
-
-            sample = session.query(Sample).filter(Sample.id == sample_id).first()
-
-            if not sample:
-                print(f"Sample introuvable en base : {sample_id}")
-                return
-
-            old_path = sample.path
-
-            if not old_path or not os.path.exists(old_path):
-                print(f"Fichier introuvable : {old_path}. Mise à jour uniquement en base de données.")
-                sample.path = os.path.join(new_dir, os.path.basename(old_path))
-                session.commit()
-                self.update_sample_card_move(sample_id, new_dir)
-                return
-
-            new_path = os.path.join(new_dir, os.path.basename(old_path))
-            print("new_dir:", new_dir)
-            print("basename etc..:",os.path.basename(old_path))
-            print("new_path: ", new_path)
-
-            if os.path.exists(new_path):
-                print(f"Erreur : un fichier avec ce nom existe déjà dans le répertoire de destination -> {new_path}")
-                return
-
-            try:
-                shutil.move(old_path, new_path)
-                print(f"Fichier déplacé : {old_path} -> {new_path}")
-
-                sample.path = new_path
-                session.commit()
-            except Exception as e:
-                print(f"Erreur lors du déplacement du fichier : {str(e)}")
-            finally:
-                self.update_sample_card_move(sample_id, new_dir)
-
-        finally:
-            session.close()
-
-    def update_sample_card(self, sample_id, new_name):
-        for i in range(self.content_layout.count()):
-            item = self.content_layout.itemAt(i)
-            widget = item.widget()
-            if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
-                # ancien path
-                old = widget.sample.path
-                directory = os.path.dirname(old)
-                ext = os.path.splitext(old)[1]
-                new_path = os.path.join(directory, new_name + ext)
-
-                widget.sample.name = new_name
-                widget.sample.path = new_path
-
-                widget.refresh_display()
-                break
-
-    def update_sample_card_move(self, sample_id, new_dir):
-        """Met à jour le SampleCard correspondant à l'ID donné après le déplacement."""
-        for i in range(self.content_layout.count()):
-            item = self.content_layout.itemAt(i)
-            if item and item.widget():
-                widget = item.widget()
-                if isinstance(widget, SampleCard) and widget.sample.id == sample_id:
-                    widget.sample.path = os.path.join(new_dir, os.path.basename(widget.sample.path))
-                    widget.refresh_display()
-                    break

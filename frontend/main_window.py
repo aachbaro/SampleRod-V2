@@ -40,7 +40,6 @@ class MainWindow(QMainWindow):
         samples_tab = QWidget()
         samples_layout = QVBoxLayout(samples_tab)
         self.sample_list_widget = SampleListWidget(
-            samples=Sample.get_all_samples(),
             app_context=self.app_context
         )
         samples_layout.addWidget(self.sample_list_widget)
@@ -60,7 +59,7 @@ class MainWindow(QMainWindow):
         """Connecte les signaux entre composants"""
         # Quand un nouvel échantillon est enregistré, on l'ajoute à la liste
         self.record_widget.newSampleRecorded.connect(
-            self.sample_list_widget.addSampleToList
+            lambda path: self.app_context.sample_store.load_all()
         )
 
     def closeEvent(self, event):

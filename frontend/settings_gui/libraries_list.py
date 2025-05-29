@@ -9,7 +9,6 @@ from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QSettings, pyq
 from PyQt6.QtGui import QIcon
 from backend.models.SampleLibrary import SampleBank
 from backend.models.AppContext import AppContext
-from backend.db import Base, SessionLocal
 from frontend.custom_widgets import QListWidgetDragBugFix
 import time
 from backend.services.settings_service import SettingsService

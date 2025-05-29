@@ -10,6 +10,7 @@ from backend.models.SampleLibrary import SampleBank
 import pygame
 from backend.services.recorder_service import RecorderService
 from backend.services.settings_service import SettingsService
+from backend.services.sample_service import SampleService
 
 class AppContext:
     """
@@ -27,6 +28,8 @@ class AppContext:
         )
         
         self.audio_player = AudioPlayer()
+
+        self.sample_store = SampleService()
 
 
 class AudioPlayer:

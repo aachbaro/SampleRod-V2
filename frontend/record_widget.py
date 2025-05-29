@@ -345,5 +345,4 @@ class RecordWidgetWindow(QMainWindow):
             print(f"record_widget: polling {msg} {payload}")
             if msg == 'done':
                 print("record_widget: done received from service.")
-                Sample(payload)
-                self.newSampleRecorded.emit(payload)
+                self.app_context.sample_store.add(payload)

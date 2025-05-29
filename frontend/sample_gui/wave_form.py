@@ -12,11 +12,11 @@ import librosa
 from backend.models.sample import Sample
 from PyQt6.QtWidgets import QMessageBox, QInputDialog
 import os, soundfile as sf
-from backend.db import SessionLocal
 from backend.models.sample import Sample as DBSample
 import librosa
 from backend.models.sample import Sample as SampleModel
 from frontend.custom_widgets import SaveWaveformDialog
+from backend.models.AppContext import AppContext
 
 
 
@@ -72,8 +72,9 @@ class WaveformWidget(QWidget):
 
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
 
-    def __init__(self, audio_file_path):
+    def __init__(self, audio_file_path, app_context: AppContext):
         super().__init__()
+        self.app_context = app_context
         self.audio_file_path = audio_file_path
         # → playback
         self.stream = None
@@ -937,7 +938,6 @@ class WaveformWidget(QWidget):
         """
         from PyQt6.QtWidgets import QMessageBox, QInputDialog
         import os, soundfile as sf
-        from backend.db import SessionLocal
         from backend.models.sample import Sample as DBSample
         import librosa
 
@@ -963,23 +963,17 @@ class WaveformWidget(QWidget):
             QMessageBox.critical(self, "Erreur", str(e))
             return
 
-        # mise à jour de la DB
-        session = SessionLocal()
-        try:
-            if overwrite:
-                samp = session.query(DBSample).filter_by(path=orig).first()
-                if samp:
-                    samp.duration   = self.duration
-                    samp.created_at = samp.get_creation_date()
-                    session.commit()
-                    QMessageBox.information(self, "Enregistré", f"Fichier écrasé :\n{target}")
-            else:
-                DBSample(target)
-                QMessageBox.information(self, "Enregistré", f"Copie sauvegardée :\n{target}")
-        finally:
-            session.close()
+        svc = self.app_context.sample_store
 
-        self.waveformSaved.emit(target)
+        if overwrite:
+            # l’overwrite ne change pas le path, on recharge juste le cache pour
+            # mettre à jour duration/created_at via le modèle
+            svc.load_all()
+            QMessageBox.information(self, "Enregistré", f"Fichier écrasé :\n{target}")
+        else:
+            # création d’un nouveau sample (FS+BD) via SampleService.add()
+            svc.add(target)
+            QMessageBox.information(self, "Enregistré", f"Copie sauvegardée :\n{target}")
 
 
 class NoLeftDragViewBox(pg.ViewBox):

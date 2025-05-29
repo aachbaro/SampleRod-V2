@@ -16,8 +16,8 @@ from backend.models.AppContext import AppContext
 
 class SampleCard(QWidget):
     # Signaux pour communiquer avec la liste
-    deleteSample = pyqtSignal(object)      # émet l'objet sample à supprimer
-    renameSample = pyqtSignal(object, str)   # émet l'objet sample et le nouveau nom
+    deleteSample = pyqtSignal(int)        # émet l’ID du sample à supprimer
+    renameSample = pyqtSignal(int, str)   # émet (ID du sample, nouveau nom)m
     playSample = pyqtSignal(object)          # émet l'objet sample à jouer
     sampleMoved = pyqtSignal(int, str)
     newSampleSaved = pyqtSignal(str)
@@ -270,7 +270,7 @@ class SampleCard(QWidget):
                 pass
 
             # Ajouter le widget de forme d'onde
-            self.wave_edition_widget = WaveformWidget(self.sample.path)
+            self.wave_edition_widget = WaveformWidget(self.sample.path, self.app_context)
             self.wave_edition_widget.waveformSaved.connect(self.newSampleSaved)
             self.waveform_layout.addWidget(self.wave_edition_widget)
         else:
