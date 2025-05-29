@@ -2,19 +2,14 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidget, QListWidgetItem, QMenu
 )
-from PyQt6.QtGui import QCursor
+from PyQt6.QtGui import QCursor, QKeySequence, QShortcut
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QThread
 import pyqtgraph as pg
 import numpy as np
 import sounddevice as sd
 import qtawesome as qta
 import librosa
-from backend.models.sample import Sample
-from PyQt6.QtWidgets import QMessageBox, QInputDialog
-import os, soundfile as sf
-from backend.models.sample import Sample as DBSample
 import librosa
-from backend.models.sample import Sample as SampleModel
 from frontend.custom_widgets import SaveWaveformDialog
 from backend.models.AppContext import AppContext
 
@@ -25,6 +20,7 @@ class WaveformLoaderThread(QThread):
     def __init__(self, path):
         super().__init__()
         self.path = path
+
     def run(self):
         try:
             y, sr = librosa.load(self.path, sr=None)
@@ -74,6 +70,7 @@ class WaveformWidget(QWidget):
 
     def __init__(self, audio_file_path, app_context: AppContext):
         super().__init__()
+
         self.app_context = app_context
         self.audio_file_path = audio_file_path
         # → playback
@@ -81,6 +78,7 @@ class WaveformWidget(QWidget):
         self.current_time = 0.0
         self.is_playing = False
         self.loop_enabled = False
+
 
         # → sélection de région (clic‐drag)
         self.play_start = 0.0
@@ -112,6 +110,9 @@ class WaveformWidget(QWidget):
 
         self._build_ui()
         self._load_audio(audio_file_path)
+
+        self._build_shortcuts()
+
 
     def _build_ui(self):
         self.layout = QVBoxLayout(self)
@@ -204,6 +205,47 @@ class WaveformWidget(QWidget):
 
         # — Install filter une seule fois
         self.plot.getViewBox().scene().installEventFilter(self)
+
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setStyleSheet("""
+            WaveformWidget[focused="true"] {
+                border: 2px solid #2979ff;
+                background-color: #f0f8ff;
+            }
+            WaveformWidget[focused="false"] {
+                border: 1px solid #ccc;
+            }
+        """)
+
+    def _build_shortcuts(self):
+        """
+        Définit les raccourcis clavier pour cut, undo et redo.
+        """
+        # Ctrl+X → cut
+        cut_sc = QShortcut(QKeySequence("Ctrl+X"), self)
+        cut_sc.activated.connect(self._on_cut_shortcut)
+
+        # Ctrl+Z → undo
+        undo_sc = QShortcut(QKeySequence("Ctrl+Z"), self)
+        undo_sc.activated.connect(self.undo)
+
+        # Ctrl+Shift+Z → redo
+        redo_sc = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
+        redo_sc.activated.connect(self.redo)
+
+    def focusInEvent(self, event):
+        """Quand ce widget reçoit le focus clavier."""
+        self.setProperty("focused", True)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        """Quand ce widget perd le focus clavier."""
+        self.setProperty("focused", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().focusOutEvent(event)
 
     def _load_audio(self, path):
         self.loader = WaveformLoaderThread(path)
@@ -974,6 +1016,14 @@ class WaveformWidget(QWidget):
             # création d’un nouveau sample (FS+BD) via SampleService.add()
             svc.add(target)
             QMessageBox.information(self, "Enregistré", f"Copie sauvegardée :\n{target}")
+
+# ——————————————————————————————————————— Keycontrol ——————————————————————————————————————————————
+
+    def _on_cut_shortcut(self):
+        """Callback du raccourci : coupe la région sélectionnée si elle existe."""
+        if hasattr(self, 'region') and self.region is not None:
+            start, end = self.region.getRegion()
+            self._cut_region(start, end)
 
 
 class NoLeftDragViewBox(pg.ViewBox):

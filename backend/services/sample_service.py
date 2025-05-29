@@ -28,6 +28,7 @@ class SampleService(QObject):
 
     def _initialize_cache(self):
         """Charge les samples depuis la BDD et émet samplesChanged."""
+        
         try:
             with SessionLocal() as session:
                 self._samples = session.query(Sample).order_by(Sample.id).all()
