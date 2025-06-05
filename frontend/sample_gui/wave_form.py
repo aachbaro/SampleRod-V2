@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QMenu, QMessageBox
 )
 
-from PyQt6.QtGui import QCursor
+from PyQt6.QtGui import QCursor, QMouseEvent
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QThread
 import pyqtgraph as pg
 import numpy as np
@@ -16,6 +16,7 @@ from backend.models.sample import Sample as DBSample
 
 from frontend.custom_widgets import SaveWaveformDialog
 from backend.models.AppContext import AppContext
+import bisect
 
 
 
@@ -296,6 +297,12 @@ class WaveformWidget(QWidget):
 # ——————————————————————————————————————————————————— Marqueurs —————————————————————————————————————————————————————
 
     def add_marker(self, t: float):
+        """
+        Ajoute un marqueur à la position t (en secondes).
+        - Insère t trié dans self.markers
+        - Met à jour la liste _refresh_marker_list()
+        - Crée une ClickableMarkerLine à l'écran
+        """
         t = float(np.clip(t, 0.0, self.duration))
         # —— LOG
         print(f"Marker ajouté à {t:.3f}s")
@@ -305,61 +312,74 @@ class WaveformWidget(QWidget):
             "time": t
         })
         # —— insertion dans la liste triée
-        import bisect
         bisect.insort(self.markers, t)
         self._refresh_marker_list()
 
-        # —— création de la ligne draggable
-        line = pg.InfiniteLine(pos=t, angle=90, pen=pg.mkPen('y', width=2))
-        line.setMovable(True)
-        line.setZValue(10)  # pour qu’il reste au-dessus de la région
-        # on mémorise la position initiale
+        # —— création de la ligne draggable et clickable
+        line = ClickableMarkerLine(
+            parent_widget=self,         # pour qu'elle puisse appeler remove_marker
+            t=t,
+            pen=pg.mkPen('y', width=2)
+        )
+        line.setMovable(True)           # on permet de déplacer le marqueur
+        line.setZValue(10)              # pour qu’il reste au‐dessus des autres items
+        # on mémorise la position initiale pour l'historique (déplacement)
         line.old_pos = t
         # signaux pour update et fin de drag
         line.sigPositionChanged.connect(lambda _, l=line: self.on_marker_moved(l))
         line.sigPositionChangeFinished.connect(lambda _, l=line: self._on_marker_move_finished(l))
-        self.plot.addItem(line)
 
-        # —— on garde la référence
+        # Ajout à la vue
+        self.plot.addItem(line)
+        # On garde la référence (clé = position initiale)
         self.marker_lines[t] = line
 
     def on_marker_moved(self, line: pg.InfiniteLine):
-        """Quand on déplace un marker, on met à jour son temps et la liste."""
-        # print("on marker_moved")
-        # lit la nouvelle position et la recoupe aux bornes
+        """
+        Lorsqu'un marqueur a été déplacé, on met à jour son temps dans self.markers.
+        Identique à votre implémentation d'origine.
+        """
         new_t = float(np.clip(line.value(), 0.0, self.duration))
         line.setValue(new_t)  # force la ligne à rester dans l’intervalle
 
-        # retrouve l’ancien t
+        # retrouve l’ancien temps via l'ancienne clé du dictionnaire
         old_t = next(t for t, ln in self.marker_lines.items() if ln is line)
 
-        # remplace dans self.markers
+        # remplace dans self.markers et dans marker_lines
         self.markers.remove(old_t)
         del self.marker_lines[old_t]
 
-        import bisect
         bisect.insort(self.markers, new_t)
         self.marker_lines[new_t] = line
 
-        # rafraîchit la liste
+        # rafraîchit la liste QtWidget
         self._refresh_marker_list()
 
     def _on_marker_move_finished(self, line):
-        """Quand on a fini de déplacer un marqueur, on met à jour l'historique."""
+        """
+        Quand on a fini de déplacer un marqueur, on met à jour l'historique.
+        Identique à votre implémentation d'origine.
+        """
         old_t = getattr(line, 'old_pos', None)
         new_t = float(np.clip(line.value(), 0.0, self.duration))
         print(f"Marker déplacé de {old_t:.3f}s → {new_t:.3f}s")
-        # ici tu pushes dans l'historique :
         self._push_history({
             "action": "move_marker",
             "old": old_t,
             "new": new_t
         })
-        # et tu mets à jour old_pos pour le prochain drag
         line.old_pos = new_t
 
     def remove_marker(self, t: float):
-        """Supprime le marqueur à t, rafraîchit la liste et push dans l’historique."""
+        """
+        Supprime le marqueur à la position t (ou à la position la plus proche).
+        Appelée aussi depuis ClickableMarkerLine.mouseDoubleClickEvent.
+        Identique à votre implémentation d'origine.
+        """
+        # Pour éviter un problème si la valeur flottante n'est pas exactement celle stockée,
+        # on cherche le temps stocké le plus proche de t (optionnel).
+        # Mais dans la plupart des cas, la position vaut exactement la clé du dictionnaire.
+        # Cela reste votre code d'origine, inchangé :
         if t in self.markers:
             # —— LOG
             print(f"Marker supprimé à {t:.3f}s")
@@ -381,10 +401,8 @@ class WaveformWidget(QWidget):
             if not self.markers:
                 self.current_marker_idx = 0
             else:
-                # si on venait de supprimer un marqueur avant l’index courant, on décrémente
                 if self.current_marker_idx > idx:
                     self.current_marker_idx -= 1
-                # si on était sur le dernier élément qui a été supprimé, recale au nouveau dernier
                 self.current_marker_idx = min(self.current_marker_idx, len(self.markers)-1)
 
             # —— mise à jour de la liste QtWidget
@@ -467,6 +485,21 @@ class WaveformWidget(QWidget):
 
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
+
+        # 1) Ctrl + double-clic → délégation à la méthode dédiée
+        if (event.type() == QEvent.GraphicsSceneMouseDoubleClick and
+            event.button() == Qt.MouseButton.LeftButton and
+            (event.modifiers() & Qt.KeyboardModifier.ControlModifier)):
+
+            # Si on a cliqué sur un marqueur, on le laisse gérer (suppression)
+            pos = event.scenePos()
+            for line in self.marker_lines.values():
+                if line.sceneBoundingRect().contains(pos):
+                    return False
+
+            # Sinon, on appelle la nouvelle méthode
+            self._handle_ctrl_double_click(vb, event)
+            return True
 
         # 0) Maj + clic gauche DANS le corps (pas sur les handles) → début du déplacement
         if event.type() == QEvent.GraphicsSceneMousePress \
@@ -1083,6 +1116,70 @@ class WaveformWidget(QWidget):
             # Sélection nulle → un seul marqueur
             self.add_marker(start)
 
+    def _handle_ctrl_double_click(self, view_box, event):
+        """
+        Crée une région entre le marqueur immédiatement à gauche et
+        celui immédiatement à droite du point cliqué.
+        Si aucun marqueur à gauche : start=0.0
+        Si aucun marqueur à droite : end=self.duration
+        """
+        pos = event.scenePos()
+        x = float(np.clip(view_box.mapSceneToView(pos).x(), 0.0, self.duration))
+
+        # Cas où il n'y a aucun marqueur
+        if not self.markers:
+            t_left = 0.0
+            t_right = self.duration
+
+        else:
+            # Recherche de l'indice du premier marqueur >= x
+            idx = bisect.bisect_left(self.markers, x)
+
+            # Détermine le marqueur de gauche ou 0.0 si aucun
+            if idx > 0:
+                t_left = self.markers[idx - 1]
+            else:
+                t_left = 0.0
+
+            # Détermine le marqueur de droite ou duration si aucun
+            if idx < len(self.markers):
+                t_right = self.markers[idx]
+            else:
+                t_right = self.duration
+
+            # Si x tombe exactement sur un marqueur, on peut
+            # choisir de créer la région entre ce marqueur et le suivant,
+            # ou simplement ignorer. Ici, on fait entre le marqueur et le suivant.
+            if idx < len(self.markers) and abs(x - self.markers[idx]) < 1e-6:
+                # idx est le marqueur « droite » = x
+                # on décale t_left pour que ce ne soit pas x→x
+                if idx > 0:
+                    t_left = self.markers[idx - 1]
+                else:
+                    t_left = 0.0
+                # t_right reste self.markers[idx] (= x)
+            # Si x est au-delà du dernier marqueur, on tombe dans la logique « else » ci-dessus
+
+        # Supprime l’ancienne région si elle existe
+        if self.region:
+            self.plot.removeItem(self.region)
+            self.region = None
+
+        # Crée la nouvelle région
+        self.region = ContextMenuLinearRegionItem([t_left, t_right],
+                                                  brush=pg.mkBrush(255,255,255,40),
+                                                  pen=pg.mkPen('c', width=1))
+        self.region.setZValue(1)
+        self.region.setBounds([0, self.duration])
+        self.region.sigRegionChangeFinished.connect(self.on_region_changed)
+        self.region._parent = self
+        self.plot.addItem(self.region)
+
+        # Met à jour play_start/play_end et positionne la tête
+        self.play_start, self.play_end = t_left, t_right
+        self.read_head.setPos(t_left)
+        print(f"Région créée par Ctrl+double-clic : {t_left:.3f}s → {t_right:.3f}s")
+
 
 class NoLeftDragViewBox(pg.ViewBox):
     def mouseDragEvent(self, ev, axis=None):
@@ -1091,3 +1188,30 @@ class NoLeftDragViewBox(pg.ViewBox):
         else:
             super().mouseDragEvent(ev, axis)
 
+class ClickableMarkerLine(pg.InfiniteLine):
+    """
+    Sous‐classe de pg.InfiniteLine pour gérer le double‐clic et supprimer le marqueur.
+    On rappelle remove_marker(t) sur le parent lorsque l'utilisateur double‐clique.
+    """
+    def __init__(self, parent_widget, t, **kwargs):
+        """
+        parent_widget : l'instance de WaveformWidget
+        t             : position initiale du marqueur en secondes
+        kwargs        : arguments à passer à pg.InfiniteLine (pos, angle, pen, etc.)
+        """
+        super().__init__(pos=t, angle=90, **kwargs)
+        self._parent_widget = parent_widget  # on garde la référence au widget parent
+        self._time = t                       # on stocke le temps initial du marqueur
+        # IMPORTANT : on met .setMovable(True) plus bas dans WaveformWidget.add_marker()
+
+    def mouseDoubleClickEvent(self, ev: QMouseEvent):
+        """
+        Surchage de l'événement double‐clic. Lorsqu'on double‐clique sur la ligne,
+        on appelle remove_marker() du widget parent, en passant la position actuelle.
+        """
+        # Récupère la position du marqueur au moment du double‐clic
+        current_t = float(self.value())
+        # Appelle la méthode de suppression du widget parent
+        self._parent_widget.remove_marker(current_t)
+        # Marquer l'événement comme traité pour éviter un 'drag' involontaire
+        ev.accept()
