@@ -19,9 +19,14 @@ class RecorderService(QObject):
         self.retro_enabled = self.settingsService.isRetroEnabled()
         self.pre_seconds   = self.settingsService.getPreSeconds()
 
+        # nom du device loopback initial
+        self.loopback_name = self.settingsService.loopback_device.name if self.settingsService.loopback_device else None
+
         # On s'abonne aux signaux
         self.settingsService.retroToggled.connect(self.onRetroToggled)
         self.settingsService.preSecondsChanged.connect(self.onPreSecondsChanged)
+        self.settingsService.loopbackDeviceChanged.connect(self.onLoopbackDeviceChanged)
+        self.settingsService.sampleRateChanged.connect(self.onSampleRateChanged)
 
         # Prépare le worker
         self.cmd_queue  = mp.Queue()
@@ -33,7 +38,8 @@ class RecorderService(QObject):
                 self.resp_queue,
                 self.pre_seconds,
                 sample_rate,
-                block_size
+                block_size,
+                self.loopback_name,
             ),
             daemon=True
         )
@@ -62,6 +68,29 @@ class RecorderService(QObject):
         print(f"RecorderService: retro buffer -> {secs}s")
         # si le worker supporte la modification à chaud :
         self.cmd_queue.put(('set_retro_time', secs))
+
+    @pyqtSlot(object)
+    def onLoopbackDeviceChanged(self, device):
+        """Slot appelé quand on change le device loopback dans les settings."""
+        name = device.name if device else None
+        self.loopback_name = name
+        print(f"RecorderService: changement de loopback → {name}")
+        # on prévient le worker et on ré-active le rétro s’il l’était déjà
+        self.cmd_queue.put(('set_device', name))
+        if self.retro_enabled:
+            # remettre le worker en mode rétro
+            self.cmd_queue.put(('enable_retro',))
+
+    @pyqtSlot(int)
+    def onSampleRateChanged(self, new_rate: int):
+        """
+        Slot appelé quand on modifie le sample rate dans les settings.
+        On envoie la commande vers le worker pour qu’il redémarre 
+        la capture au nouveau sample rate.
+        """
+        # self.cmd_q est la queue liée au worker (Queue pour ordres)
+        print(f"RecorderService: demande de changement de sample_rate → {new_rate}")
+        self.cmd_queue.put(('set_sample_rate', new_rate))
 
     def record_button_clicked(self, selected_library, retro_time=None):
         """

@@ -6,6 +6,7 @@ from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
 from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
 from frontend.sample_gui.sample_list import SampleListWidget
+from frontend.settings_gui.audio_settings import AudioSettingsWidget
 
 from backend.models.sample import Sample
 from backend.models.AppContext import AppContext
@@ -50,8 +51,11 @@ class MainWindow(QMainWindow):
         settings_layout = QVBoxLayout(settings_tab)
         self.settings_libraries_list = SettingsLibrariesList(self.app_context)
         self.settings_retro_widget = RetroRecordingWidget(self.settings)
+        self.audio_settings_widget = AudioSettingsWidget(self.app_context)
         settings_layout.addWidget(self.settings_libraries_list)
         settings_layout.addWidget(self.settings_retro_widget)
+        settings_layout.addWidget(self.audio_settings_widget)
+        
         settings_layout.addStretch()
         self.tab_widget.addTab(settings_tab, "Paramètres")
 

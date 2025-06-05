@@ -1,15 +1,19 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QListWidget, QListWidgetItem, QMenu
+    QListWidget, QListWidgetItem, QMenu, QMessageBox
 )
-from PyQt6.QtGui import QCursor, QKeySequence, QShortcut
+
+from PyQt6.QtGui import QCursor
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QThread
 import pyqtgraph as pg
 import numpy as np
 import sounddevice as sd
 import qtawesome as qta
 import librosa
-import librosa
+import os
+import soundfile as sf
+from backend.models.sample import Sample as DBSample
+
 from frontend.custom_widgets import SaveWaveformDialog
 from backend.models.AppContext import AppContext
 
@@ -47,7 +51,9 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
 
         menu = QMenu()
 
-        cut = menu.addAction("Cut   Ctrl + x")
+        cut = menu.                 addAction("Cut                      Ctrl + X")
+        export = menu.              addAction("Export Selection         Ctrl + E")
+        add_markers_action = menu.  addAction("Add markers at edges     Ctrl + Shift + G")
 
         # place ici tes autres actions...
 
@@ -59,6 +65,19 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
         if action is cut:
             # on appelle la méthode _cut_region sur le parent
             self._parent._cut_region(start, end)
+
+        elif action is export:
+            # on appelle la méthode _export_region sur le parent (n’écrase pas la waveform en mémoire)
+            self._parent._export_region(start, end)
+        elif action is add_markers_action:
+            # on ajoute des marqueurs aux bords de la région
+            if end > start:
+                self._parent.add_marker(start)
+                self._parent.add_marker(end)
+            else:
+                # si la région est quasiment nulle, on place un seul marker
+                self._parent.add_marker(start)
+        
 
         ev.accept()
 
@@ -111,7 +130,6 @@ class WaveformWidget(QWidget):
         self._build_ui()
         self._load_audio(audio_file_path)
 
-        self._build_shortcuts()
 
 
     def _build_ui(self):
@@ -122,7 +140,7 @@ class WaveformWidget(QWidget):
         save_layout.addStretch()
         self.save_button = QPushButton()
         self.save_button.setIcon(qta.icon('fa5s.save', color='lightgray'))
-        self.save_button.setToolTip("Save waveform")
+        self.save_button.setToolTip("Save waveform - ctrl + s")
         self.save_button.setFixedSize(30,30)
         self.save_button.clicked.connect(self.onSaveClicked)
         save_layout.addWidget(self.save_button)
@@ -134,14 +152,14 @@ class WaveformWidget(QWidget):
         self.undo_button = QPushButton()
         self.undo_button.setFixedSize(30, 30)
         self.undo_button.setIcon(qta.icon('fa5s.undo', color='lightgray'))
-        self.undo_button.setToolTip("Undo")
+        self.undo_button.setToolTip("Undo - ctrl + z")
         self.undo_button.clicked.connect(self.undo)
         h_hist.addWidget(self.undo_button)
         # Redo
         self.redo_button = QPushButton()
         self.redo_button.setFixedSize(30, 30)
         self.redo_button.setIcon(qta.icon('fa5s.redo', color='lightgray'))
-        self.redo_button.setToolTip("Redo")
+        self.redo_button.setToolTip("Redo - ctrl + shift + z")
         self.redo_button.clicked.connect(self.redo)
         h_hist.addWidget(self.redo_button)
 
@@ -160,9 +178,9 @@ class WaveformWidget(QWidget):
         # — Contrôles
         h = QHBoxLayout()
         for ico, cb, tip in [
-            ('fa5s.play',  self.play_from_start, "Play"),
-            ('fa5s.pause', self.pause_or_resume, "Pause / Resume"),
-            ('fa5s.stop',  self.stop_and_reset,  "Stop and Reset")
+            ('fa5s.play',  self.play_from_start, "Play - ctrl + space"),
+            ('fa5s.pause', self.pause_or_resume, "Pause / Resume - space"),
+            ('fa5s.stop',  self.stop_and_reset,  "Stop and Reset - alt + space"),
         ]:
             b = QPushButton()
             b.setFixedSize(30,30)
@@ -176,14 +194,15 @@ class WaveformWidget(QWidget):
         self.loop_button.setFixedSize(30,30)
         self.loop_button.setIcon(qta.icon('fa5s.sync', color='lightgray'))
         self.loop_button.toggled.connect(self.toggle_loop)
-        self.loop_button.setToolTip("Loop ON/OFF")
+        self.loop_button.setToolTip("Loop ON/OF - ctrl + l")
         h.addWidget(self.loop_button)
+        self.loop_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         # Marker Mode
         self.marker_mode_button = QPushButton(); self.marker_mode_button.setCheckable(True)
         self.marker_mode_button.setFixedSize(30,30)
         self.marker_mode_button.setIcon(qta.icon('fa5s.map-marker-alt', color='lightgray'))
-        self.marker_mode_button.setToolTip("Marker Mode ON/OFF")
+        self.marker_mode_button.setToolTip("Marker Mode ON/OFF - ctrl + g")
         self.marker_mode_button.toggled.connect(self.toggle_marker_mode)
         h.addWidget(self.marker_mode_button)
 
@@ -195,13 +214,15 @@ class WaveformWidget(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_read_head)
         self.stop_timer_signal.connect(self.timer.stop)
-        self.timer.start(50)
+        self.timer.start(5)
 
         # — Liste des marqueurs
         self.marker_list = QListWidget()
         self.marker_list.itemClicked.connect(self.on_marker_list_clicked)
         self.marker_list.itemDoubleClicked.connect(self.on_marker_list_double_clicked)
         self.layout.addWidget(self.marker_list)
+        self.layout.addWidget(self.marker_list)
+
 
         # — Install filter une seule fois
         self.plot.getViewBox().scene().installEventFilter(self)
@@ -210,42 +231,11 @@ class WaveformWidget(QWidget):
         self.setStyleSheet("""
             WaveformWidget[focused="true"] {
                 border: 2px solid #2979ff;
-                background-color: #f0f8ff;
             }
             WaveformWidget[focused="false"] {
                 border: 1px solid #ccc;
             }
         """)
-
-    def _build_shortcuts(self):
-        """
-        Définit les raccourcis clavier pour cut, undo et redo.
-        """
-        # Ctrl+X → cut
-        cut_sc = QShortcut(QKeySequence("Ctrl+X"), self)
-        cut_sc.activated.connect(self._on_cut_shortcut)
-
-        # Ctrl+Z → undo
-        undo_sc = QShortcut(QKeySequence("Ctrl+Z"), self)
-        undo_sc.activated.connect(self.undo)
-
-        # Ctrl+Shift+Z → redo
-        redo_sc = QShortcut(QKeySequence("Ctrl+Shift+Z"), self)
-        redo_sc.activated.connect(self.redo)
-
-    def focusInEvent(self, event):
-        """Quand ce widget reçoit le focus clavier."""
-        self.setProperty("focused", True)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        super().focusInEvent(event)
-
-    def focusOutEvent(self, event):
-        """Quand ce widget perd le focus clavier."""
-        self.setProperty("focused", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        super().focusOutEvent(event)
 
     def _load_audio(self, path):
         self.loader = WaveformLoaderThread(path)
@@ -760,6 +750,43 @@ class WaveformWidget(QWidget):
         line.sigPositionChangeFinished.connect(lambda _, l=line: self._on_marker_move_finished(l))
         self.marker_lines[t] = line
 
+    def _export_region(self, start, end):
+        """
+        Exporte la portion [start, end] dans un nouveau fichier WAV
+        et l’ajoute à la base via SampleService.
+        Ne modifie pas la waveform en mémoire.
+        """
+        # 1) Calcul des indices d’échantillons
+        s0 = int(start * self.sample_rate)
+        s1 = int(end   * self.sample_rate)
+        if s1 <= s0:
+            QMessageBox.warning(self, "Export impossible", "La sélection est vide.")
+            return
+
+        # 2) Extraction du segment
+        segment = self.waveform_data[s0:s1].astype('float32')
+
+        # 3) Génération d’un nom de fichier unique
+        #    => on place le nouveau fichier dans le même dossier que l’original
+        orig_path = self.audio_file_path
+        folder    = os.path.dirname(orig_path)
+        next_id   = DBSample.get_next_id()
+        ext       = os.path.splitext(orig_path)[1] or ".wav"
+        new_name  = f"SMPL_{next_id:04d}{ext}"
+        target    = os.path.join(folder, new_name)
+
+        try:
+            # 4) Écriture du WAV
+            sf.write(target, segment, self.sample_rate)
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur Export", f"Impossible d’écrire '{target}':\n{e}")
+            return
+
+        # 5) On prévient SampleService pour qu’il crée l’entrée DB et émette le signal
+        self.app_context.sample_store.add(target)
+
+        QMessageBox.information(self, "Export réussi", f"Segment exporté dans :\n{target}")
+
 # —————————————————————————————————————————————————————— Playback ——————————————————————————————————————————————————————
 
     def play_from_start(self):
@@ -780,8 +807,12 @@ class WaveformWidget(QWidget):
             self.timer.stop()
             self.is_playing = False
         else:
-            # reprend depuis current_time
-            self.play_audio(self.current_time)
+           # si on est déjà à la fin, on repart de play_start
+           end_pos = self.play_end if self.play_end > self.play_start else self.duration
+           if self.current_time >= end_pos:
+               self.current_time = self.play_start
+           # on reprend la lecture
+           self.play_audio(self.current_time)
 
     def play_audio(self, start_time=0.0):
         if self.waveform_data is None:
@@ -885,11 +916,15 @@ class WaveformWidget(QWidget):
         self.stop_timer_signal.emit()
 
     def update_read_head(self):
-        if self.is_playing:
-            self.read_head.setPos(self.current_time)
-        else:
-            # nettoyage en cas de fin de lecture dans le callback
-            self.stop_audio()
+       if self.is_playing:
+           # on déplace la tête de lecture
+           self.read_head.setPos(self.current_time)
+       else:
+           # lorsque la lecture se termine, on coupe le stream...
+           self.stop_audio()
+           # ...et on repositionne tout au début de la sélection
+           self.current_time = self.play_start
+           self.read_head.setPos(self.play_start)
 
     def toggle_loop(self, checked: bool):
         """Active/désactive le mode boucle."""
@@ -1024,6 +1059,29 @@ class WaveformWidget(QWidget):
         if hasattr(self, 'region') and self.region is not None:
             start, end = self.region.getRegion()
             self._cut_region(start, end)
+
+    def _on_export_shortcut(self):
+        """Callback du raccourci : exporte la région sélectionnée si elle existe."""
+        if hasattr(self, 'region') and self.region is not None:
+            start, end = self.region.getRegion()
+            self._export_region(start, end)
+
+    def add_markers_to_region(self):
+        """
+        Place deux marqueurs aux bords de la sélection (LinearRegionItem).
+        Si la sélection est vide (end == start), ne place qu'un seul marqueur à start.
+        """
+        if not hasattr(self, "region") or self.region is None:
+            return
+
+        start, end = self.region.getRegion()
+        # Si la largeur est positive, on place deux marqueurs :
+        if end > start:
+            self.add_marker(start)
+            self.add_marker(end)
+        else:
+            # Sélection nulle → un seul marqueur
+            self.add_marker(start)
 
 
 class NoLeftDragViewBox(pg.ViewBox):

@@ -1,8 +1,8 @@
-from PyQt6.QtWidgets import (QWidget, QLabel, QPushButton,
-                             QHBoxLayout, QVBoxLayout, QSpacerItem, QSizePolicy, 
-                             QSlider, QLineEdit, QFrame, QMessageBox, QComboBox)
-from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer, QEvent
-from PyQt6.QtGui import QIcon
+from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, \
+    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication
+from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
+from PyQt6.QtCore import QEvent
 import qtawesome as qta
 from utils.utils import get_folder_name
 from datetime import datetime
@@ -12,6 +12,7 @@ from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.wave_form import WaveformWidget
 from backend.services.settings_service import SettingsService
 from backend.models.AppContext import AppContext
+
 
 
 class SampleCard(QWidget):
@@ -29,7 +30,6 @@ class SampleCard(QWidget):
             - id, name (ou filename), created_at, duration.
         """
         super().__init__(parent)
-        self._install_focus_filter(self)
 
         self.app_context = app_context
         self.settings = self.app_context.settings
@@ -41,6 +41,7 @@ class SampleCard(QWidget):
         # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
 
         self.init_ui()
+        self._build_shortcuts()
 
     def init_ui(self):
 
@@ -201,6 +202,9 @@ class SampleCard(QWidget):
 
         main_layout.addLayout(self.waveform_layout)
 
+        for child in self.findChildren(QWidget):
+            child.installEventFilter(self)
+
 #------------------- Style général du SampleCard pour fond sombre
         # self.setStyleSheet("""
         #     QWidget {
@@ -230,13 +234,34 @@ class SampleCard(QWidget):
             }
         """)
 
+    def _build_shortcuts(self):
+        """Raccourcis actifs seulement quand **cette** SampleCard (ou un de ses enfants) a le focus."""
+        for seq, handler in [
+            ("Ctrl+X", lambda: self._with_wave(lambda w: w._on_cut_shortcut())),
+            ("Ctrl+Z", lambda: self._with_wave(lambda w: w.undo())),
+            ("Ctrl+Shift+Z", lambda: self._with_wave(lambda w: w.redo())),
+            ("Ctrl+S", lambda: self._with_wave(lambda w: w.onSaveClicked())),
+            ("Ctrl+L", lambda: self._with_wave(lambda w: w.loop_button.toggle())),
+            ("Ctrl+G", lambda: self._with_wave(lambda w: w.toggle_marker_mode(not w.marker_mode))),
+            ("Space", lambda: self._with_wave(lambda w: w.pause_or_resume())),
+            ("Ctrl+Space", lambda: self._with_wave(lambda w: w.play_from_start())),
+            ("Ctrl+E", lambda: self._with_wave(lambda w: w._on_export_shortcut())),
+            ("Ctrl+Shift+G", lambda: self._with_wave(lambda w: w.add_markers_to_region())),
+            # ajoute ici d’autres raccourcis si besoin…
+        ]:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(handler)
+
+
+    def _with_wave(self, fn):
+        """Helper : si le waveform est ouvert, appelle fn(wave_edition_widget)."""
+        if hasattr(self, "wave_edition_widget") and self.wave_edition_widget:
+            fn(self.wave_edition_widget)
 
     def mousePressEvent(self, event):
         # 1) on prend le focus au niveau de la carte
         self.setFocus()
-        # 2) on peut aussi déléguer à la Waveform si nécessaire
-        if hasattr(self, "waveform_widget") and self.wave_edition_widget:
-            self.wave_edition_widget.setFocus()
         super().mousePressEvent(event)
 
     def keyPressEvent(self, event):
@@ -244,14 +269,6 @@ class SampleCard(QWidget):
         if self.isRenaming and event.key() == Qt.Key.Key_Escape:
             self.cancelRename()
             return
-
-        # 2) Si on a ouvert le waveform, on lui transmet l'événement
-        if self.wave_edition_widget:
-            print("Waveform widget is present, passing key event.")
-            self.wave_edition_widget.keyPressEvent(event)
-        else:
-            # sinon comportement par défaut
-            super().keyPressEvent(event)
 
 
     def get_sample_name(self):
@@ -320,8 +337,6 @@ class SampleCard(QWidget):
             self.wave_edition_widget.waveformSaved.connect(self.newSampleSaved)
             self.waveform_layout.addWidget(self.wave_edition_widget)
 
-            self._install_focus_filter(self.wave_edition_widget)
-            self._disable_focus_on_subtree(self.wave_edition_widget)
         else:
             # Afficher les widgets de lecture
             self.play_button.setVisible(True)
@@ -419,39 +434,31 @@ class SampleCard(QWidget):
             self.refresh_display()
 
     def focusInEvent(self, event):
-        """Quand la carte reçoit le focus clavier."""
+        # quand **tout** (parent ou enfant) reçoit le focus, on marque la carte comme “focused”
         self.setProperty("focused", True)
         self.style().unpolish(self)
         self.style().polish(self)
         super().focusInEvent(event)
 
     def focusOutEvent(self, event):
-        """Quand la carte perd le focus clavier."""
+        super().focusOutEvent(event)
+        # on récupère le widget qui a maintenant le focus
+        fw = QApplication.focusWidget()
+        # si c'est encore un des enfants, on ne change pas l’état “focused”
+        if fw and (fw is self or self.isAncestorOf(fw)):
+            return
+        # sinon on le retire
         self.setProperty("focused", False)
         self.style().unpolish(self)
         self.style().polish(self)
-        super().focusOutEvent(event)
 
-    def _install_focus_filter(self, widget: QWidget):
-        """Pose l’eventFilter sur `widget` et chacun de ses enfants."""
-        widget.installEventFilter(self)
-        for child in widget.findChildren(QWidget):
-            self._install_focus_filter(child)
-
-    def eventFilter(self, source, event):
-        # 2) Sur tout clic ou double-clic, redonner le focus à la SampleCard
-        if event.type() in (
-            QEvent.Type.MouseButtonPress,
-            QEvent.Type.MouseButtonDblClick
-        ):
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.MouseButtonPress:
+            # dès qu’on clique sur un enfant, on redonne le focus à la carte
             self.setFocus()
-        return super().eventFilter(source, event)
+        return super().eventFilter(watched, event)
 
-    def _disable_focus_on_subtree(self, widget: QWidget):
-        """Désactive le focus clavier sur `widget` et tous ses enfants."""
-        widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        for child in widget.findChildren(QWidget):
-            self._disable_focus_on_subtree(child)
+
 
 def format_time(milliseconds):
     minutes = (milliseconds // 1000) // 60
