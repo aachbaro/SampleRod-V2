@@ -1,4 +1,5 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QHBoxLayout, QPushButton, QFileDialog
+from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import pyqtSlot
 from frontend.sample_gui.sample_card import SampleCard
 from backend.models.AppContext import AppContext
@@ -15,6 +16,7 @@ class SampleListWidget(QWidget):
         self.app_context  = app_context
         self.sample_store: SampleService = app_context.sample_store
         self.samples = []  # liste des samples à afficher
+        self.selected_ids  = set()        # ensemble des IDs cochés
 
         # 1) abonnements aux signaux du service
         self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
@@ -36,7 +38,35 @@ class SampleListWidget(QWidget):
         self.onSamplesChanged(self.sample_store.get_cached())
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
+        """
+        Construit l’UI, comprenant en haut une barre de 'bulk actions' 
+        (boutons Supprimer, Déplacer, Normaliser la sélection),
+        puis la zone scrollable des cartes.
+        """
+        main_layout = QVBoxLayout(self)
+
+        # ─── Zone 'Bulk Actions' ───
+        bulk_layout = QHBoxLayout()
+        # Bouton Supprimer la sélection
+        self.bulk_delete_btn = QPushButton("Supprimer la sélection")
+        self.bulk_delete_btn.setEnabled(False)
+        self.bulk_delete_btn.clicked.connect(self.bulkDelete)
+        # Bouton Déplacer la sélection
+        self.bulk_move_btn = QPushButton("Déplacer la sélection…")
+        self.bulk_move_btn.setEnabled(False)
+        self.bulk_move_btn.clicked.connect(self.bulkMove)
+        # Bouton Normaliser la sélection
+        self.bulk_normalize_btn = QPushButton("Normaliser la sélection")
+        self.bulk_normalize_btn.setEnabled(False)
+        self.bulk_normalize_btn.clicked.connect(self.bulkNormalize)
+
+        bulk_layout.addWidget(self.bulk_delete_btn)
+        bulk_layout.addWidget(self.bulk_move_btn)
+        bulk_layout.addWidget(self.bulk_normalize_btn)
+        bulk_layout.addStretch()
+        main_layout.addLayout(bulk_layout)
+
+        # ─── Zone scrollable des SampleCard ───
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.content_widget = QWidget()
@@ -44,7 +74,7 @@ class SampleListWidget(QWidget):
         self.content_layout.setSpacing(10)
         self.content_layout.setContentsMargins(10, 10, 10, 10)
         self.scroll_area.setWidget(self.content_widget)
-        layout.addWidget(self.scroll_area)
+        main_layout.addWidget(self.scroll_area)
         self.refreshList()
 
     @pyqtSlot(list)
@@ -82,6 +112,10 @@ class SampleListWidget(QWidget):
         card.deleteSample.connect(self.delete_sample)
         card.renameSample.connect(self.rename_sample)
         card.sampleMoved.connect(self.move_sample)
+
+        card.selectionChanged.connect(self.onSelectionChanged)
+        card.normalizeClicked.connect(self.onNormalizeClicked)
+
         # signaux retour (rename/move)
         self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
         self.sample_store.sampleMoved  .connect(card.onMoveSuccess)
@@ -145,6 +179,24 @@ class SampleListWidget(QWidget):
         if card:
             card.indicateNormalizationError(message)
 
+    @pyqtSlot(int, bool)
+    def onSelectionChanged(self, sample_id: int, checked: bool):
+        print("onSelectionChanged:", sample_id, checked)
+        if checked:
+            self.selected_ids.add(sample_id)
+        else:
+            self.selected_ids.discard(sample_id)
+
+        any_selected = len(self.selected_ids) > 0
+        self.bulk_delete_btn.setEnabled(any_selected)
+        self.bulk_move_btn.setEnabled(any_selected)
+        self.bulk_normalize_btn.setEnabled(any_selected)
+
+        # Désactive le bouton “Renommer” si plus d’un sample est coché
+        multiple = len(self.selected_ids) > 1
+        for sid, card in self._card_widgets.items():
+            card.rename_button.setEnabled(not multiple)
+
     def refreshList(self):
         # 1) on prend la liste inversée (du plus récent au plus ancien)
         ordered_samples = list(reversed(self.samples))
@@ -172,12 +224,18 @@ class SampleListWidget(QWidget):
                 card.renameSample.connect(self.rename_sample)
                 card.sampleMoved.connect(self.move_sample)
                 card.normalizeClicked.connect(self.onNormalizeClicked)
+                card.selectionChanged.connect(self.onSelectionChanged)
 
                 # Signaux retour du service
                 self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
                 self.sample_store.sampleMoved   .connect(card.onMoveSuccess)
                 # On stocke la carte
                 self._card_widgets[samp.id] = card
+
+                # Si l'ID était déjà dans self.selected_ids, on coche la checkbox
+                if samp.id in self.selected_ids:
+                    card.checkbox.setChecked(True)
+
             cartes_ordonnees.append(card)
 
         # 4) on vide le layout (sans supprimer les widgets)
@@ -226,7 +284,76 @@ class SampleListWidget(QWidget):
             self.close_waveforms_for_path(old_path)
             new_path = os.path.join(target_folder, os.path.basename(old_path))
             card.sample.path = new_path
+            # 1) On reconstruit la combo “dossier” pour refléter le nouveau folder
+            card.updateLibraryCombo(self.app_context.settings.libraries)
+            # 2) On rafraîchit tout de même l’affichage du nom (et autres labels)
             card.refresh_display()
+
+    # ─────────────────── Bulk Actions ───────────────────
+    def bulkDelete(self):
+        """Supprime tous les samples sélectionnés après confirmation."""
+        if not self.selected_ids:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Confirmer la suppression",
+            f"Voulez-vous vraiment supprimer les {len(self.selected_ids)} échantillons sélectionnés ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            # Attention : créer une copie de la liste avant d'itérer, 
+            # car delete() met à jour self.selected_ids via onSampleDeleted
+            to_delete = list(self.selected_ids)
+            for sample_id in to_delete:
+                self.sample_store.delete(sample_id)
+            # Après suppression, on vide selected_ids
+            self.selected_ids.clear()
+            self.bulk_delete_btn.setEnabled(False)
+            self.bulk_move_btn.setEnabled(False)
+            self.bulk_normalize_btn.setEnabled(False)
+
+    def bulkMove(self):
+        if not self.selected_ids:
+            return
+
+        # Ouvre un QDialog pour choisir un dossier cible
+        dossier = QFileDialog.getExistingDirectory(
+            self, "Choisir le dossier de destination"
+        )
+        if not dossier:
+            return
+
+        for sample_id in list(self.selected_ids):
+            self.sample_store.move(sample_id, dossier)
+
+        # (Optionnel) Décoche tout à la fin :
+        self.selected_ids.clear()
+        self.bulk_delete_btn.setEnabled(False)
+        self.bulk_move_btn.setEnabled(False)
+        self.bulk_normalize_btn.setEnabled(False)
+
+    def bulkNormalize(self):
+        """
+        Lance une normalisation LUFS sur tous les samples cochés.
+        """
+        if not self.selected_ids:
+            return
+        for sample_id in list(self.selected_ids):
+            samp = next((s for s in self.sample_store.get_cached() if s.id == sample_id), None)
+            if samp is None:
+                continue
+            # Créer un NormalizeWorker pour chacun
+            worker = NormalizeWorker(
+                sample_id=sample_id,
+                file_path=samp.path,
+                mode="lufs",
+                target_db=self.app_context.settings.getNormalizationLevel()
+            )
+            worker.startedNormalization.connect(self.onStartedNormalization)
+            worker.finishedNormalization.connect(self.onFinishedNormalization)
+            worker.normalizationFailed.connect(self.onNormalizationFailed)
+            worker.start()
+            self.app_context.sample_store._normalize_threads[sample_id] = worker
 
     def close_waveforms_for_path(self, path):
         for i in range(self.content_layout.count()):

@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, \
-    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication
+    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication, QCheckBox
 from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtCore import QEvent
@@ -16,13 +16,14 @@ from backend.models.AppContext import AppContext
 
 
 class SampleCard(QWidget):
-    # Signaux pour communiquer avec la liste
-    deleteSample = pyqtSignal(int)        # émet l’ID du sample à supprimer
-    renameSample = pyqtSignal(int, str)   # émet (ID du sample, nouveau nom)m
-    playSample = pyqtSignal(object)          # émet l'objet sample à jouer
-    sampleMoved = pyqtSignal(int, str)
-    newSampleSaved = pyqtSignal(str)
-    normalizeClicked  = pyqtSignal(int)
+    # ───────────────── Signaux ─────────────────
+    deleteSample       = pyqtSignal(int)          # émet l’ID du sample à supprimer
+    renameSample       = pyqtSignal(int, str)     # émet (ID, nouveau nom)
+    playSample         = pyqtSignal(object)       # émet l'objet Sample à jouer
+    sampleMoved        = pyqtSignal(int, str)     # émet (ID, nouveau dossier)
+    newSampleSaved     = pyqtSignal(str)          # émet le path quand on sauvegarde
+    normalizeClicked   = pyqtSignal(int)          # émet l’ID pour normaliser manuellement
+    selectionChanged   = pyqtSignal(int, bool)    # Nouvel signal : émet (ID du sample, état coché)
     
 
     def __init__(self, sample: Sample, app_context: AppContext, parent=None):
@@ -39,7 +40,10 @@ class SampleCard(QWidget):
         self.showWaveform = False
         self.wave_edition_widget = None
 
+        self.isChecked = False
+
         # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
+        self.settings.librariesChanged.connect(self.updateLibraryCombo)
 
         self.init_ui()
         self._build_shortcuts()
@@ -70,11 +74,19 @@ class SampleCard(QWidget):
         SampleCard[focused="true"] {
             border: 2px solid #888888;
         }
+        SampleCard[checked="true"] {
+            background-color: rgba(255,255,255,0.1);
+        }
         """)
 
         # ─── Création des widgets (sans encore les ajouter aux layouts) ───
 
+        self.checkbox = QCheckBox()
+        self.checkbox.setStyleSheet("margin-left: 5px;")
+        self.checkbox.toggled.connect(self.onCheckboxToggled)
+
         # ---- Header : Nom, input de renommage et boutons
+
         self.name_label = QLabel(self.get_sample_name())
         self.name_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #ffffff;")
         self.name_label.setFixedHeight(30)
@@ -126,10 +138,13 @@ class SampleCard(QWidget):
         # Remplit la combobox avec le dossier courant et les bibliothèques
         self.change_dir_combobox.addItem(f"{SampleCard.get_folder_name(self.sample.path)}/")
         for library in sorted(self.settings.libraries, key=lambda lib: lib.position):
-            library_dir_name = os.path.basename(library.path)
-            self.change_dir_combobox.addItem(library_dir_name + "/")
+            lib_name = os.path.basename(library.path) + "/"
+            self.change_dir_combobox.addItem(lib_name)
+
+        # Désactiver la molette (optionnel, si vous préférez la méthode 2.1)
+        self.change_dir_combobox.wheelEvent = lambda evt: evt.ignore()
+
         self.change_dir_combobox.setFixedSize(80, 30)
-        self.change_dir_combobox.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")
         self.change_dir_combobox.currentIndexChanged.connect(self.move_sample)
 
         self.length_label = QLabel(f"{self.sample.duration:.1f}s")
@@ -174,6 +189,8 @@ class SampleCard(QWidget):
         # ---- Header : nom, renommage, puis boutons delete, normalize (+ statut), et toggle waveform à droite
         header_layout = QHBoxLayout()
         
+        header_layout.addWidget(self.checkbox) 
+
         # Côté gauche : nom et zone de renommage
         header_layout.addWidget(self.name_label)
         header_layout.addWidget(self.rename_input)
@@ -435,15 +452,31 @@ class SampleCard(QWidget):
         """Met à jour l'affichage du nom du sample."""
         self.name_label.setText(self.sample.name)
     
-    def move_sample(self, index):
-        new_dir = self.settings.libraries[index - 1].path  # -1 car index 0 est le dossier actuel
-        print(new_dir)
-        print(self.sample.path)
+    def move_sample(self, index: int):
+        """
+        On ne déplace que si index >= 1 :
+        - index==0 => on reste dans le dossier courant, on ne fait rien.
+        - index>=1 => on déplace vers settings.libraries[index-1].
+        """
+        if index == 0:
+            return
+
+        # Récupérer la librairie cible (attention à index-1)
+        try:
+            target_library = self.settings.libraries[index - 1]
+        except IndexError:
+            # En théorie, on ne devrait jamais arriver ici si libraries est cohérent
+            return
+
+        new_dir = target_library.path
+        print(f"[SampleCard] Déplacer l’échantillon {self.sample.id} → {new_dir}")
         self.sampleMoved.emit(self.sample.id, new_dir)
 
     def onMoveSuccess(self, sample_id, new_dir):
         if self.sample.id == sample_id:
             self.sample.path = os.path.join(new_dir, os.path.basename(self.sample.path))
+            # Mettre à jour la combo “dossier” dans la carte
+            self.updateLibraryCombo(self.settings.libraries)
             self.refresh_display()
 
     def focusInEvent(self, event):
@@ -491,12 +524,37 @@ class SampleCard(QWidget):
         self.normalize_button.setEnabled(False)
 
     def indicateNormalizationFinished(self):
-        self.status_label.setText("✔️ Normalisé")
+        self.status_label.setText("✔️ Norx`malisé")
         self.normalize_button.setEnabled(True)
 
     def indicateNormalizationError(self, message: str):
         self.status_label.setText(f"❌ Erreur: {message}")
-        self.normalize_button.setEnabled(True)  
+        self.normalize_button.setEnabled(True)
+
+    def onCheckboxToggled(self, checked: bool):
+        """
+        :param checked: True si la case est cochée, False si elle vient d'être décochée.
+        """
+        self.isChecked = checked
+        # On émet directement le booléen vers le parent
+        self.selectionChanged.emit(self.sample.id, checked)
+        print(f"Checkbox toggled: {self.sample.id} is now {'checked' if checked else 'unchecked'}")
+        # Conserver le style visuel si vous voulez colorer la carte quand elle est cochée :
+        self.setProperty("checked", checked)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def updateLibraryCombo(self, libs: list):
+        """
+        Met à jour le contenu de self.change_dir_combobox 
+        à chaque fois que la liste des bibliothèques change.
+        """
+        current_folder = SampleCard.get_folder_name(self.sample.path) + "/"
+        self.change_dir_combobox.clear()
+        self.change_dir_combobox.addItem(current_folder)
+        for library in sorted(libs, key=lambda lib: lib.position):
+            nom = os.path.basename(library.path) + "/"
+            self.change_dir_combobox.addItem(nom)
 
 def format_time(milliseconds):
     minutes = (milliseconds // 1000) // 60
