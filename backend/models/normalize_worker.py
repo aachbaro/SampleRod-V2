@@ -23,6 +23,7 @@ class NormalizeWorker(QThread):
 
     startedNormalization = pyqtSignal(int)
     finishedNormalization = pyqtSignal(int)
+    normalizationFailed  = pyqtSignal(int, str)
 
     def __init__(self, sample_id: int, file_path: str,
                  mode: str = "lufs", target_db: float = -16.0):
@@ -149,11 +150,13 @@ class NormalizeWorker(QThread):
 
         # 4) Réécriture du fichier WAV normalisé (écrase l’original)
         try:
-            # Si mono (1 canal), on a toujours une matrice (n_samples, 1) → sf.write gère
             sf.write(self.file_path, data, sr)
             print(f"[NormalizeWorker] Normalisation terminée pour {self.file_path}")
+            self.finishedNormalization.emit(self.sample_id)
         except Exception as e:
-            print(f"[NormalizeWorker] Impossible d’écrire {self.file_path}: {e}")
+            err = f"Écriture impossible : {e}"
+            print(f"[NormalizeWorker] {err}")
+            self.normalizationFailed.emit(self.sample_id, err)
 
         # 5) Signal de fin de normalisation
         self.finishedNormalization.emit(self.sample_id)

@@ -472,7 +472,16 @@ class SampleCard(QWidget):
         return super().eventFilter(watched, event)
 
     def onNormalizeButtonClicked(self):
-        # Quand l’utilisateur clique sur “Normalize”, on émet l’ID
+        # 1) Si et seulement si c'est cet échantillon qui est joué, on arrête la lecture.
+        current_id = self.app_context.audio_player.current_sample_id
+        if current_id == self.sample.id:
+            try:
+                # clear_audio() stoppe et décharge le fichier de pygame
+                self.app_context.audio_player.clear_audio()
+            except Exception:
+                pass
+
+        # 2) On met à jour l’état visuel avant de lancer la normalisation
         self.status_label.setText("⏳ Normalisation…")
         self.normalize_button.setEnabled(False)
         self.normalizeClicked.emit(self.sample.id)
@@ -484,6 +493,10 @@ class SampleCard(QWidget):
     def indicateNormalizationFinished(self):
         self.status_label.setText("✔️ Normalisé")
         self.normalize_button.setEnabled(True)
+
+    def indicateNormalizationError(self, message: str):
+        self.status_label.setText(f"❌ Erreur: {message}")
+        self.normalize_button.setEnabled(True)  
 
 def format_time(milliseconds):
     minutes = (milliseconds // 1000) // 60

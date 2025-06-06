@@ -20,6 +20,7 @@ class SampleService(QObject):
     sampleMoved    = pyqtSignal(int, str)    # émet (ID, nouveau dossier)
     sampleStartedNormalization  = pyqtSignal(int)      # émet l’ID du sample en cours de normalisation
     sampleFinishedNormalization = pyqtSignal(int)       # émet l’ID du sample normalisé
+    sampleNormalizationFailed   = pyqtSignal(int, str)
 
     def __init__(self, app_context):
         super().__init__()
@@ -68,9 +69,8 @@ class SampleService(QObject):
             self.sampleAdded.emit(new_sample.id)
 
             if self.app_context.settings.isAutoNormalizeEnabled():
-                # on récupère le mode et le niveau dans les settings
-                mode       = "lufs"
-                target_db  = self.app_context.settings.getNormalizationLevel()
+                mode      = "lufs"
+                target_db = self.app_context.settings.getNormalizationLevel()
                 worker = NormalizeWorker(
                     sample_id=new_sample.id,
                     file_path=path,
@@ -80,6 +80,7 @@ class SampleService(QObject):
                 # on relaye directement sur nos signaux :
                 worker.startedNormalization.connect(self.sampleStartedNormalization)
                 worker.finishedNormalization.connect(self.sampleFinishedNormalization)
+                worker.normalizationFailed .connect(self._onNormalizationFailed)
                 worker.start()
                 # on conserve la référence pour éviter que le thread ne soit détruit
                 self._normalize_threads[new_sample.id] = worker
@@ -148,3 +149,7 @@ class SampleService(QObject):
     def _get(self, sample_id: int):
         """Retourne l’instance en cache ou None."""
         return next((s for s in self._samples if s.id == sample_id), None)
+    
+    def _onNormalizationFailed(self, sample_id: int, message: str):
+        # Réémet le signal vers l’UI
+        self.sampleNormalizationFailed.emit(sample_id, message)

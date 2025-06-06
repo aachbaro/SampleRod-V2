@@ -65,7 +65,6 @@ class AudioSettingsWidget(QWidget):
 
 
         layout = QVBoxLayout(self)
-        layout.addLayout(form)
         
         self.lufs_spin = QSpinBox()
         self.lufs_spin.setRange(-30, 0)

@@ -25,7 +25,7 @@ class SampleListWidget(QWidget):
         # -> Abonnement aux nouveaux signaux de normalisation
         self.sample_store.sampleStartedNormalization.connect(self.onStartedNormalization)
         self.sample_store.sampleFinishedNormalization.connect(self.onFinishedNormalization)
-
+        self.sample_store.sampleNormalizationFailed.connect(self.onNormalizationFailed)
         # 2) stockage des cartes existantes
         self._card_widgets = {}
 
@@ -139,6 +139,12 @@ class SampleListWidget(QWidget):
         # Conserver la référence pour ne pas que le thread soit détruit
         self.app_context.sample_store._normalize_threads[sample_id] = worker
 
+    @pyqtSlot(int, str)
+    def onNormalizationFailed(self, sample_id: int, message: str):
+        card = self._card_widgets.get(sample_id)
+        if card:
+            card.indicateNormalizationError(message)
+
     def refreshList(self):
         # 1) on prend la liste inversée (du plus récent au plus ancien)
         ordered_samples = list(reversed(self.samples))
@@ -166,7 +172,7 @@ class SampleListWidget(QWidget):
                 card.renameSample.connect(self.rename_sample)
                 card.sampleMoved.connect(self.move_sample)
                 card.normalizeClicked.connect(self.onNormalizeClicked)
-                
+
                 # Signaux retour du service
                 self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
                 self.sample_store.sampleMoved   .connect(card.onMoveSuccess)
