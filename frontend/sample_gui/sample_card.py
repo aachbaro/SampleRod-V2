@@ -22,6 +22,7 @@ class SampleCard(QWidget):
     playSample = pyqtSignal(object)          # émet l'objet sample à jouer
     sampleMoved = pyqtSignal(int, str)
     newSampleSaved = pyqtSignal(str)
+    normalizeClicked  = pyqtSignal(int)
     
 
     def __init__(self, sample: Sample, app_context: AppContext, parent=None):
@@ -44,6 +45,11 @@ class SampleCard(QWidget):
         self._build_shortcuts()
 
     def init_ui(self):
+        """
+        Initialise l’interface visuelle de la SampleCard.
+        Les widgets sont créés en premier, puis tous les addWidget / addLayout
+        sont regroupés à la fin pour clarifier l’assemblage visuel.
+        """
 
         # Pour que Qt applique le background-color défini en QSS
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -66,165 +72,168 @@ class SampleCard(QWidget):
         }
         """)
 
-        main_layout = QVBoxLayout(self)
+        # ─── Création des widgets (sans encore les ajouter aux layouts) ───
 
-# ------------------------- Header : Nom du sample, boutons renommer et supprimer
-
-        header_layout = QHBoxLayout()
-
-    # -------- Conteneur pour name_label et rename_section
-
-            # NAME
+        # ---- Header : Nom, input de renommage et boutons
         self.name_label = QLabel(self.get_sample_name())
         self.name_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #ffffff;")
         self.name_label.setFixedHeight(30)
-        header_layout.addWidget(self.name_label)
         self.name_label.mouseDoubleClickEvent = self.name_label_double_click
         self.name_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-            # RENAME
         self.rename_input = QLineEdit(self.get_sample_name())
-        self.rename_input.setStyleSheet("background-color: #444; color: #ffffff; border: 1px solid #f7cd36; padding: 4px;")
-        header_layout.addWidget(self.rename_input)
+        self.rename_input.setStyleSheet(
+            "background-color: #444; color: #ffffff; border: 1px solid #f7cd36; padding: 4px;"
+        )
 
         self.check_button = QPushButton()
         self.check_button.setIcon(qta.icon('fa5s.check', color='green'))
         self.check_button.clicked.connect(self.submitRename)
-        header_layout.addWidget(self.check_button)
 
         self.cancel_button = QPushButton()
         self.cancel_button.setIcon(qta.icon('fa5s.times', color='lightgray'))
         self.cancel_button.clicked.connect(self.cancelRename)
-        header_layout.addWidget(self.cancel_button)
-
 
         self.rename_button = QPushButton()
         self.rename_button.setIcon(qta.icon('fa6s.pen', color='lightgray'))
         self.rename_button.setToolTip("Renommer")
         self.rename_button.setFixedSize(30, 30)
         self.rename_button.clicked.connect(self.startRename)
-        header_layout.addWidget(self.rename_button)
-
-        self.rename_input.setVisible(False)
-        self.check_button.setVisible(False)
-        self.cancel_button.setVisible(False)
-
-    # ---------------------------------------------------------
-        header_layout.addStretch()
 
         self.delete_button = QPushButton()
         self.delete_button.setIcon(qta.icon('fa5s.trash-alt', color='red'))
         self.delete_button.setToolTip("Supprimer")
-        self.delete_button.clicked.connect(self.confirmDelete)
         self.delete_button.setFixedSize(30, 30)
-        header_layout.addWidget(self.delete_button)
+        self.delete_button.clicked.connect(self.confirmDelete)
 
-        main_layout.addLayout(header_layout)
+        # Par défaut, on masque les champs de renommage
+        self.rename_input.setVisible(False)
+        self.check_button.setVisible(False)
+        self.cancel_button.setVisible(False)
 
-# ------------------------- Détails : Dossier, durée, date de création
-        details_layout = QHBoxLayout()
+        # ---- Normalisation : bouton + label de statut
+        self.normalize_button = QPushButton()
+        self.normalize_button.setIcon(qta.icon('fa5s.bolt', color='orange'))
+        self.normalize_button.setToolTip("Normalize sample")
+        self.normalize_button.setFixedSize(30, 30)
+        self.normalize_button.clicked.connect(self.onNormalizeButtonClicked)
 
-        # library selector
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #cccccc; font-size: 12px;")
+
+        # ---- Détails : combobox dossier, durée, date, bouton waveform
         self.change_dir_combobox = QComboBox()
+        # Remplit la combobox avec le dossier courant et les bibliothèques
         self.change_dir_combobox.addItem(f"{SampleCard.get_folder_name(self.sample.path)}/")
         for library in sorted(self.settings.libraries, key=lambda lib: lib.position):
             library_dir_name = os.path.basename(library.path)
             self.change_dir_combobox.addItem(library_dir_name + "/")
         self.change_dir_combobox.setFixedSize(80, 30)
         self.change_dir_combobox.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")
-        
         self.change_dir_combobox.currentIndexChanged.connect(self.move_sample)
-        
-        details_layout.addWidget(self.change_dir_combobox)
-
-        spacer1 = QSpacerItem(20, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-        details_layout.addItem(spacer1)
 
         self.length_label = QLabel(f"{self.sample.duration:.1f}s")
-        self.length_label.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")  # Ajouter des marges verticales
-        self.length_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)  # Aligner verticalement
+        self.length_label.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")
+        self.length_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.length_label.setFixedHeight(30)
-        details_layout.addWidget(self.length_label)
 
-
-        spacer2 = QSpacerItem(20, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum)
-        details_layout.addItem(spacer2)
-
-        # Formatage de la date
         formatted_date = self.sample.created_at.strftime("%d/%m/%Y %H:%M")
         self.date_label = QLabel(f"{formatted_date}")
-        self.date_label.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")  # Ajouter des marges verticales
-        self.date_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)  # Aligner verticalement
+        self.date_label.setStyleSheet("color: #cccccc; margin: 5px 0; font-size: 12px;")
+        self.date_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.date_label.setFixedHeight(30)
-        details_layout.addWidget(self.date_label)
 
-        details_layout.addStretch()  # Pousse le bouton à droite
-
-        # Ajouter le bouton avec l'icône de forme d'onde
         self.waveform_button = QPushButton()
-        self.waveform_button.setIcon(qta.icon('mdi.waveform'))  # Utiliser une icône de forme d'onde
+        self.waveform_button.setIcon(qta.icon('mdi.waveform'))
         self.waveform_button.setIconSize(QSize(26, 26))
-        self.waveform_button.setFixedSize(30, 30)  # Augmenter la taille du bouton
-        details_layout.addWidget(self.waveform_button)
+        self.waveform_button.setFixedSize(30, 30)
         self.waveform_button.clicked.connect(self.toggleWaveform)
 
-        main_layout.addLayout(details_layout)
-
-# ------------------------- Sample play back
-        playback_layout = QHBoxLayout()
-
+        # ---- Playback : bouton play, slider, label temps
         self.play_button = QPushButton()
         self.play_button.setFixedSize(30, 30)
         self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
         self.play_button.setToolTip("Lire")
         self.play_button.clicked.connect(self.togglePlay)
-        playback_layout.addWidget(self.play_button)
 
         self.playback_slider = CustomSlider(Qt.Orientation.Horizontal)
         self.playback_slider.setRange(0, 100)
         self.playback_slider.setValue(0)
         self.playback_slider.setFixedHeight(30)
-        playback_layout.addWidget(self.playback_slider)
 
         self.time_label = QLabel("00:00/00:00")
-        self.time_label.setFixedSize(80,30)
+        self.time_label.setFixedSize(80, 30)
         self.time_label.setStyleSheet("font-size: 12px; color: #ffffff;")
-        playback_layout.addWidget(self.time_label)
 
+        # ---- Waveform container (sera rempli dynamiquement)
+        self.waveform_layout = QHBoxLayout()
+
+        # ─── Assemblage des layouts (addWidget / addLayout) ───
+        main_layout = QVBoxLayout(self)
+
+        # ---- Header : nom, renommage, puis boutons delete, normalize (+ statut), et toggle waveform à droite
+        header_layout = QHBoxLayout()
+        
+        # Côté gauche : nom et zone de renommage
+        header_layout.addWidget(self.name_label)
+        header_layout.addWidget(self.rename_input)
+        header_layout.addWidget(self.check_button)
+        header_layout.addWidget(self.cancel_button)
+        header_layout.addWidget(self.rename_button)
+        
+        # Espace vide pour pousser les boutons à droite
+        header_layout.addStretch()
+        
+        # Côté droit : suppression, normalisation, statut et affichage waveform
+        header_layout.addWidget(self.normalize_button)
+        header_layout.addWidget(self.waveform_button)
+        header_layout.addWidget(self.delete_button)
+        
+        main_layout.addLayout(header_layout)
+
+        # ---- Détails : dossier, durée, date, puis statut à droite
+        details_layout = QHBoxLayout()
+        
+        # Côté gauche : dossier, durée, date
+        details_layout.addWidget(self.change_dir_combobox)
+        details_layout.addItem(QSpacerItem(20, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum))
+        details_layout.addWidget(self.length_label)
+        details_layout.addItem(QSpacerItem(20, 1, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum))
+        details_layout.addWidget(self.date_label)
+        
+        # Espace vide pour aligner le statut à droite
+        details_layout.addStretch()
+        
+        # Côté droit : indicateur de statut de normalisation
+        details_layout.addWidget(self.status_label)
+        
+        main_layout.addLayout(details_layout)
+
+        # ---- Playback : bouton play, slider, label temps
+        playback_layout = QHBoxLayout()
+        playback_layout.addWidget(self.play_button)
+        playback_layout.addWidget(self.playback_slider)
+        playback_layout.addWidget(self.time_label)
         main_layout.addLayout(playback_layout)
 
+        # ---- WaveForm container (sera rempli dynamiquement)
+        main_layout.addLayout(self.waveform_layout)
+
+        # ─── Reste des branchements et styles ───
+
+        # Mise à jour initiale du slider et connexion du signal
         self.updateSlider()
         self.playback_slider.sliderMoved.connect(self.seekAudio)
 
-# --------------------------- WaveForm
-        self.waveform_layout = QHBoxLayout()
-
-
-        main_layout.addLayout(self.waveform_layout)
-
-        for child in self.findChildren(QWidget):
-            child.installEventFilter(self)
-
-#------------------- Style général du SampleCard pour fond sombre
-        # self.setStyleSheet("""
-        #     QWidget {
-        #         background-color: transparent;
-        #         border-radius: 8px;
-        #     }
-        #     QWidget:hover {
-        #     }
-        # """)
-
+        # Style du playback_slider
         self.playback_slider.setStyleSheet("""
             QSlider::groove:horizontal {
                 height: 6px;
-                background: #e2e2e2; /* Couleur de fond par défaut */
+                background: #e2e2e2;
             }
-
             QSlider::groove:horizontal:add-page {
-                background: #e2e2e2; /* Couleur avant le curseur (jaune) */
+                background: #e2e2e2;
             }
-
             QSlider::handle:horizontal {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
                 border: 1px solid #5c5c5c;
@@ -233,6 +242,10 @@ class SampleCard(QWidget):
                 border-radius: 3px;
             }
         """)
+
+        # Installer l’event filter sur tous les enfants pour gérer le focus visuel
+        for child in self.findChildren(QWidget):
+            child.installEventFilter(self)
 
     def _build_shortcuts(self):
         """Raccourcis actifs seulement quand **cette** SampleCard (ou un de ses enfants) a le focus."""
@@ -458,7 +471,19 @@ class SampleCard(QWidget):
             self.setFocus()
         return super().eventFilter(watched, event)
 
+    def onNormalizeButtonClicked(self):
+        # Quand l’utilisateur clique sur “Normalize”, on émet l’ID
+        self.status_label.setText("⏳ Normalisation…")
+        self.normalize_button.setEnabled(False)
+        self.normalizeClicked.emit(self.sample.id)
 
+    def indicateNormalizationStarted(self):
+        self.status_label.setText("⏳ Normalisation…")
+        self.normalize_button.setEnabled(False)
+
+    def indicateNormalizationFinished(self):
+        self.status_label.setText("✔️ Normalisé")
+        self.normalize_button.setEnabled(True)
 
 def format_time(milliseconds):
     minutes = (milliseconds // 1000) // 60

@@ -2,6 +2,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from sqlalchemy.exc import SQLAlchemyError
 from backend.db import SessionLocal
 from backend.models.sample import Sample
+from backend.models.normalize_worker import NormalizeWorker
 
 class SampleService(QObject):
     """
@@ -17,12 +18,17 @@ class SampleService(QObject):
     sampleDeleted  = pyqtSignal(int)         # émet l’ID supprimé
     sampleRenamed  = pyqtSignal(int, str)    # émet (ID, nouveau nom)
     sampleMoved    = pyqtSignal(int, str)    # émet (ID, nouveau dossier)
+    sampleStartedNormalization  = pyqtSignal(int)      # émet l’ID du sample en cours de normalisation
+    sampleFinishedNormalization = pyqtSignal(int)       # émet l’ID du sample normalisé
 
-    def __init__(self):
+    def __init__(self, app_context):
         super().__init__()
         print("[SampleService] Initialisation du service")
         # cache local de tous les échantillons
         self._samples = []
+        self._normalize_threads = {}
+        self.app_context = app_context
+
         # chargement initial
         self._initialize_cache()
 
@@ -60,11 +66,30 @@ class SampleService(QObject):
             self._samples.sort(key=lambda s: s.id)
             # 4) Émission du signal d'ajout
             self.sampleAdded.emit(new_sample.id)
+
+            if self.app_context.settings.isAutoNormalizeEnabled():
+                # on récupère le mode et le niveau dans les settings
+                mode       = "lufs"
+                target_db  = self.app_context.settings.getNormalizationLevel()
+                worker = NormalizeWorker(
+                    sample_id=new_sample.id,
+                    file_path=path,
+                    mode=mode,
+                    target_db=target_db
+                )
+                # on relaye directement sur nos signaux :
+                worker.startedNormalization.connect(self.sampleStartedNormalization)
+                worker.finishedNormalization.connect(self.sampleFinishedNormalization)
+                worker.start()
+                # on conserve la référence pour éviter que le thread ne soit détruit
+                self._normalize_threads[new_sample.id] = worker
+
+
         except Exception as e:
             print(f"[SampleService] add error: {e}")
-        # finally:
+        finally:
             # 5) Émission de la liste mise à jour
-            # self.samplesChanged.emit(list(self._samples))
+            self.samplesChanged.emit(list(self._samples))
 
     def delete(self, sample_id: int):
         """

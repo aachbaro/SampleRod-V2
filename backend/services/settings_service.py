@@ -11,16 +11,29 @@ class SettingsService(QObject):
     librariesChanged  = pyqtSignal(list)
     sampleRateChanged = pyqtSignal(int)
     loopbackDeviceChanged = pyqtSignal(object)
+    autoNormalizeToggled   = pyqtSignal(bool)
+    normalizationLevelChanged = pyqtSignal(int)
 
     def __init__(self):
         super().__init__()
         self._qs = QSettings("SampleRod", "Main")
+
         self.libraries = SampleBank.get_all_libraries()
+
         self.loopback_device = None
         self.sample_rate = 44100  # valeur récupérée du QSettings
         self._sample_rate = self.sample_rate
+
+        auto_norm = self._qs.value("autoNormalizeEnabled", False, type=bool)
+        self.normalization_level = self._qs.value("normalizationLevel", -14, type=int)  # ex : -14 LUFS
+        self.autoNormalizeToggled.emit(auto_norm)
+        self.normalizationLevelChanged.emit(self.normalization_level)
+
         self.librariesChanged.emit(self.libraries)
+
         self._init_audio_settings()
+
+
         print("[SettingsService] Initialisation des paramètres de l'application")
         print("[SettingsService]self.loopback_device", self.loopback_device)
 
@@ -121,3 +134,24 @@ class SettingsService(QObject):
         name = device.name if device else ""
         self._qs.setValue("loopbackDeviceName", name)
         self.loopbackDeviceChanged.emit(device)
+
+    #   ——————————————————————— Normalization Settings —————————————————————————————
+
+    def toggleAutoNormalize(self):
+        """Inverse l'état de l'auto-normalisation et le persiste dans QSettings."""
+        print("[SettingsService] Basculement de l'état de l'auto-normalisation")
+        enabled = not self._qs.value("autoNormalizeEnabled", False, type=bool)
+        self._qs.setValue("autoNormalizeEnabled", enabled)
+        self.autoNormalizeToggled.emit(enabled)
+
+    def setNormalizationLevel(self, level: int):
+        """Change le niveau de normalisation et le persiste dans QSettings."""
+        print(f"[SettingsService] Modification du niveau de normalisation à {level} LUFS")
+        self._qs.setValue("normalizationLevel", level)
+        self.normalizationLevelChanged.emit(level)
+
+    def isAutoNormalizeEnabled(self) -> bool:
+        return self._qs.value("autoNormalizeEnabled", False, type=bool)
+
+    def getNormalizationLevel(self) -> int:
+        return self._qs.value("normalizationLevel", -14, type=int)

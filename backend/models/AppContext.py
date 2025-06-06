@@ -29,7 +29,7 @@ class AppContext:
         
         self.audio_player = AudioPlayer()
 
-        self.sample_store = SampleService()
+        self.sample_store = SampleService(self)
 
 
 class AudioPlayer:

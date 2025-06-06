@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QComboBox, QPushButton, QFormLayout, QVBoxLayout, QHBoxLayout, QMessageBox
+    QWidget, QLabel, QComboBox, QPushButton, QFormLayout, QVBoxLayout, QHBoxLayout, QMessageBox, QCheckBox, QSpinBox
 )
 from PyQt6.QtCore import pyqtSignal
 import sounddevice as sd
@@ -25,6 +25,8 @@ class AudioSettingsWidget(QWidget):
 
         self._build_ui()
         self.loopbackDeviceChanged.connect(self.settings.setLoopbackDevice)
+        self.settings.autoNormalizeToggled.connect(self.auto_norm_checkbox.setChecked)
+        self.settings.normalizationLevelChanged.connect(self.lufs_spin.setValue)
         self._load_settings()
 
     def _build_ui(self):
@@ -54,6 +56,23 @@ class AudioSettingsWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(apply_btn)
+
+        #  Normalisation
+        self.auto_norm_checkbox = QCheckBox("Normalisation automatique")
+        self.auto_norm_checkbox.setChecked(self.settings.isAutoNormalizeEnabled())
+        self.auto_norm_checkbox.clicked.connect(self.settings.toggleAutoNormalize)
+        form.addRow(QLabel("Normalisation :"), self.auto_norm_checkbox)
+
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        
+        self.lufs_spin = QSpinBox()
+        self.lufs_spin.setRange(-30, 0)
+        self.lufs_spin.setSuffix(" LUFS")
+        self.lufs_spin.setValue(self.settings.getNormalizationLevel())
+        self.lufs_spin.valueChanged.connect(self.settings.setNormalizationLevel)
+        form.addRow(QLabel("Cible LUFS :"), self.lufs_spin)
 
         self.settings.loopbackDeviceChanged.connect(lambda dev: self._load_settings())
 

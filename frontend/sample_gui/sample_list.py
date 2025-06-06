@@ -4,6 +4,7 @@ from frontend.sample_gui.sample_card import SampleCard
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
 import os
+from backend.models.normalize_worker import NormalizeWorker
 
 
 class SampleListWidget(QWidget):
@@ -21,6 +22,9 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleDeleted.    connect(self.onSampleDeleted)
         self.sample_store.sampleRenamed.    connect(self.onSampleRenamed)
         self.sample_store.sampleMoved.      connect(self.onSampleMoved)
+        # -> Abonnement aux nouveaux signaux de normalisation
+        self.sample_store.sampleStartedNormalization.connect(self.onStartedNormalization)
+        self.sample_store.sampleFinishedNormalization.connect(self.onFinishedNormalization)
 
         # 2) stockage des cartes existantes
         self._card_widgets = {}
@@ -101,6 +105,40 @@ class SampleListWidget(QWidget):
         """Déclenche le déplacement via le service."""
         self.sample_store.move(sample_id, target_folder)
 
+    @pyqtSlot(int)
+    def onStartedNormalization(self, sample_id: int):
+        card = self._card_widgets.get(sample_id)
+        if card:
+            card.indicateNormalizationStarted()
+
+    @pyqtSlot(int)
+    def onFinishedNormalization(self, sample_id: int):
+        card = self._card_widgets.get(sample_id)
+        if card:
+            card.indicateNormalizationFinished()
+
+    @pyqtSlot(int)
+    def onNormalizeClicked(self, sample_id: int):
+        """
+        Lorsque l'utilisateur clique sur "Normalize" manuellement dans la carte :
+        on crée un NormalizeWorker ad-hoc et on l'exécute.
+        """
+        samp = next((s for s in self.sample_store.get_cached() if s.id == sample_id), None)
+        if samp is None:
+            return
+
+        worker = NormalizeWorker(
+            sample_id=sample_id,
+            file_path=samp.path,
+            mode="lufs",
+            target_db=self.app_context.settings.getNormalizationLevel()
+        )
+        worker.startedNormalization.connect(self.onStartedNormalization)
+        worker.finishedNormalization.connect(self.onFinishedNormalization)
+        worker.start()
+        # Conserver la référence pour ne pas que le thread soit détruit
+        self.app_context.sample_store._normalize_threads[sample_id] = worker
+
     def refreshList(self):
         # 1) on prend la liste inversée (du plus récent au plus ancien)
         ordered_samples = list(reversed(self.samples))
@@ -127,6 +165,8 @@ class SampleListWidget(QWidget):
                 card.deleteSample.connect(self.delete_sample)
                 card.renameSample.connect(self.rename_sample)
                 card.sampleMoved.connect(self.move_sample)
+                card.normalizeClicked.connect(self.onNormalizeClicked)
+                
                 # Signaux retour du service
                 self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
                 self.sample_store.sampleMoved   .connect(card.onMoveSuccess)
