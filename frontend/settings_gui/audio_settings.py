@@ -30,49 +30,68 @@ class AudioSettingsWidget(QWidget):
         self._load_settings()
 
     def _build_ui(self):
-        form = QFormLayout()
+        """
+        Initialise l’interface des paramètres audio.
+        Création des widgets en premier, puis assemblage des layouts à la fin.
+        """
+
+        # ─── Création des widgets (sans encore les ajouter aux layouts) ───
 
         # Sample Rate
         self.sample_rate_combo = QComboBox()
-        # Quelques valeurs courantes
         for rate in [44100, 48000, 96000, 192000]:
             self.sample_rate_combo.addItem(f"{rate} Hz", rate)
         self.sample_rate_combo.currentIndexChanged.connect(self._on_sample_rate_changed)
-        form.addRow(QLabel("Sample Rate:"), self.sample_rate_combo)
 
         # Loopback device
-        hb = QHBoxLayout()
         self.loopback_combo = QComboBox()
         self.refresh_button = QPushButton("Rafraîchir")
         self.refresh_button.clicked.connect(self._load_settings)
-        hb.addWidget(self.loopback_combo)
-        hb.addWidget(self.refresh_button)
-        form.addRow(QLabel("Micro Loopback:"), hb)
 
-        # Appliquer / Sauvegarder
-        apply_btn = QPushButton("Sauvegarder")
-        apply_btn.clicked.connect(self._save_settings)
+        # Bouton Appliquer / Sauvegarder
+        self.apply_btn = QPushButton("Sauvegarder")
+        self.apply_btn.clicked.connect(self._save_settings)
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
-        layout.addWidget(apply_btn)
-
-        #  Normalisation
+        # Normalisation automatique
         self.auto_norm_checkbox = QCheckBox("Normalisation automatique")
         self.auto_norm_checkbox.setChecked(self.settings.isAutoNormalizeEnabled())
         self.auto_norm_checkbox.clicked.connect(self.settings.toggleAutoNormalize)
-        form.addRow(QLabel("Normalisation :"), self.auto_norm_checkbox)
 
-
-        layout = QVBoxLayout(self)
-        
+        # Cible LUFS
         self.lufs_spin = QSpinBox()
         self.lufs_spin.setRange(-30, 0)
         self.lufs_spin.setSuffix(" LUFS")
         self.lufs_spin.setValue(self.settings.getNormalizationLevel())
         self.lufs_spin.valueChanged.connect(self.settings.setNormalizationLevel)
+
+        # ─── Assemblage des layouts (addWidget / addLayout) ───
+        main_layout = QVBoxLayout(self)
+
+        # Formulaire principal
+        form = QFormLayout()
+
+        # Ligne Sample Rate
+        form.addRow(QLabel("Sample Rate :"), self.sample_rate_combo)
+
+        # Ligne Loopback device (HBox contenant combobox + bouton)
+        hb = QHBoxLayout()
+        hb.addWidget(self.loopback_combo)
+        hb.addWidget(self.refresh_button)
+        form.addRow(QLabel("Micro Loopback :"), hb)
+
+        # Ligne Normalisation automatique
+        form.addRow(QLabel("Normalisation :"), self.auto_norm_checkbox)
+
+        # Ligne Cible LUFS
         form.addRow(QLabel("Cible LUFS :"), self.lufs_spin)
 
+        # Ajout du formulaire au layout principal
+        main_layout.addLayout(form)
+
+        # Bouton Appliquer / Sauvegarder en-dessous du formulaire
+        main_layout.addWidget(self.apply_btn)
+
+        # Connexion pour recharger les devices lorsque le loopback change
         self.settings.loopbackDeviceChanged.connect(lambda dev: self._load_settings())
 
     def _load_settings(self):

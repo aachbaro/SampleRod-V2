@@ -70,9 +70,9 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
             # 1) On (re)ouvre le device une première fois (ou après set_device)
             #    On récupère ici un contexte Recorder “blocant” sur mic.record(...)
             # ---------------------------------------------------------------------------
-            with open_microphone(selected_device_name)[0] as mic:
-                # Le nom effectif du micro peut avoir changé (lors du open), on le mémorise
-                selected_device_name = open_microphone(selected_device_name)[1]
+            recorder_obj, actual_name = open_microphone(selected_device_name)
+            with recorder_obj as mic:
+                selected_device_name = actual_name
 
                 # Buffers pour rétro et live
                 retro_buf = deque(maxlen=maxlen)
