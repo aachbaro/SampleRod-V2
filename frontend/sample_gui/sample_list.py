@@ -81,6 +81,9 @@ class SampleListWidget(QWidget):
         bulk_layout.addStretch()
         main_layout.addLayout(bulk_layout)
 
+         # ─── Autoriser le glisser-déposer de fichiers ───
+        self.setAcceptDrops(True)
+
         # ─── Zone scrollable des SampleCard ───
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -466,4 +469,63 @@ class SampleListWidget(QWidget):
                 w.waveform_layout.removeWidget(w.wave_edition_widget)
                 w.wave_edition_widget.deleteLater()
                 w.wave_edition_widget = None
+
+    # ─── Drag & Drop depuis l’explorateur ───
+
+    def dragEnterEvent(self, event):
+        # N’accepte que si on a des URLs (fichiers)
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        # Même logique qu’au dragEnter
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """
+        Lorsqu’on lâche des fichiers :
+        - on récupère les chemins locaux
+        - on crée les samples
+        - on coche automatiquement les cases correspondantes
+        """
+        urls = event.mimeData().urls()
+        if not urls:
+            return
+
+        # 1) Extraire les fichiers locaux .wav (à adapter si besoin)
+        paths = []
+        for u in urls:
+            local = u.toLocalFile()
+            if os.path.isfile(local) and local.lower().endswith(".wav"):
+                paths.append(local)
+
+        if not paths:
+            return
+
+        # 2) Hook temporaire pour récupérer les nouveaux IDs
+        new_ids = []
+        def _on_added(sid):
+            new_ids.append(sid)
+        self.sample_store.sampleAdded.connect(_on_added)
+
+        # 3) Ajouter chaque fichier
+        for p in paths:
+            self.sample_store.add(p)
+
+        # 4) Déconnecter le hook
+        self.sample_store.sampleAdded.disconnect(_on_added)
+
+        # 5) Cocher automatiquement les cartes créées
+        for sid in new_ids:
+            card = self._card_widgets.get(sid)
+            if card:
+                card.checkbox.setChecked(True)
+
+        # 6) On scroll vers le haut pour voir les nouveaux items
+        self.scroll_area.verticalScrollBar().setValue(0)
 
