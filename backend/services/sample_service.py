@@ -181,3 +181,47 @@ class SampleService(QObject):
         finally:
             # Toujours ré-émission de la liste
             self.samplesChanged.emit(list(self._samples))
+
+    def bulkDelete(self, sample_ids: list[int]):
+        """
+        Supprime plusieurs samples (FS + BD) en une seule transaction,
+        met à jour le cache et émet sampleDeleted pour chaque ID puis samplesChanged.
+        """
+        import os
+        from backend.db import SessionLocal
+
+        # 1) Stopper la lecture si l’un des samples est en cours
+        current = self.app_context.audio_player.current_sample_id
+        if current in sample_ids:
+            try:
+                self.app_context.audio_player.clear_audio()
+            except Exception:
+                pass
+
+        try:
+            # 2) Suppression physique des fichiers
+            for samp in [s for s in self._samples if s.id in sample_ids]:
+                if os.path.isfile(samp.path):
+                    os.remove(samp.path)
+                    print(f"[SampleService] Fichier {samp.path} supprimé")
+
+            # 3) Suppression en base dans une seule session
+            session = SessionLocal()
+            for sample_id in sample_ids:
+                inst = session.get(Sample, sample_id)
+                if inst:
+                    session.delete(inst)
+            session.commit()
+            session.close()
+
+            # 4) Mise à jour du cache
+            self._samples = [s for s in self._samples if s.id not in sample_ids]
+
+            # 5) Émettre sampleDeleted pour chaque ID (pour fermer les waveforms)
+            for sample_id in sample_ids:
+                self.sampleDeleted.emit(sample_id)
+        except Exception as e:
+            print(f"[SampleService] bulkDelete error: {e}")
+        finally:
+            # 6) N’émettre qu’UN SEUL samplesChanged à la fin
+            self.samplesChanged.emit(list(self._samples))

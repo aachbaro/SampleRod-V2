@@ -56,6 +56,12 @@ class SampleListWidget(QWidget):
         self.add_files_btn.clicked.connect(self.onAddFiles)
         bulk_layout.addWidget(self.add_files_btn)
 
+        # Bouton « Retirer de l'historique »
+        self.bulk_archive_btn = QPushButton("Retirer de l’historique")
+        self.bulk_archive_btn.setEnabled(False)
+        self.bulk_archive_btn.clicked.connect(self.bulkRemoveFromHistory)
+        bulk_layout.addWidget(self.bulk_archive_btn)    
+
         # Bouton Supprimer la sélection
         self.bulk_delete_btn = QPushButton("Supprimer la sélection")
         self.bulk_delete_btn.setEnabled(False)
@@ -201,6 +207,7 @@ class SampleListWidget(QWidget):
         self.bulk_delete_btn.setEnabled(any_selected)
         self.bulk_move_btn.setEnabled(any_selected)
         self.bulk_normalize_btn.setEnabled(any_selected)
+        self.bulk_archive_btn.     setEnabled(any_selected)
 
         # Désactive le bouton “Renommer” si plus d’un sample est coché
         multiple = len(self.selected_ids) > 1
@@ -251,6 +258,33 @@ class SampleListWidget(QWidget):
             del self._card_widgets[sample_id]
             # mettre à jour selected_ids si besoin
             self.selected_ids.discard(sample_id)
+
+    @pyqtSlot()
+    def bulkRemoveFromHistory(self):
+        """Retire en bloc les samples sélectionnés de l’historique (BD only)."""
+        if not self.selected_ids:
+            return
+
+        # confirmation
+        reply = QMessageBox.question(
+            self,
+            "Confirmer la suppression de l'historique",
+            f"Voulez-vous vraiment retirer les {len(self.selected_ids)} échantillons de l’historique ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        to_remove = list(self.selected_ids)
+        for sample_id in to_remove:
+            self.sample_store.removeFromHistory(sample_id)
+
+        # on vide la sélection et on désactive les boutons
+        self.selected_ids.clear()
+        self.bulk_delete_btn.      setEnabled(False)
+        self.bulk_move_btn.        setEnabled(False)
+        self.bulk_normalize_btn.   setEnabled(False)
+        self.bulk_archive_btn.     setEnabled(False)
 
     def refreshList(self):
         # 1) on prend la liste inversée (du plus récent au plus ancien)
@@ -360,8 +394,12 @@ class SampleListWidget(QWidget):
             # Attention : créer une copie de la liste avant d'itérer, 
             # car delete() met à jour self.selected_ids via onSampleDeleted
             to_delete = list(self.selected_ids)
-            for sample_id in to_delete:
-                self.sample_store.delete(sample_id)
+            # Si on supprime un sample en cours de lecture, on coupe l'audio…
+            current = self.app_context.audio_player.current_sample_id
+            if current in to_delete:
+                self.app_context.audio_player.clear_audio()
+
+            self.sample_store.bulkDelete(to_delete)
             # Après suppression, on vide selected_ids
             self.selected_ids.clear()
             self.bulk_delete_btn.setEnabled(False)
