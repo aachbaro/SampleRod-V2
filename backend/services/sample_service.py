@@ -3,6 +3,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from backend.db import SessionLocal
 from backend.models.sample import Sample
 from backend.models.normalize_worker import NormalizeWorker
+from backend.services.notification_service import NotificationType
 
 class SampleService(QObject):
     """
@@ -74,6 +75,19 @@ class SampleService(QObject):
         try:
             # 1) Création via le modèle : enregistre le fichier et la BD
             new_sample = Sample(path)
+
+            # Envoie d’une notification à l’utilisateur
+            # On affiche le nom, la durée (arrondie à 1 décimale) et le chemin complet
+            self.app_context.notifications.notify(
+                title="📥 Nouveau sample ajouté",
+                message=(
+                    f"{new_sample.name} — {new_sample.duration:.1f}s\n"
+                    f"Emplacement : {new_sample.path}"
+                ),
+                type=NotificationType.SUCCESS
+            )
+            # ─────────────
+
             # 2) Mise à jour du cache
             self._samples.append(new_sample)
             # 3) Optionnel : tri du cache par ID croissant

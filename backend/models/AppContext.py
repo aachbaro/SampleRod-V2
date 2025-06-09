@@ -12,6 +12,7 @@ from backend.services.recorder_service import RecorderService
 from backend.services.settings_service import SettingsService
 from backend.services.sample_service import SampleService
 from backend.services.sample_service import IntegrityCheckWorker
+from backend.services.notification_service import NotificationService
 
 class AppContext:
     """
@@ -20,6 +21,9 @@ class AppContext:
     """
     def __init__(self):
         print("Initialisation de AppContext...")
+
+        self.notifications = NotificationService()
+
         self.settings = SettingsService()
 
         self.recorder = RecorderService(

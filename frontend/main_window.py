@@ -2,11 +2,14 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton
 from PyQt6.QtCore import Qt
 
+import qtawesome as qta
+
 from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
 from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
 from frontend.sample_gui.sample_list import SampleListWidget
 from frontend.settings_gui.audio_settings import AudioSettingsWidget
+from frontend.notification_widgets import NotificationManager, NotificationCenter
 
 from backend.models.sample import Sample
 from backend.models.AppContext import AppContext
@@ -59,6 +62,42 @@ class MainWindow(QMainWindow):
         settings_layout.addStretch()
         self.tab_widget.addTab(settings_tab, "Paramètres")
 
+        # bouton 🛎 placé dans le coin supérieur droit des onglets
+        self.notif_button = QPushButton()
+        self.notif_button.setIcon(qta.icon('fa5s.bell', color='lightgray'))
+        self.notif_button.setToolTip("Notifications")
+        # positionne le bouton dans le coin
+        self.tab_widget.setCornerWidget(self.notif_button, Qt.Corner.TopRightCorner)
+
+        # instancie le centre et le manager
+        self.notif_center  = NotificationCenter(self)
+        self.notif_center.hide()  # masqué par défaut
+        self.notif_manager = NotificationManager(self.app_context.notifications, parent=self)
+        self.notif_manager.set_center(self.notif_center)
+
+        self.notif_button.clicked.connect(self._on_notif_button_clicked)
+
+        # compteur de non-lus
+        self._unread_count = 0
+
+        # badge (QLabel) enfant du bouton notif
+        self._notif_badge = QLabel(self.notif_button)
+        self._notif_badge.setFixedSize(16, 16)
+        self._notif_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._notif_badge.setStyleSheet("""
+            QLabel {
+            background-color: red;
+            color: white;
+            border-radius: 8px;
+            font-size: 10px;
+            }
+        """)
+        # positionne le badge en haut-droite du bouton
+        self._notif_badge.move(self.notif_button.width() - 12, 2)
+        self._notif_badge.hide()
+
+        self.app_context.notifications.notificationAdded.connect(self._increment_badge)
+
     def _init_signals(self):
         """Connecte les signaux entre composants"""
         # Quand un nouvel échantillon est enregistré, on l'ajoute à la liste
@@ -82,3 +121,22 @@ class MainWindow(QMainWindow):
         if self.app_context.recorder.is_recording:
             self.app_context.recorder.stop()
         # TODO: autres nettoyages (sauvegarde, etc.)
+
+    def _increment_badge(self):
+        """Incrémente le badge et l’affiche."""
+        self._unread_count += 1
+        self._notif_badge.setText(str(self._unread_count))
+        self._notif_badge.show()
+
+    def _clear_badge(self):
+        """Remet le compteur à zéro et masque le badge."""
+        self._unread_count = 0
+        self._notif_badge.hide()
+
+    def _on_notif_button_clicked(self):
+        # on inverse la visibilité du centre
+        visible = not self.notif_center.isVisible()
+        self.notif_center.setVisible(visible)
+        # si on vient de l'ouvrir, on remet le badge à zéro
+        if visible:
+            self._clear_badge()
