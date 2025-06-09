@@ -11,6 +11,7 @@ import pygame
 from backend.services.recorder_service import RecorderService
 from backend.services.settings_service import SettingsService
 from backend.services.sample_service import SampleService
+from backend.services.sample_service import IntegrityCheckWorker
 
 class AppContext:
     """
@@ -30,6 +31,7 @@ class AppContext:
         self.audio_player = AudioPlayer()
 
         self.sample_store = SampleService(self)
+
 
 
 class AudioPlayer:

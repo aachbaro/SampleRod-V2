@@ -34,6 +34,18 @@ class SampleService(QObject):
         # chargement initial
         self._initialize_cache()
 
+        # ─── Lancement du worker de cohérence ───
+        # supprime automatiquement de la base les samples dont le fichier est manquant
+        self._integrity_worker = IntegrityCheckWorker()
+        # branchement : quand le worker détecte un fichier manquant, 
+        # on retire directement l’entrée en base (sans toucher au fichier)
+        self._integrity_worker.fileMissing.connect(self.removeFromHistory)
+        # (optionnel) gérer les durations incohérentes
+        self._integrity_worker.durationMismatch.connect(
+            lambda sid, d: print(f"[Integrity] Durée corrigée for sample {sid} → {d:.2f}s")
+        )
+        self._integrity_worker.start()
+
     def _initialize_cache(self):
         """Charge les samples depuis la BDD et émet samplesChanged."""
         
@@ -225,3 +237,42 @@ class SampleService(QObject):
         finally:
             # 6) N’émettre qu’UN SEUL samplesChanged à la fin
             self.samplesChanged.emit(list(self._samples))
+
+
+
+
+from PyQt6.QtCore import QThread, pyqtSignal
+import os, wave
+
+class IntegrityCheckWorker(QThread):
+    """Vérifie que la DB et les fichiers sont cohérents."""
+    durationMismatch = pyqtSignal(int, float)   # (sample_id, new_duration)
+    fileMissing      = pyqtSignal(int)          # sample_id
+
+    def run(self):
+        session = SessionLocal()
+        try:
+            samples = session.query(Sample).all()
+            for samp in samples:
+                sid = samp.id
+                path = samp.path
+                # 1) Fichier manquant ?
+                if not os.path.isfile(path):
+                    self.fileMissing.emit(sid)
+                    continue
+
+                # 2) Vérifier la vraie durée
+                try:
+                    with wave.open(path, 'rb') as w:
+                        real_dur = w.getnframes() / w.getframerate()
+                except Exception:
+                    continue
+
+                # 3) Si écart > 0.1s, on corrige en DB
+                if abs(real_dur - samp.duration) > 0.1:
+                    session_inst = session.get(Sample, sid)
+                    session_inst.duration = real_dur
+                    session.commit()
+                    self.durationMismatch.emit(sid, real_dur)
+        finally:
+            session.close()
