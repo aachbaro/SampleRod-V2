@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, \
-    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication, QCheckBox
+    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication, QCheckBox, QFileDialog
+
 from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtCore import QEvent
@@ -24,6 +25,7 @@ class SampleCard(QWidget):
     newSampleSaved     = pyqtSignal(str)          # émet le path quand on sauvegarde
     normalizeClicked   = pyqtSignal(int)          # émet l’ID pour normaliser manuellement
     selectionChanged   = pyqtSignal(int, bool)    # Nouvel signal : émet (ID du sample, état coché)
+    removeFromHistory  = pyqtSignal(int)          # émet l’ID du sample à retirer de l’historique
     
 
     def __init__(self, sample: Sample, app_context: AppContext, parent=None):
@@ -118,6 +120,13 @@ class SampleCard(QWidget):
         self.delete_button.setFixedSize(30, 30)
         self.delete_button.clicked.connect(self.confirmDelete)
 
+        # ─── Bouton « archive » (supprimer de l'historique seulement) ───
+        self.archive_button = QPushButton()
+        self.archive_button.setIcon(qta.icon('fa5s.times-circle', color='lightgray'))
+        self.archive_button.setToolTip("Retirer de l'historique")
+        self.archive_button.setFixedSize(30, 30)
+        self.archive_button.clicked.connect(self.onArchiveClicked)
+
         # Par défaut, on masque les champs de renommage
         self.rename_input.setVisible(False)
         self.check_button.setVisible(False)
@@ -140,6 +149,7 @@ class SampleCard(QWidget):
         for library in sorted(self.settings.libraries, key=lambda lib: lib.position):
             lib_name = os.path.basename(library.path) + "/"
             self.change_dir_combobox.addItem(lib_name)
+        self.change_dir_combobox.addItem("Autre…")
 
         # Désactiver la molette (optionnel, si vous préférez la méthode 2.1)
         self.change_dir_combobox.wheelEvent = lambda evt: evt.ignore()
@@ -205,6 +215,7 @@ class SampleCard(QWidget):
         header_layout.addWidget(self.normalize_button)
         header_layout.addWidget(self.waveform_button)
         header_layout.addWidget(self.delete_button)
+        header_layout.addWidget(self.archive_button)
         
         main_layout.addLayout(header_layout)
 
@@ -393,8 +404,33 @@ class SampleCard(QWidget):
                 self.wave_edition_widget = None         
 
     def confirmDelete(self):
-        """Appelle la méthode delete_sample et émet le signal."""
-        self.deleteSample.emit(self.sample.id)  # Passe l'ID du sample
+        """
+        Stoppe la lecture si ce sample est en cours, 
+        puis émet le signal pour supprimer fichier + DB.
+        """
+        # 1) Si ce sample est en cours de lecture, on arrête et décharge l’audio
+        if self.app_context.audio_player.current_sample_id == self.sample.id:
+            try:
+                self.app_context.audio_player.clear_audio()
+                # remettre l’icône play à zéro
+                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+            except Exception:
+                pass
+        # 2) On émet enfin le signal de suppression
+        self.deleteSample.emit(self.sample.id)
+
+    def onArchiveClicked(self):
+        """
+        Stoppe la lecture si ce sample est en cours, 
+        puis émet le signal pour retirer seulement de l’historique.
+        """
+        if self.app_context.audio_player.current_sample_id == self.sample.id:
+            try:
+                self.app_context.audio_player.clear_audio()
+                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+            except Exception:
+                pass
+        self.removeFromHistory.emit(self.sample.id)
 
     def togglePlay(self):
         self.playSample.emit(self.sample)
@@ -454,23 +490,49 @@ class SampleCard(QWidget):
     
     def move_sample(self, index: int):
         """
-        On ne déplace que si index >= 1 :
-        - index==0 => on reste dans le dossier courant, on ne fait rien.
-        - index>=1 => on déplace vers settings.libraries[index-1].
+        - index==0 : dossier courant → rien à faire
+        - 1 ≤ index ≤ len(libs) : déplacer vers settings.libraries[index-1]
+        - index == dernier item : ouvrir un QFileDialog pour dossier « Autre… »
         """
+        count = self.change_dir_combobox.count()
+        # si dossier courant, on reste
         if index == 0:
             return
 
-        # Récupérer la librairie cible (attention à index-1)
-        try:
-            target_library = self.settings.libraries[index - 1]
-        except IndexError:
-            # En théorie, on ne devrait jamais arriver ici si libraries est cohérent
-            return
+        # si « Autre… » sélectionné
+        if index == count - 1:
+            # ouvre le dialogue
+            folder = QFileDialog.getExistingDirectory(
+                self,
+                "Choisir un dossier de destination",
+                os.path.dirname(self.sample.path)
+            )
+            # si annulation, on réinitialise la combo et on sort
+            if not folder:
+                self.change_dir_combobox.setCurrentIndex(0)
+                return
+            new_dir = folder
+        else:
+            # sélection d'une librairie existante
+            try:
+                target_library = self.settings.libraries[index - 1]
+                new_dir = target_library.path
+            except IndexError:
+                return
 
-        new_dir = target_library.path
+        # si on est en train de jouer, on arrête la lecture
+        if self.app_context.audio_player.current_sample_id == self.sample.id:
+            try:
+                self.app_context.audio_player.clear_audio()
+                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+            except Exception:
+                pass
+
         print(f"[SampleCard] Déplacer l’échantillon {self.sample.id} → {new_dir}")
+        # émet vers le SampleListWidget → SampleService.move()
         self.sampleMoved.emit(self.sample.id, new_dir)
+        # on repasse la combo sur « dossier courant »
+        self.change_dir_combobox.setCurrentIndex(0)
 
     def onMoveSuccess(self, sample_id, new_dir):
         if self.sample.id == sample_id:
@@ -547,14 +609,21 @@ class SampleCard(QWidget):
     def updateLibraryCombo(self, libs: list):
         """
         Met à jour le contenu de self.change_dir_combobox 
-        à chaque fois que la liste des bibliothèques change.
+        à chaque fois que la liste des bibliothèques change,
+        sans émettre de signal currentIndexChanged (pour éviter la boucle).
         """
         current_folder = SampleCard.get_folder_name(self.sample.path) + "/"
+        # 1) On empêche les indexChanged pendant la reconstruction
+        self.change_dir_combobox.blockSignals(True)
+        # 2) On reconstruit …
         self.change_dir_combobox.clear()
         self.change_dir_combobox.addItem(current_folder)
         for library in sorted(libs, key=lambda lib: lib.position):
             nom = os.path.basename(library.path) + "/"
             self.change_dir_combobox.addItem(nom)
+        self.change_dir_combobox.addItem("Autre…")
+        # 3) On réactive les signaux
+        self.change_dir_combobox.blockSignals(False)
 
 def format_time(milliseconds):
     minutes = (milliseconds // 1000) // 60

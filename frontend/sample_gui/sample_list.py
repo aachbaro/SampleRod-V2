@@ -28,6 +28,7 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleStartedNormalization.connect(self.onStartedNormalization)
         self.sample_store.sampleFinishedNormalization.connect(self.onFinishedNormalization)
         self.sample_store.sampleNormalizationFailed.connect(self.onNormalizationFailed)
+        self.sample_store.sampleRemovedFromHistory.connect(self.onSampleRemovedFromHistory)
         # 2) stockage des cartes existantes
         self._card_widgets = {}
 
@@ -46,7 +47,15 @@ class SampleListWidget(QWidget):
         main_layout = QVBoxLayout(self)
 
         # ─── Zone 'Bulk Actions' ───
+
         bulk_layout = QHBoxLayout()
+
+        # Bouton Ajouter des fichiers
+        self.add_files_btn = QPushButton("Ajouter des fichiers…")
+        self.add_files_btn.setToolTip("Ajouter un ou plusieurs fichiers audio")
+        self.add_files_btn.clicked.connect(self.onAddFiles)
+        bulk_layout.addWidget(self.add_files_btn)
+
         # Bouton Supprimer la sélection
         self.bulk_delete_btn = QPushButton("Supprimer la sélection")
         self.bulk_delete_btn.setEnabled(False)
@@ -110,6 +119,7 @@ class SampleListWidget(QWidget):
         # 3) crée la carte et connecte uniquement ses signaux
         card = SampleCard(new_sample, self.app_context)
         card.deleteSample.connect(self.delete_sample)
+        card.removeFromHistory.connect(self.sample_store.removeFromHistory)
         card.renameSample.connect(self.rename_sample)
         card.sampleMoved.connect(self.move_sample)
 
@@ -197,6 +207,51 @@ class SampleListWidget(QWidget):
         for sid, card in self._card_widgets.items():
             card.rename_button.setEnabled(not multiple)
 
+    @pyqtSlot()
+    def onAddFiles(self):
+        """
+        Ouvre un QFileDialog pour sélectionner un ou plusieurs fichiers,
+        puis les ajoute un par un via SampleService.add().
+        """
+        # Filtre les fichiers audio WAV (à adapter si tu veux d'autres extensions)
+        fichiers, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Sélectionner des fichiers audio",
+            "",  # dossier initial : laisse vide ou customise
+            "Fichiers WAV (*.wav);;Tous les fichiers (*)"
+        )
+        if not fichiers:
+            return  # annulation
+
+        # Ajouter chaque sample au service (création FS + BD + normalisation auto si activée)
+        for path in fichiers:
+            try:
+                self.sample_store.add(path)
+            except Exception as e:
+                # En cas d’erreur, on affiche un message et on continue
+                QMessageBox.warning(
+                    self,
+                    "Erreur d’ajout",
+                    f"Impossible d’ajouter le fichier :\n{path}\n\n{e}"
+                )
+
+    @pyqtSlot(int)
+    def onSampleRemovedFromHistory(self, sample_id: int):
+        """
+        Slot appelé quand on retire un sample de l'historique (BD only) :
+        ferme la waveform et détruit la carte sans toucher au fichier.
+        """
+        card = self._card_widgets.get(sample_id)
+        if card:
+            # ferme la waveform si ouverte
+            self.close_waveforms_for_path(card.sample.path)
+            # retire la carte de l’UI
+            self.content_layout.removeWidget(card)
+            card.deleteLater()
+            del self._card_widgets[sample_id]
+            # mettre à jour selected_ids si besoin
+            self.selected_ids.discard(sample_id)
+
     def refreshList(self):
         # 1) on prend la liste inversée (du plus récent au plus ancien)
         ordered_samples = list(reversed(self.samples))
@@ -221,6 +276,7 @@ class SampleListWidget(QWidget):
                 # nouvelle carte, connexion des signaux
                 card = SampleCard(samp, self.app_context)
                 card.deleteSample.connect(self.delete_sample)
+                card.removeFromHistory.connect(self.sample_store.removeFromHistory)
                 card.renameSample.connect(self.rename_sample)
                 card.sampleMoved.connect(self.move_sample)
                 card.normalizeClicked.connect(self.onNormalizeClicked)

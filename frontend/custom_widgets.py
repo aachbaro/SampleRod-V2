@@ -79,6 +79,10 @@ class CustomSlider(QSlider):
         self.setValue(value)
         self.sliderMoved.emit(value)
         super().mousePressEvent(event)
+    def wheelEvent(self, event):
+        # ignore les événements de molette pour éviter les changements accidentels
+        event.ignore()
+
 
 class SaveWaveformDialog(QDialog):
     def __init__(self, parent, default_name: str):

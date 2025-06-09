@@ -20,7 +20,8 @@ class SampleService(QObject):
     sampleMoved    = pyqtSignal(int, str)    # émet (ID, nouveau dossier)
     sampleStartedNormalization  = pyqtSignal(int)      # émet l’ID du sample en cours de normalisation
     sampleFinishedNormalization = pyqtSignal(int)       # émet l’ID du sample normalisé
-    sampleNormalizationFailed   = pyqtSignal(int, str)
+    sampleNormalizationFailed   = pyqtSignal(int, str)  # émet (ID, message d’erreur)
+    sampleRemovedFromHistory = pyqtSignal(int)          # émet l’ID du sample retiré de l’historique
 
     def __init__(self, app_context):
         super().__init__()
@@ -153,3 +154,30 @@ class SampleService(QObject):
     def _onNormalizationFailed(self, sample_id: int, message: str):
         # Réémet le signal vers l’UI
         self.sampleNormalizationFailed.emit(sample_id, message)
+
+    def removeFromHistory(self, sample_id: int):
+        """
+        Supprime l’entrée en base pour `sample_id` sans toucher au fichier,
+        met à jour le cache et émet sampleRemovedFromHistory + samplesChanged.
+        """
+        # 1) Récupère l’instance dans le cache
+        samp = self._get(sample_id)
+        if not samp:
+            return
+        try:
+            # 2) Supprime seulement l’entrée BD
+            session = SessionLocal()
+            inst = session.get(Sample, sample_id)
+            if inst:
+                session.delete(inst)
+                session.commit()
+            session.close()
+            # 3) Mise à jour du cache en mémoire
+            self._samples = [s for s in self._samples if s.id != sample_id]
+            # 4) Signaux
+            self.sampleRemovedFromHistory.emit(sample_id)
+        except Exception as e:
+            print(f"[SampleService] removeFromHistory error: {e}")
+        finally:
+            # Toujours ré-émission de la liste
+            self.samplesChanged.emit(list(self._samples))
