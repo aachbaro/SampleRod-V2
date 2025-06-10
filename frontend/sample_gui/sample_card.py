@@ -1,18 +1,31 @@
-from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, \
-    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication, QCheckBox, QFileDialog
+from PyQt6.QtWidgets import (
+    QWidget,
+    QLabel,
+    QPushButton,
+    QHBoxLayout,
+    QVBoxLayout,
+    QSpacerItem,
+    QSizePolicy,
+    QLineEdit,
+    QMessageBox,
+    QComboBox,
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+)
 
-from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
+from PyQt6.QtCore import pyqtSignal, Qt, QSize
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtCore import QEvent
 import qtawesome as qta
-from utils.utils import get_folder_name
 from datetime import datetime
 import os
 from backend.models.sample import Sample
-from frontend.custom_widgets import CustomSlider
-from frontend.sample_gui.wave_form import WaveformWidget
 from backend.services.settings_service import SettingsService
 from backend.models.AppContext import AppContext
+
+from frontend.sample_gui.playback_controls import PlaybackControls
+from frontend.sample_gui.waveform_handler import WaveformHandler
 
 
 
@@ -39,12 +52,9 @@ class SampleCard(QWidget):
         self.settings = self.app_context.settings
         self.sample = sample
         self.isRenaming = False
-        self.showWaveform = False
-        self.wave_edition_widget = None
 
         self.isChecked = False
 
-        # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
         self.settings.librariesChanged.connect(self.updateLibraryCombo)
 
         self.init_ui()
@@ -172,26 +182,22 @@ class SampleCard(QWidget):
         self.waveform_button.setIcon(qta.icon('mdi.waveform'))
         self.waveform_button.setIconSize(QSize(26, 26))
         self.waveform_button.setFixedSize(30, 30)
-        self.waveform_button.clicked.connect(self.toggleWaveform)
 
-        # ---- Playback : bouton play, slider, label temps
-        self.play_button = QPushButton()
-        self.play_button.setFixedSize(30, 30)
-        self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
-        self.play_button.setToolTip("Lire")
-        self.play_button.clicked.connect(self.togglePlay)
-
-        self.playback_slider = CustomSlider(Qt.Orientation.Horizontal)
-        self.playback_slider.setRange(0, 100)
-        self.playback_slider.setValue(0)
-        self.playback_slider.setFixedHeight(30)
-
-        self.time_label = QLabel("00:00/00:00")
-        self.time_label.setFixedSize(80, 30)
-        self.time_label.setStyleSheet("font-size: 12px; color: #ffffff;")
+        # ---- Playback controls
+        self.playback_controls = PlaybackControls(self.sample, self.app_context)
+        self.playback_controls.playSample.connect(self.playSample)
 
         # ---- Waveform container (sera rempli dynamiquement)
         self.waveform_layout = QHBoxLayout()
+
+        self.waveform_handler = WaveformHandler(
+            self.sample,
+            self.app_context,
+            self.playback_controls,
+            self.waveform_layout,
+        )
+        self.waveform_handler.waveformSaved.connect(self.newSampleSaved)
+        self.waveform_button.clicked.connect(self.waveform_handler.toggle_waveform)
 
         # ─── Assemblage des layouts (addWidget / addLayout) ───
         main_layout = QVBoxLayout(self)
@@ -237,39 +243,14 @@ class SampleCard(QWidget):
         
         main_layout.addLayout(details_layout)
 
-        # ---- Playback : bouton play, slider, label temps
-        playback_layout = QHBoxLayout()
-        playback_layout.addWidget(self.play_button)
-        playback_layout.addWidget(self.playback_slider)
-        playback_layout.addWidget(self.time_label)
-        main_layout.addLayout(playback_layout)
+        # ---- Playback
+        main_layout.addWidget(self.playback_controls)
 
         # ---- WaveForm container (sera rempli dynamiquement)
         main_layout.addLayout(self.waveform_layout)
 
+
         # ─── Reste des branchements et styles ───
-
-        # Mise à jour initiale du slider et connexion du signal
-        self.updateSlider()
-        self.playback_slider.sliderMoved.connect(self.seekAudio)
-
-        # Style du playback_slider
-        self.playback_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                height: 6px;
-                background: #e2e2e2;
-            }
-            QSlider::groove:horizontal:add-page {
-                background: #e2e2e2;
-            }
-            QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
-                border: 1px solid #5c5c5c;
-                width: 18px;
-                margin: -2px 0;
-                border-radius: 3px;
-            }
-        """)
 
         # Installer l’event filter sur tous les enfants pour gérer le focus visuel
         for child in self.findChildren(QWidget):
@@ -297,8 +278,7 @@ class SampleCard(QWidget):
 
     def _with_wave(self, fn):
         """Helper : si le waveform est ouvert, appelle fn(wave_edition_widget)."""
-        if hasattr(self, "wave_edition_widget") and self.wave_edition_widget:
-            fn(self.wave_edition_widget)
+        self.waveform_handler.with_wave(fn)
 
     def mousePressEvent(self, event):
         # 1) on prend le focus au niveau de la carte
@@ -360,48 +340,6 @@ class SampleCard(QWidget):
         self.name_label.setVisible(True)
         self.rename_button.setVisible(True)
 
-    def toggleWaveform(self):
-        self.showWaveform = not self.showWaveform
-
-        if self.showWaveform:
-            # Masquer les widgets de lecture
-            self.play_button.setVisible(False)
-            self.playback_slider.setVisible(False)
-            self.time_label.setVisible(False)
-            try:
-                self.app_context.audio_player.clear_audio()
-            except Exception:
-                pass
-
-            # Ajouter le widget de forme d'onde
-            self.wave_edition_widget = WaveformWidget(self.sample.path, self.app_context)
-            self.wave_edition_widget.waveformSaved.connect(self.newSampleSaved)
-            self.waveform_layout.addWidget(self.wave_edition_widget)
-
-        else:
-            # Afficher les widgets de lecture
-            self.play_button.setVisible(True)
-            self.playback_slider.setVisible(True)
-            self.time_label.setVisible(True)
-
-            # Supprimer le widget de forme d'onde
-            if self.wave_edition_widget:
-                # 1) stopper la lecture en cours
-                try:
-                    self.wave_edition_widget.stop_audio()
-                except Exception:
-                    pass
-
-                # 2) arrêter aussi le timer de mise à jour
-                try:
-                    self.wave_edition_widget.timer.stop()
-                except Exception:
-                    pass
-
-                # 3) enfin retirer et détruire le widget
-                self.waveform_layout.removeWidget(self.wave_edition_widget)
-                self.wave_edition_widget.deleteLater()
-                self.wave_edition_widget = None         
 
     def confirmDelete(self):
         """
@@ -413,7 +351,7 @@ class SampleCard(QWidget):
             try:
                 self.app_context.audio_player.clear_audio()
                 # remettre l’icône play à zéro
-                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+                self.playback_controls.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
             except Exception:
                 pass
         # 2) On émet enfin le signal de suppression
@@ -427,42 +365,11 @@ class SampleCard(QWidget):
         if self.app_context.audio_player.current_sample_id == self.sample.id:
             try:
                 self.app_context.audio_player.clear_audio()
-                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+                self.playback_controls.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
             except Exception:
                 pass
         self.removeFromHistory.emit(self.sample.id)
 
-    def togglePlay(self):
-        self.playSample.emit(self.sample)
-        is_playing = self.app_context.audio_player.toggle_play(self.sample.id, self.sample.path, self.sample.duration)
-        icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
-        self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
-        if is_playing:
-            self.updateSlider()
-
-    def seekAudio(self, value):
-        """Déplace la position de lecture lorsque l'utilisateur interagit avec le slider"""
-        new_position = int((value / 100) * (self.sample.duration * 1000))
-        is_playing = self.app_context.audio_player.seek_position(self.sample.id, self.sample.path, self.sample.duration, new_position)
-        icon_name = 'fa5s.pause' if is_playing else 'fa5s.play'
-        self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
-        if is_playing:
-            self.updateSlider()
-
-    def updateSlider(self):
-        """Met à jour la position du slider, le temps affiché et détecte la fin de lecture"""
-        position = int(self.app_context.audio_player.get_position())
-        sample_id = self.app_context.audio_player.current_sample_id
-        duration = int(self.app_context.audio_player.current_sample_duration * 1000)
-        if sample_id == self.sample.id:
-            self.playback_slider.setValue(int((position / duration) * 100))
-            self.time_label.setText(f"{format_time(position)} / {format_time(int(self.sample.duration * 1000))}")
-        else:
-            self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
-            self.playback_slider.setValue(int((0 / duration) * 100))
-            self.time_label.setText(f"{format_time(0)} / {format_time(int(self.sample.duration * 1000))}")
-        if self.app_context.audio_player.is_playing and self.sample.id == sample_id:
-             QTimer.singleShot(100, self.updateSlider)
 
     def onRenameSuccess(self, sample_id, new_name):
         if self.sample.id == sample_id:
@@ -524,7 +431,7 @@ class SampleCard(QWidget):
         if self.app_context.audio_player.current_sample_id == self.sample.id:
             try:
                 self.app_context.audio_player.clear_audio()
-                self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+                self.playback_controls.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
             except Exception:
                 pass
 
@@ -624,9 +531,3 @@ class SampleCard(QWidget):
         self.change_dir_combobox.addItem("Autre…")
         # 3) On réactive les signaux
         self.change_dir_combobox.blockSignals(False)
-
-def format_time(milliseconds):
-    minutes = (milliseconds // 1000) // 60
-    seconds = (milliseconds // 1000) % 60
-
-    return f"{minutes:02}:{seconds:02}"
