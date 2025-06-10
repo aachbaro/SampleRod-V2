@@ -586,7 +586,7 @@ class SampleCard(QWidget):
         self.normalize_button.setEnabled(False)
 
     def indicateNormalizationFinished(self):
-        self.status_label.setText("✔️ Norx`malisé")
+        self.status_label.setText("✔️ Normalisé")
         self.normalize_button.setEnabled(True)
 
     def indicateNormalizationError(self, message: str):
