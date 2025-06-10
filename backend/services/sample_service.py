@@ -37,7 +37,7 @@ class SampleService(QObject):
 
         # ─── Lancement du worker de cohérence ───
         # supprime automatiquement de la base les samples dont le fichier est manquant
-        self._integrity_worker = IntegrityCheckWorker()
+        self._integrity_worker = IntegrityCheckWorker(self.app_context)
         # branchement : quand le worker détecte un fichier manquant, 
         # on retire directement l’entrée en base (sans toucher au fichier)
         self._integrity_worker.fileMissing.connect(self.removeFromHistory)
@@ -128,16 +128,29 @@ class SampleService(QObject):
         if not samp:
             return
         try:
-            # 2) Suppression (FS + BD)
             samp.delete()
-            # 3) Mise à jour du cache en mémoire
-            self._samples = [s for s in self._samples if s.id != sample_id]
-            # 4) Émission du signal de suppression pour l’UI
+            # 2) Mise à jour du cache : on enlève l'objet supprimé
+            self._samples = [
+                s for s in self._samples
+                if s.id != sample_id
+            ]
+            # ▶ Succès
+            self.app_context.notifications.notify(
+                title="⚠️ Sample supprimé",
+                message=f"{samp.name}",
+                type=NotificationType.WARNING
+            )
             self.sampleDeleted.emit(sample_id)
         except Exception as e:
             print(f"[SampleService] delete error: {e}")
+            # ▶ Erreur lors de la suppression
+            self.app_context.notifications.notify(
+                title="❌ Erreur suppression",
+                message=str(e),
+                type=NotificationType.ERROR
+            )
+            print(f"[SampleService] delete error: {e}")
         finally:
-            # 5) Toujours ré-émettre la liste complète
             self.samplesChanged.emit(list(self._samples))
 
     def rename(self, sample_id: int, new_name: str):
@@ -147,12 +160,24 @@ class SampleService(QObject):
         samp = next((s for s in self._samples if s.id == sample_id), None)
         if not samp:
             return
+        old_name = samp.name
         try:
             samp.rename(new_name)
             samp.name = new_name
-            # samp.path mis à jour dans samp.rename()
             self.sampleRenamed.emit(sample_id, new_name)
+            # ▶ Succès
+            self.app_context.notifications.notify(
+                title="✅ Sample renommé",
+                message=f"{old_name} → {new_name}",
+                type=NotificationType.SUCCESS
+            )
         except Exception as e:
+            # ▶ Erreur
+            self.app_context.notifications.notify(
+                title="❌ Erreur renommage",
+                message=str(e),
+                type=NotificationType.ERROR
+            )
             print(f"[SampleService] rename error: {e}")
         finally:
             self.samplesChanged.emit(list(self._samples))
@@ -168,7 +193,19 @@ class SampleService(QObject):
             samp.move_to(target_folder)
             # samp.path mis à jour dans samp.move_to()
             self.sampleMoved.emit(sample_id, target_folder)
+            # ▶ Succès
+            self.app_context.notifications.notify(
+                title="✅ Sample déplacé",
+                message=f"Vers {target_folder}",
+                type=NotificationType.SUCCESS
+            )
         except Exception as e:
+            # ▶ Erreur
+            self.app_context.notifications.notify(
+                title="❌ Erreur déplacement",
+                message=str(e),
+                type=NotificationType.ERROR
+            )
             print(f"[SampleService] move error: {e}")
         finally:
             self.samplesChanged.emit(list(self._samples))
@@ -202,7 +239,18 @@ class SampleService(QObject):
             self._samples = [s for s in self._samples if s.id != sample_id]
             # 4) Signaux
             self.sampleRemovedFromHistory.emit(sample_id)
+            self.app_context.notifications.notify(
+                title="ℹ️ Historique mis à jour",
+                message="Sample retiré de l’historique",
+                type=NotificationType.INFO
+            )
         except Exception as e:
+            # ▶ Erreur
+            self.app_context.notifications.notify(
+                title="❌ Erreur historique",
+                message=str(e),
+                type=NotificationType.ERROR
+            )
             print(f"[SampleService] removeFromHistory error: {e}")
         finally:
             # Toujours ré-émission de la liste
@@ -263,6 +311,10 @@ class IntegrityCheckWorker(QThread):
     durationMismatch = pyqtSignal(int, float)   # (sample_id, new_duration)
     fileMissing      = pyqtSignal(int)          # sample_id
 
+    def __init__(self, app_context):
+        super().__init__()
+        self.app_context = app_context
+
     def run(self):
         session = SessionLocal()
         try:
@@ -273,6 +325,12 @@ class IntegrityCheckWorker(QThread):
                 # 1) Fichier manquant ?
                 if not os.path.isfile(path):
                     self.fileMissing.emit(sid)
+                    # ▶ Notification warning
+                    self.app_context.notifications.notify(
+                        title="⚠️ Fichier manquant",
+                        message=f"Pour sample #{sid}, entrée supprimée",
+                        type=NotificationType.WARNING
+                    )
                     continue
 
                 # 2) Vérifier la vraie durée
@@ -288,5 +346,11 @@ class IntegrityCheckWorker(QThread):
                     session_inst.duration = real_dur
                     session.commit()
                     self.durationMismatch.emit(sid, real_dur)
+                    # ▶ Notification info
+                    self.app_context.notifications.notify(
+                        title="ℹ️ Durée corrigée",
+                        message=f"Sample #{sid} → {real_dur:.1f}s",
+                        type=NotificationType.INFO
+                    )
         finally:
             session.close()

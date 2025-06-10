@@ -26,7 +26,19 @@ class NotificationPopup(QFrame):
     Apparait en bas à droite, puis disparaît au bout de notification.duration ms.
     """
     def __init__(self, notification: Notification, parent=None):
-        super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
+        # ── Création en tant que fenêtre « tooltip » autonome (ne prend pas le focus)
+        super().__init__(
+            None,
+            Qt.WindowType.FramelessWindowHint    # pas de bordure
+          | Qt.WindowType.ToolTip               # ne prend jamais le focus ni priorise la MainWindow
+          | Qt.WindowType.WindowStaysOnTopHint  # toujours au-dessus
+        )
+        # Ne pas activer la fenêtre (n’invoque pas activateWindow())
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        # Empêche toute acceptation de focus
+        self.setWindowFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
         # super().__init__(parent, Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool)
         # self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint)
@@ -79,11 +91,24 @@ class NotificationPopup(QFrame):
 
     def _animate_in(self):
         # Apparition par glissement vertical depuis hors-écran
+        # 1) Calcul de la géométrie de l'écran
         screen_geometry = self.screen().availableGeometry()
         w, h = self.width(), self.height()
         end_x = screen_geometry.x() + screen_geometry.width() - w - 20
-        existing_popups = self.parent().findChildren(NotificationPopup)
-        end_y = screen_geometry.y() + screen_geometry.height() - h - 20 - (len(existing_popups) * (h + 10))
+
+        # 2) Récupère tous les NotificationPopup déjà affichés
+        from PyQt6.QtWidgets import QApplication
+        existing_popups = [
+            w for w in QApplication.topLevelWidgets()
+            if isinstance(w, NotificationPopup)
+        ]
+
+        # 3) Décale verticalement en fonction du nombre de pop-ups
+        end_y = (
+            screen_geometry.y() + screen_geometry.height() - h - 20
+            - len(existing_popups) * (h + 10)
+        )
+
         # Position initiale hors-écran
         start_rect = QRect(end_x, screen_geometry.y() + screen_geometry.height(), w, h)
         end_rect = QRect(end_x, end_y, w, h)

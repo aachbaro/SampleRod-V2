@@ -24,7 +24,7 @@ class AppContext:
 
         self.notifications = NotificationService()
 
-        self.settings = SettingsService()
+        self.settings = SettingsService(self)
 
         self.recorder = RecorderService(
             self.settings,

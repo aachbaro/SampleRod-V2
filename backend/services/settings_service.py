@@ -4,6 +4,7 @@ from PyQt6.QtCore import QSettings
 from backend.models.SampleLibrary import SampleBank
 from backend.db import SessionLocal
 import soundcard as sc
+from backend.services.notification_service import NotificationType
 
 class SettingsService(QObject):
     retroToggled      = pyqtSignal(bool)
@@ -14,10 +15,12 @@ class SettingsService(QObject):
     autoNormalizeToggled   = pyqtSignal(bool)
     normalizationLevelChanged = pyqtSignal(int)
 
-    def __init__(self):
+    def __init__(self, app_context):
         super().__init__()
         self._qs = QSettings("SampleRod", "Main")
 
+        self.app_context = app_context
+        
         self.libraries = SampleBank.get_all_libraries()
 
         self.loopback_device = None
@@ -38,12 +41,6 @@ class SettingsService(QObject):
         print("[SettingsService]self.loopback_device", self.loopback_device)
 
     # ——— Retro Recording —————————————————————————————
-
-    # def _init_retro_settings(self):
-    #     # Valeurs par défaut si jamais pas dans QSettings
-    #     print("setting service: Initialisation des paramètres de rétro-enregistrement")
-
-    
 
     def toggleRetro(self):
         """Inverse le flag et le persiste dans QSettings."""
@@ -127,6 +124,11 @@ class SettingsService(QObject):
             self.sample_rate = new_rate
             self._qs.setValue("sampleRate", new_rate)
             self.sampleRateChanged.emit(new_rate)
+            self.app_context.notifications.notify(
+                title="ℹ️ Sample rate modifié",
+                message=f"{new_rate} Hz",
+                type=NotificationType.INFO
+            )
 
     def setLoopbackDevice(self, device):
         """Appelé par AudioSettingsWidget."""
@@ -134,6 +136,11 @@ class SettingsService(QObject):
         name = device.name if device else ""
         self._qs.setValue("loopbackDeviceName", name)
         self.loopbackDeviceChanged.emit(device)
+        self.app_context.notifications.notify(
+            title="ℹ️ Périphérique audio changé",
+            message=f"{device.name}",
+            type=NotificationType.INFO
+        )
 
     #   ——————————————————————— Normalization Settings —————————————————————————————
 
@@ -143,6 +150,13 @@ class SettingsService(QObject):
         enabled = not self._qs.value("autoNormalizeEnabled", False, type=bool)
         self._qs.setValue("autoNormalizeEnabled", enabled)
         self.autoNormalizeToggled.emit(enabled)
+        # ▶ Info auto-norm
+        state = "activée" if enabled else "désactivée"
+        self.app_context.notifications.notify(
+            title="ℹ️ Auto-normalisation",
+            message=state,
+            type=NotificationType.INFO
+        )
 
     def setNormalizationLevel(self, level: int):
         """Change le niveau de normalisation et le persiste dans QSettings."""
