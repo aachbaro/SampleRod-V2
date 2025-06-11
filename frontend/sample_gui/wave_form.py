@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
 )
 
 from PyQt6.QtGui import QCursor, QMouseEvent
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QThread
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
 import pyqtgraph as pg
 import numpy as np
 import sounddevice as sd
@@ -20,27 +20,8 @@ from backend.services.notification_service import NotificationType
 import bisect
 
 from .marker_manager import MarkerManager
-
-
-
-class WaveformLoaderThread(QThread):
-    waveformReady = pyqtSignal(np.ndarray, int, float)
-    def __init__(self, path):
-        super().__init__()
-        self.path = path
-
-    def run(self):
-        try:
-            y, sr = librosa.load(self.path, sr=None)
-            if y.size and np.max(np.abs(y)) > 0:
-                y = y / np.max(np.abs(y))
-            else:
-                y = np.zeros_like(y)
-            dur = librosa.get_duration(y=y, sr=sr)
-            self.waveformReady.emit(y, sr, dur)
-        except Exception as e:
-            print(f"[WaveformLoaderThread] Erreur: {e}")
-            self.waveformReady.emit(np.array([]), 0, 0.0)
+from .waveform.waveform_loader import WaveformLoaderThread
+from .waveform.history_stack import HistoryStack
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
     def __init__(self, *args, **kwargs):
@@ -123,9 +104,8 @@ class WaveformWidget(QWidget):
         self.sample_rate = None
         self.duration = 0.0
 
-        # historique : liste de commandes, et indice courant (-1 = rien)
-        self._history = []
-        self._hist_index = -1
+        # historique des actions
+        self.history = HistoryStack()
         self._record_history = True
 
         self._build_ui()
@@ -888,24 +868,16 @@ class WaveformWidget(QWidget):
     
 # —————————————————————————————————————————————————————— HISTORY ——————————————————————————————————————————————————————
     def _push_history(self, cmd: dict):
-        """Ajouter une commande à l'historique, invalide tout redo possible."""
+        """Record a command for undo/redo."""
         if not self._record_history:
             return
-        del self._history[self._hist_index+1:]
-        self._history.append(cmd)
-        self._hist_index += 1
-
-        # DEBUG
-        print("=== Historique des commandes ===")
-        for i, c in enumerate(self._history):
-            marker = " <-" if i == self._hist_index else ""
-            print(f"  [{i}] {c!r}{marker}")
-        print("================================")
+        self.history.push(cmd)
+        self._debug_history()
 
     def undo(self):
-        if self._hist_index < 0:
+        cmd = self.history.undo()
+        if cmd is None:
             return
-        cmd = self._history[self._hist_index]
         self._record_history = False
 
         if cmd['action'] == 'add_marker':
@@ -922,19 +894,13 @@ class WaveformWidget(QWidget):
             line.setValue(cmd['old'])
             self.on_marker_moved(line)
 
-        self._hist_index -= 1
         self._record_history = True
-        print("=== Historique des commandes ===")
-        for i, c in enumerate(self._history):
-            marker = " <-" if i == self._hist_index else ""
-            print(f"  [{i}] {c!r}{marker}")
-        print("================================")
+        self._debug_history()
 
     def redo(self):
-        if self._hist_index + 1 >= len(self._history):
+        cmd = self.history.redo()
+        if cmd is None:
             return
-        self._hist_index += 1
-        cmd = self._history[self._hist_index]
         self._record_history = False
 
         if cmd['action'] == 'add_marker':
@@ -953,11 +919,11 @@ class WaveformWidget(QWidget):
             self.on_marker_moved(line)
 
         self._record_history = True
+        self._debug_history()
 
+    def _debug_history(self):
         print("=== Historique des commandes ===")
-        for i, c in enumerate(self._history):
-            marker = " <-" if i == self._hist_index else ""
-            print(f"  [{i}] {c!r}{marker}")
+        print(self.history)
         print("================================")
 
 # —————————————————————————————————————————————— Save / export ——————————————————————————————————————————————
