@@ -1080,10 +1080,9 @@ class WaveformWidget(QWidget):
             # l’overwrite ne change pas le path, on recharge juste le cache pour
             # mettre à jour duration/created_at via le modèle
             svc.load_all()
-            QMessageBox.information(self, "Enregistré", f"Fichier écrasé :\n{target}")
             # Notification when the file is saved over the original
             self.app_context.notifications.notify(
-                title="✅ Waveform écrasée",
+                title="✅ Fichier sauvegardé",
                 message=os.path.basename(target),
                 type=NotificationType.SUCCESS,
             )
