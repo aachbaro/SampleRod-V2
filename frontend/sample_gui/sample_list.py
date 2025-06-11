@@ -1,6 +1,10 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QHBoxLayout, QPushButton, QFileDialog
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QScrollArea, QToolBar, QToolButton,
+    QAction, QMenu, QFileDialog
+)
 from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import pyqtSlot
+from PyQt6.QtCore import pyqtSlot, QSize, Qt
+import qtawesome as qta
 from frontend.sample_gui.sample_card import SampleCard
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
@@ -48,38 +52,49 @@ class SampleListWidget(QWidget):
 
         # ─── Zone 'Bulk Actions' ───
 
-        bulk_layout = QHBoxLayout()
+        self.toolbar = QToolBar("Bulk Actions")
+        self.toolbar.setIconSize(QSize(24, 24))
+        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        main_layout.addWidget(self.toolbar)
 
-        # Bouton Ajouter des fichiers
-        self.add_files_btn = QPushButton("Ajouter des fichiers…")
-        self.add_files_btn.setToolTip("Ajouter un ou plusieurs fichiers audio")
-        self.add_files_btn.clicked.connect(self.onAddFiles)
-        bulk_layout.addWidget(self.add_files_btn)
+        # Action principale : ajout de fichiers
+        self.add_files_act = QAction(qta.icon('fa5s.folder-open'), "Ajouter fichiers…", self)
+        self.add_files_act.setToolTip("Ajouter un ou plusieurs fichiers audio")
+        self.add_files_act.triggered.connect(self.onAddFiles)
+        self.toolbar.addAction(self.add_files_act)
 
-        # Bouton « Retirer de l'historique »
-        self.bulk_archive_btn = QPushButton("Retirer de l’historique")
-        self.bulk_archive_btn.setEnabled(False)
-        self.bulk_archive_btn.clicked.connect(self.bulkRemoveFromHistory)
-        bulk_layout.addWidget(self.bulk_archive_btn)    
+        self.toolbar.addSeparator()
 
-        # Bouton Supprimer la sélection
-        self.bulk_delete_btn = QPushButton("Supprimer la sélection")
-        self.bulk_delete_btn.setEnabled(False)
-        self.bulk_delete_btn.clicked.connect(self.bulkDelete)
-        # Bouton Déplacer la sélection
-        self.bulk_move_btn = QPushButton("Déplacer la sélection…")
-        self.bulk_move_btn.setEnabled(False)
-        self.bulk_move_btn.clicked.connect(self.bulkMove)
-        # Bouton Normaliser la sélection
-        self.bulk_normalize_btn = QPushButton("Normaliser la sélection")
-        self.bulk_normalize_btn.setEnabled(False)
-        self.bulk_normalize_btn.clicked.connect(self.bulkNormalize)
+        # Actions sur la sélection
+        self.bulk_archive_act = QAction(qta.icon('fa5s.times-circle', color='lightgray'), "Retirer de l’historique", self)
+        self.bulk_archive_act.setEnabled(False)
+        self.bulk_archive_act.triggered.connect(self.bulkRemoveFromHistory)
 
-        bulk_layout.addWidget(self.bulk_delete_btn)
-        bulk_layout.addWidget(self.bulk_move_btn)
-        bulk_layout.addWidget(self.bulk_normalize_btn)
-        bulk_layout.addStretch()
-        main_layout.addLayout(bulk_layout)
+        self.bulk_delete_act = QAction(qta.icon('fa5s.trash-alt', color='red'), "Supprimer", self)
+        self.bulk_delete_act.setEnabled(False)
+        self.bulk_delete_act.triggered.connect(self.bulkDelete)
+
+        self.bulk_move_act = QAction(qta.icon('fa5s.folder', color='lightgray'), "Déplacer…", self)
+        self.bulk_move_act.setEnabled(False)
+        self.bulk_move_act.triggered.connect(self.bulkMove)
+
+        self.bulk_normalize_act = QAction(qta.icon('fa5s.bolt', color='orange'), "Normaliser", self)
+        self.bulk_normalize_act.setEnabled(False)
+        self.bulk_normalize_act.triggered.connect(self.bulkNormalize)
+
+        self.actions_menu = QMenu(self)
+        self.actions_menu.addAction(self.bulk_archive_act)
+        self.actions_menu.addAction(self.bulk_delete_act)
+        self.actions_menu.addAction(self.bulk_move_act)
+        self.actions_menu.addAction(self.bulk_normalize_act)
+
+        self.actions_btn = QToolButton(self)
+        self.actions_btn.setText("Actions sélection")
+        self.actions_btn.setIcon(qta.icon('fa5s.list'))
+        self.actions_btn.setMenu(self.actions_menu)
+        self.actions_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.actions_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toolbar.addWidget(self.actions_btn)
 
          # ─── Autoriser le glisser-déposer de fichiers ───
         self.setAcceptDrops(True)
@@ -207,10 +222,10 @@ class SampleListWidget(QWidget):
             self.selected_ids.discard(sample_id)
 
         any_selected = len(self.selected_ids) > 0
-        self.bulk_delete_btn.setEnabled(any_selected)
-        self.bulk_move_btn.setEnabled(any_selected)
-        self.bulk_normalize_btn.setEnabled(any_selected)
-        self.bulk_archive_btn.     setEnabled(any_selected)
+        self.bulk_delete_act.setEnabled(any_selected)
+        self.bulk_move_act.setEnabled(any_selected)
+        self.bulk_normalize_act.setEnabled(any_selected)
+        self.bulk_archive_act.setEnabled(any_selected)
 
         # Désactive le bouton “Renommer” si plus d’un sample est coché
         multiple = len(self.selected_ids) > 1
@@ -282,12 +297,12 @@ class SampleListWidget(QWidget):
         for sample_id in to_remove:
             self.sample_store.removeFromHistory(sample_id)
 
-        # on vide la sélection et on désactive les boutons
+        # on vide la sélection et on désactive les actions
         self.selected_ids.clear()
-        self.bulk_delete_btn.      setEnabled(False)
-        self.bulk_move_btn.        setEnabled(False)
-        self.bulk_normalize_btn.   setEnabled(False)
-        self.bulk_archive_btn.     setEnabled(False)
+        self.bulk_delete_act.setEnabled(False)
+        self.bulk_move_act.setEnabled(False)
+        self.bulk_normalize_act.setEnabled(False)
+        self.bulk_archive_act.setEnabled(False)
 
     def refreshList(self):
         # 1) on prend la liste inversée (du plus récent au plus ancien)
@@ -405,9 +420,9 @@ class SampleListWidget(QWidget):
             self.sample_store.bulkDelete(to_delete)
             # Après suppression, on vide selected_ids
             self.selected_ids.clear()
-            self.bulk_delete_btn.setEnabled(False)
-            self.bulk_move_btn.setEnabled(False)
-            self.bulk_normalize_btn.setEnabled(False)
+            self.bulk_delete_act.setEnabled(False)
+            self.bulk_move_act.setEnabled(False)
+            self.bulk_normalize_act.setEnabled(False)
 
     def bulkMove(self):
         if not self.selected_ids:
@@ -425,9 +440,9 @@ class SampleListWidget(QWidget):
 
         # (Optionnel) Décoche tout à la fin :
         self.selected_ids.clear()
-        self.bulk_delete_btn.setEnabled(False)
-        self.bulk_move_btn.setEnabled(False)
-        self.bulk_normalize_btn.setEnabled(False)
+        self.bulk_delete_act.setEnabled(False)
+        self.bulk_move_act.setEnabled(False)
+        self.bulk_normalize_act.setEnabled(False)
 
     def bulkNormalize(self):
         """
