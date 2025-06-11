@@ -65,6 +65,13 @@ class SampleListWidget(QWidget):
         self.add_files_act.triggered.connect(self.onAddFiles)
         self.toolbar.addAction(self.add_files_act)
 
+        self.select_all_act   = QAction(qta.icon('fa5s.check-double'), "Tout cocher", self)
+        self.deselect_all_act = QAction(qta.icon('fa5s.times-circle'), "Tout décocher", self)
+        self.select_all_act.triggered.connect(self.onSelectAll)
+        self.deselect_all_act.triggered.connect(self.onDeselectAll)
+        self.toolbar.addAction(self.select_all_act)
+        self.toolbar.addAction(self.deselect_all_act)
+
         self.toolbar.addSeparator()
 
         # Actions sur la sélection
@@ -122,6 +129,7 @@ class SampleListWidget(QWidget):
         self.samples = samples
         # 2) on reconstruit l'affichage
         self.refreshList()
+        self.updateSelectActions()
 
     @pyqtSlot(int)
     def onSampleAdded(self, sample_id: int):
@@ -234,6 +242,8 @@ class SampleListWidget(QWidget):
         for sid, card in self._card_widgets.items():
             card.rename_button.setEnabled(not multiple)
 
+        self.updateSelectActions()
+
     @pyqtSlot()
     def onAddFiles(self):
         """
@@ -281,6 +291,7 @@ class SampleListWidget(QWidget):
             del self._card_widgets[sample_id]
             # mettre à jour selected_ids si besoin
             self.selected_ids.discard(sample_id)
+        self.updateSelectActions()
 
     @pyqtSlot()
     def bulkRemoveFromHistory(self):
@@ -308,6 +319,7 @@ class SampleListWidget(QWidget):
         self.bulk_move_act.setEnabled(False)
         self.bulk_normalize_act.setEnabled(False)
         self.bulk_archive_act.setEnabled(False)
+        self.updateSelectActions()
 
     def refreshList(self):
         # 1) on prend la liste inversée (du plus récent au plus ancien)
@@ -363,6 +375,8 @@ class SampleListWidget(QWidget):
             self.content_layout.addWidget(w)
         self.content_layout.addStretch()
 
+        self.updateSelectActions()
+
 
     # ──────────── SLOTS SERVICE → UI ────────────
     @pyqtSlot(int)
@@ -374,6 +388,8 @@ class SampleListWidget(QWidget):
             self.content_layout.removeWidget(card)
             card.deleteLater()
             del self._card_widgets[sample_id]
+            self.selected_ids.discard(sample_id)
+        self.updateSelectActions()
 
     @pyqtSlot(int, str)
     def onSampleRenamed(self, sample_id: int, new_name: str):
@@ -428,6 +444,7 @@ class SampleListWidget(QWidget):
             self.bulk_delete_act.setEnabled(False)
             self.bulk_move_act.setEnabled(False)
             self.bulk_normalize_act.setEnabled(False)
+            self.updateSelectActions()
 
     def bulkMove(self):
         if not self.selected_ids:
@@ -448,6 +465,7 @@ class SampleListWidget(QWidget):
         self.bulk_delete_act.setEnabled(False)
         self.bulk_move_act.setEnabled(False)
         self.bulk_normalize_act.setEnabled(False)
+        self.updateSelectActions()
 
     def bulkNormalize(self):
         """
@@ -489,6 +507,24 @@ class SampleListWidget(QWidget):
                 w.waveform_layout.removeWidget(w.wave_edition_widget)
                 w.wave_edition_widget.deleteLater()
                 w.wave_edition_widget = None
+
+    def updateSelectActions(self):
+        any_samples = bool(self._card_widgets)
+        all_selected = len(self.selected_ids) == len(self._card_widgets)
+        none_selected = len(self.selected_ids) == 0
+
+        self.select_all_act.setEnabled(any_samples and not all_selected)
+        self.deselect_all_act.setEnabled(any_samples and not none_selected)
+
+    @pyqtSlot()
+    def onSelectAll(self):
+        for card in self._card_widgets.values():
+            card.checkbox.setChecked(True)
+
+    @pyqtSlot()
+    def onDeselectAll(self):
+        for card in self._card_widgets.values():
+            card.checkbox.setChecked(False)
 
     # ─── Drag & Drop depuis l’explorateur ───
 
