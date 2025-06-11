@@ -263,9 +263,19 @@ class WaveformWidget(QWidget):
         # 1) on vide la vue
         self.plot.clear()
 
-        # 2) on trace la forme d’onde
-        x = np.linspace(0, self.duration, len(self.waveform_data))
-        self.plot.plot(x, self.waveform_data, pen=pg.mkPen('w', width=1))
+        # 2) normalisation uniquement pour l'affichage
+        if self.waveform_data is not None and self.waveform_data.size:
+            peak = np.max(np.abs(self.waveform_data))
+            if peak > 0:
+                y_display = self.waveform_data / peak
+            else:
+                y_display = self.waveform_data
+        else:
+            y_display = np.array([])
+
+        # 3) on trace la forme d'onde normalisée
+        x = np.linspace(0, self.duration, len(y_display))
+        self.plot.plot(x, y_display, pen=pg.mkPen('w', width=1))
         self.plot.setXRange(0, self.duration, padding=0)
         self.plot.setYRange(-1, 1, padding=0)
 
