@@ -1,9 +1,10 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QToolBar, QToolButton,
-    QMenu, QFileDialog, QHBoxLayout, QMessageBox
+    QMenu, QFileDialog
 )
-from PyQt6.QtGui     import QAction
-from PyQt6.QtCore    import pyqtSlot, QSize, Qt
+from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtCore import pyqtSlot, QSize, Qt, QSettings
 import qtawesome as qta
 from frontend.sample_gui.sample_card import SampleCard
 from backend.models.AppContext import AppContext
@@ -21,6 +22,7 @@ class SampleListWidget(QWidget):
         self.sample_store: SampleService = app_context.sample_store
         self.samples = []  # liste des samples à afficher
         self.selected_ids  = set()        # ensemble des IDs cochés
+        self._qs = QSettings("SampleRod", "Main")
 
         # 1) abonnements aux signaux du service
         self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
@@ -239,14 +241,17 @@ class SampleListWidget(QWidget):
         puis les ajoute un par un via SampleService.add().
         """
         # Filtre les fichiers audio WAV (à adapter si tu veux d'autres extensions)
+        last_dir = self._qs.value("lastSampleDir", os.path.expanduser("~"), type=str)
         fichiers, _ = QFileDialog.getOpenFileNames(
             self,
             "Sélectionner des fichiers audio",
-            "",  # dossier initial : laisse vide ou customise
+            last_dir,
             "Fichiers WAV (*.wav);;Tous les fichiers (*)"
         )
         if not fichiers:
             return  # annulation
+        new_dir = os.path.dirname(fichiers[0])
+        self._qs.setValue("lastSampleDir", new_dir)
 
         # Ajouter chaque sample au service (création FS + BD + normalisation auto si activée)
         for path in fichiers:
