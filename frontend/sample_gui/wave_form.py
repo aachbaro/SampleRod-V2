@@ -16,6 +16,7 @@ from backend.models.sample import Sample as DBSample
 
 from frontend.custom_widgets import SaveWaveformDialog
 from backend.models.AppContext import AppContext
+from backend.services.notification_service import NotificationType
 import bisect
 
 
@@ -1080,6 +1081,12 @@ class WaveformWidget(QWidget):
             # mettre à jour duration/created_at via le modèle
             svc.load_all()
             QMessageBox.information(self, "Enregistré", f"Fichier écrasé :\n{target}")
+            # Notification when the file is saved over the original
+            self.app_context.notifications.notify(
+                title="✅ Waveform écrasée",
+                message=os.path.basename(target),
+                type=NotificationType.SUCCESS,
+            )
         else:
             # création d’un nouveau sample (FS+BD) via SampleService.add()
             svc.add(target)
