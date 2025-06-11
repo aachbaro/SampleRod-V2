@@ -96,18 +96,8 @@ class NotificationPopup(QFrame):
         w, h = self.width(), self.height()
         end_x = screen_geometry.x() + screen_geometry.width() - w - 20
 
-        # 2) Récupère tous les NotificationPopup déjà affichés
-        from PyQt6.QtWidgets import QApplication
-        existing_popups = [
-            w for w in QApplication.topLevelWidgets()
-            if isinstance(w, NotificationPopup)
-        ]
-
-        # 3) Décale verticalement en fonction du nombre de pop-ups
-        end_y = (
-            screen_geometry.y() + screen_geometry.height() - h - 20
-            - len(existing_popups) * (h + 10)
-        )
+        # La pop-up apparaît toujours en bas et pousse les autres
+        end_y = screen_geometry.y() + screen_geometry.height() - h - 20
 
         # Position initiale hors-écran
         start_rect = QRect(end_x, screen_geometry.y() + screen_geometry.height(), w, h)
@@ -207,8 +197,43 @@ class NotificationManager(QObject):
         popup = NotificationPopup(notification, parent=self.parent())
         popup.show()
         self.popups.append(popup)
+        popup.destroyed.connect(lambda obj=None, p=popup: self._remove_popup(p))
 
         # Nettoyage des anciens popups si nécessaire
         if len(self.popups) > self.MAX_POPUPS:
             old = self.popups.pop(0)
             old._animate_out()
+
+        # Repositionnement des popups pour que la nouvelle apparaisse en bas
+        self._reposition_popups()
+
+    def _reposition_popups(self):
+        """Replace toutes les popups de bas en haut."""
+        if not self.popups:
+            return
+
+        screen_geometry = self.popups[-1].screen().availableGeometry()
+        spacing = 10
+
+        # Position de départ pour la plus récente (déjà animée par NotificationPopup)
+        y = screen_geometry.y() + screen_geometry.height() - self.popups[-1].height() - 20
+
+        # On ignore la dernière popup car son animation d'apparition gère sa position
+        for popup in reversed(self.popups[:-1]):
+            y -= spacing + popup.height()
+            end_x = screen_geometry.x() + screen_geometry.width() - popup.width() - 20
+            end_rect = QRect(end_x, y, popup.width(), popup.height())
+
+            anim = QPropertyAnimation(popup, b"geometry", popup)
+            anim.setDuration(300)
+            anim.setStartValue(popup.geometry())
+            anim.setEndValue(end_rect)
+            anim.setEasingCurve(QEasingCurve.Type.OutBack)
+            anim.start()
+            popup._anim_move = anim
+
+    def _remove_popup(self, popup: NotificationPopup):
+        """Retire un popup fermé et réarrange la pile."""
+        if popup in self.popups:
+            self.popups.remove(popup)
+            self._reposition_popups()
