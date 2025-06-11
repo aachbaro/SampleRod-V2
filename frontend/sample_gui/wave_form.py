@@ -1089,7 +1089,6 @@ class WaveformWidget(QWidget):
         else:
             # création d’un nouveau sample (FS+BD) via SampleService.add()
             svc.add(target)
-            QMessageBox.information(self, "Enregistré", f"Copie sauvegardée :\n{target}")
 
 # ——————————————————————————————————————— Keycontrol ——————————————————————————————————————————————
 
