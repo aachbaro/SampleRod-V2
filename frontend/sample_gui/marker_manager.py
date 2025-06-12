@@ -21,16 +21,33 @@ class MarkerListWidget(QListWidget):
         item = self.currentItem()
         if not item:
             return
+
         payload = item.data(Qt.ItemDataRole.UserRole)
         if not isinstance(payload, dict):
             return
+
+        # Récupération des données
+        audio = payload.get("audio_data")
+        sr    = payload.get("sample_rate")
+        name  = payload.get("name")
+
+        # 1) Pour afficher la forme générale du tableau
+        print(f"[DEBUG] Slice '{name}': shape={audio.shape}, dtype={audio.dtype}, sample_rate={sr}")
+
+        # 2) Pour afficher les premières valeurs seulement (évite trop de logs)
+        print("  valeurs audio sample[0:10] =", audio[:10])
+
+        # 3) Si vraiment tu veux tout imprimer (attention, ça peut être énorme) :
+        # print(audio)
+
+        # --- puis ton drag d’origine ---
         mime = QMimeData()
         mime.setData(
             "application/x-sample-slice-data",
             pickle.dumps({
-                "audio_data": payload.get("audio_data"),
-                "sample_rate": payload.get("sample_rate"),
-                "name": payload.get("name"),
+                "audio_data": audio,
+                "sample_rate": sr,
+                "name": name,
             })
         )
         drag = QDrag(self)

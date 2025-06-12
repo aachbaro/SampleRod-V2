@@ -531,6 +531,8 @@ class SampleListWidget(QWidget):
     # ─── Drag & Drop depuis l’explorateur ───
 
     def dragEnterEvent(self, event):
+        fmt = event.mimeData().formats()
+        print("DirectoryWidget dragEnter formats:", fmt)
         # N’accepte que si on a des URLs (fichiers)
         if event.mimeData().hasUrls():
             event.acceptProposedAction()

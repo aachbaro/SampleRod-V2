@@ -23,7 +23,7 @@ class DirectoryWidget(QWidget):
         layout = QVBoxLayout(self)
         self.choose_btn = QPushButton("Choose folder")
         self.choose_btn.clicked.connect(self._on_choose)
-        self.list_widget = QListWidget()
+        self.list_widget = DirectoryListWidget(self)
         self.list_widget.setAcceptDrops(True)
         layout.addWidget(self.choose_btn)
         layout.addWidget(self.list_widget)
@@ -79,3 +79,36 @@ class DirectoryWidget(QWidget):
             logger.info(f"[DirectoryWidget] Rafraîchissement de la liste ({len(files)} fichiers)")
             for name in files:
                 self.list_widget.addItem(name)
+
+
+
+class DirectoryListWidget(QListWidget):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.parent_widget = parent  # ton DirectoryWidget
+
+    def dragEnterEvent(self, event):
+        fmt = event.mimeData().formats()
+        print("DirectoryListWidget dragEnter formats:", fmt)
+        if self.parent_widget._accepts(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        if not self.parent_widget.current_dir:
+            event.ignore()
+            return
+        if self.parent_widget._accepts(event.mimeData()):
+            self.parent_widget.service.handle_drop(
+                self.parent_widget.current_dir,
+                event.mimeData()
+            )
+            self.parent_widget.refresh_list()
+            event.acceptProposedAction()
+        else:
+            event.ignore()
