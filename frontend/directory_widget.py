@@ -8,7 +8,7 @@ import os
 
 class DirectoryWidget(QWidget):
     """Simple widget to import samples into a folder via drag & drop."""
-
+    # Signal émis quand on change de dossier
     directoryChanged = pyqtSignal(str)
 
     def __init__(self, service: DirectoryService, parent=None):
@@ -32,6 +32,7 @@ class DirectoryWidget(QWidget):
         if d:
             self.current_dir = d
             self.refresh_list()
+            # On notifie que le dossier a changé
             self.directoryChanged.emit(d)
 
     # ------------------------------------------------------------------ DnD
@@ -66,4 +67,3 @@ class DirectoryWidget(QWidget):
         if self.current_dir:
             for name in self.service.list_samples(self.current_dir):
                 self.list_widget.addItem(name)
-

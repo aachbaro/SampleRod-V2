@@ -2,8 +2,9 @@ from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayo
     QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication, QCheckBox, QFileDialog
 
 from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut, QDrag, QMimeData
 from PyQt6.QtCore import QEvent
+import pickle
 import qtawesome as qta
 from utils.utils import get_folder_name
 from datetime import datetime
@@ -43,6 +44,7 @@ class SampleCard(QWidget):
         self.wave_edition_widget = None
 
         self.isChecked = False
+        self._drag_start_pos = None
 
         # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
         self.settings.librariesChanged.connect(self.updateLibraryCombo)
@@ -301,9 +303,35 @@ class SampleCard(QWidget):
             fn(self.wave_edition_widget)
 
     def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = event.position().toPoint()
         # 1) on prend le focus au niveau de la carte
         self.setFocus()
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.MouseButton.LeftButton
+            and self._drag_start_pos is not None
+        ):
+            if (
+                event.position().toPoint() - self._drag_start_pos
+            ).manhattanLength() >= QApplication.startDragDistance():
+                self._start_drag()
+                self._drag_start_pos = None
+                return
+        super().mouseMoveEvent(event)
+
+    def _start_drag(self):
+        drag = QDrag(self)
+        mime = QMimeData()
+        payload = {"sample_id": self.sample.id}
+        mime.setData(
+            "application/x-sample-card",
+            pickle.dumps(payload),
+        )
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
 
     def keyPressEvent(self, event):
         # 1) Échap pour annuler un renommage en cours
