@@ -1,6 +1,12 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QScrollArea, QToolBar, QToolButton,
-    QMenu, QFileDialog
+    QWidget,
+    QVBoxLayout,
+    QScrollArea,
+    QToolBar,
+    QToolButton,
+    QMenu,
+    QFileDialog,
+    QSizePolicy,
 )
 import logging
 logger = logging.getLogger("sample_list")
@@ -18,6 +24,7 @@ from backend.models.normalize_worker import NormalizeWorker
 class SampleListWidget(QWidget):
     def __init__(self, app_context: AppContext, parent=None):
         super().__init__(parent)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # stocke le contexte et le service métier
         self.app_context  = app_context

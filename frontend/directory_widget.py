@@ -1,4 +1,11 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QFileDialog
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QPushButton,
+    QListWidget,
+    QFileDialog,
+    QSizePolicy,
+)
 from PyQt6.QtCore import QMimeData, pyqtSignal
 
 from backend.services.directory_service import DirectoryService
@@ -17,6 +24,8 @@ class DirectoryWidget(QWidget):
         self.service = service
         self.current_dir = ""
         self._build_ui()
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.setMinimumWidth(100)
         logger.info("[DirectoryWidget] Initialisation")
 
     def _build_ui(self):
