@@ -23,7 +23,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.app_context = app_context
         self.settings = self.app_context.settings
-        self.directory_service = DirectoryService()
+        self.directory_service = DirectoryService(self.app_context.sample_store)
         
         self._setup_window()
         self._build_ui()
