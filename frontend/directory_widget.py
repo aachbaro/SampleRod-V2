@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QListWidget, QFileDialog
-from PyQt6.QtCore import QMimeData
+from PyQt6.QtCore import QMimeData, pyqtSignal
 
 from backend.services.directory_service import DirectoryService
 
@@ -8,6 +8,8 @@ import os
 
 class DirectoryWidget(QWidget):
     """Simple widget to import samples into a folder via drag & drop."""
+
+    directoryChanged = pyqtSignal(str)
 
     def __init__(self, service: DirectoryService, parent=None):
         super().__init__(parent)
@@ -30,6 +32,7 @@ class DirectoryWidget(QWidget):
         if d:
             self.current_dir = d
             self.refresh_list()
+            self.directoryChanged.emit(d)
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
