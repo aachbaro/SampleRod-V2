@@ -6,6 +6,8 @@ import numpy as np
 import bisect
 import pickle
 import os
+import logging
+logger = logging.getLogger("marker_manager")
 
 class MarkerListWidget(QListWidget):
     """List displaying markers and serving as drag source for slices."""
@@ -79,7 +81,7 @@ class MarkerManager:
 
     def add_marker(self, t):
         t = float(np.clip(t, 0.0, self.widget.duration))
-        print(f"Marker ajouté à {t:.3f}s")
+        logger.info(f"Marker ajouté à {t:.3f}s")
         self.widget._push_history({"action": "add_marker", "time": t})
         bisect.insort(self.markers, t)
         self.refresh_marker_list()
@@ -105,13 +107,13 @@ class MarkerManager:
     def on_marker_move_finished(self, line):
         old_t = getattr(line, 'old_pos', None)
         new_t = float(np.clip(line.value(), 0.0, self.widget.duration))
-        print(f"Marker déplacé de {old_t:.3f}s → {new_t:.3f}s")
+        logger.info(f"Marker déplacé de {old_t:.3f}s → {new_t:.3f}s")
         self.widget._push_history({"action": "move_marker", "old": old_t, "new": new_t})
         line.old_pos = new_t
 
     def remove_marker(self, t):
         if t in self.markers:
-            print(f"Marker supprimé à {t:.3f}s")
+            logger.info(f"Marker supprimé à {t:.3f}s")
             self.widget._push_history({"action": "remove_marker", "time": t})
             idx = self.markers.index(t)
             self.markers.remove(t)

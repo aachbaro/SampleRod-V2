@@ -3,6 +3,8 @@ import shutil
 import pickle
 import numpy as np
 import soundfile as sf
+import logging
+logger = logging.getLogger("directory_service")
 
 from PyQt6.QtCore import QMimeData
 from backend.services.sample_service import SampleService
@@ -76,7 +78,7 @@ class DirectoryService:
             sf.write(dest, arr, sr)
             self.sample_service.add_sample(dest)
         except Exception as e:
-            print(f"[DirectoryService] save slice error: {e}")
+            logger.info(f"[DirectoryService] save slice error: {e}")
 
     def _copy_sample(self, folder: str, sample_id: int):
         sample = self.sample_service._get(sample_id)
@@ -96,4 +98,4 @@ class DirectoryService:
             shutil.copy(src, dest)
             self.sample_service.add_sample(dest)
         except Exception as e:
-            print(f"[DirectoryService] copy sample error: {e}")
+            logger.info(f"[DirectoryService] copy sample error: {e}")

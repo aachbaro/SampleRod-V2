@@ -7,6 +7,8 @@ import datetime
 from sqlalchemy import Column, Integer, String, Float, DateTime, func
 from sqlalchemy.exc import SQLAlchemyError
 from backend.db import Base, SessionLocal
+import logging
+logger = logging.getLogger("sample")
 
 
 class Sample(Base):
@@ -38,7 +40,7 @@ class Sample(Base):
         finally:
             session.close()
         
-        print(f"[Sample] Création de l'échantillon {self.name} ({self.id})")
+        logger.info(f"[Sample] Création de l'échantillon {self.name} ({self.id})")
 
     def delete(self):
         """
@@ -49,10 +51,10 @@ class Sample(Base):
         if os.path.isfile(self.path):
             try:
                 os.remove(self.path)
-                print(f"[Sample] Fichier {self.path} supprimé")
+                logger.info(f"[Sample] Fichier {self.path} supprimé")
             except OSError as e:
-                # if you want to log: print(f"[Sample.delete] remove error: {e}")
-                print(f"[Sample] Impossible de supprimer le fichier {self.path}: {e}")
+                # if you want to log: logger.info(f"[Sample.delete] remove error: {e}")
+                logger.info(f"[Sample] Impossible de supprimer le fichier {self.path}: {e}")
                 pass  # on continue : on supprime au moins la base
 
         # 2) Base
@@ -63,10 +65,10 @@ class Sample(Base):
             if inst:
                 session.delete(inst)
                 session.commit()
-                print(f"[Sample] Échantillon {self.name} ({self.id}) supprimé de la base de données")
+                logger.info(f"[Sample] Échantillon {self.name} ({self.id}) supprimé de la base de données")
         except SQLAlchemyError:
             session.rollback()
-            print(f"[Sample] Erreur lors de la suppression de l'échantillon {self.name} ({self.id})")
+            logger.info(f"[Sample] Erreur lors de la suppression de l'échantillon {self.name} ({self.id})")
             raise
         finally:
             session.close()
@@ -84,9 +86,9 @@ class Sample(Base):
         # 1) Fichier
         try:
             os.rename(self.path, new_path)
-            print(f"[Sample] Renommage de {self.path} en {new_path}")
+            logger.info(f"[Sample] Renommage de {self.path} en {new_path}")
         except OSError as e:
-            print(f"[Sample] Erreur de renommage de {self.path} en {new_path}: {e}")
+            logger.info(f"[Sample] Erreur de renommage de {self.path} en {new_path}: {e}")
             raise RuntimeError(f"Impossible de renommer {self.path} → {new_path}: {e}")
         
 
@@ -100,9 +102,9 @@ class Sample(Base):
             # Mettre à jour l’objet courant aussi
             self.path = new_path
             self.name = new_name.strip()
-            print(f"[Sample] Échantillon renommé en {self.name} ({self.id})")
+            logger.info(f"[Sample] Échantillon renommé en {self.name} ({self.id})")
         except SQLAlchemyError as e:
-            print(f"[Sample] Erreur lors du renommage de l'échantillon {self.name} ({self.id}): {e}")
+            logger.info(f"[Sample] Erreur lors du renommage de l'échantillon {self.name} ({self.id}): {e}")
             session.rollback()
             # tenter de restaurer l’ancien nom de fichier
             try:
@@ -125,9 +127,9 @@ class Sample(Base):
         # 1) Fichier
         try:
             shutil.move(self.path, new_path)
-            print(f"[Sample] Déplacement de {self.path} vers {new_path}")
+            logger.info(f"[Sample] Déplacement de {self.path} vers {new_path}")
         except (OSError, shutil.Error) as e:
-            print(f"[Sample] Erreur de déplacement de {self.path} vers {new_path}: {e}")
+            logger.info(f"[Sample] Erreur de déplacement de {self.path} vers {new_path}: {e}")
             raise RuntimeError(f"Impossible de déplacer {self.path} → {new_path}: {e}")
 
         # 2) Base
@@ -137,9 +139,9 @@ class Sample(Base):
             inst.path = new_path
             session.commit()
             self.path = new_path
-            print(f"[Sample] Échantillon déplacé vers {self.path} ({self.id})")
+            logger.info(f"[Sample] Échantillon déplacé vers {self.path} ({self.id})")
         except SQLAlchemyError:
-            print(f"[Sample] Erreur lors du déplacement de l'échantillon {self.name} ({self.id}) vers {new_path}")
+            logger.info(f"[Sample] Erreur lors du déplacement de l'échantillon {self.name} ({self.id}) vers {new_path}")
             session.rollback()
             # tenter de remettre à l’ancien emplacement
             try:

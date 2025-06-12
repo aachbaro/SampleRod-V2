@@ -5,6 +5,8 @@ from backend.models.SampleLibrary import SampleBank
 from backend.db import SessionLocal
 import soundcard as sc
 from backend.services.notification_service import NotificationType
+import logging
+logger = logging.getLogger("settings_service")
 
 class SettingsService(QObject):
     retroToggled      = pyqtSignal(bool)
@@ -37,22 +39,22 @@ class SettingsService(QObject):
         self._init_audio_settings()
 
 
-        print("[SettingsService] Initialisation des paramètres de l'application")
-        print("[SettingsService]self.loopback_device", self.loopback_device)
+        logger.info("[SettingsService] Initialisation des paramètres de l'application")
+        logger.info("[SettingsService]self.loopback_device", self.loopback_device)
 
     # ——— Retro Recording —————————————————————————————
 
     def toggleRetro(self):
         """Inverse le flag et le persiste dans QSettings."""
-        print("setting service: Basculement de l'état du rétro-enregistrement")
+        logger.info("setting service: Basculement de l'état du rétro-enregistrement")
         retro = not self._qs.value("retroEnabled", False, type=bool)
         self._qs.setValue("retroEnabled", retro)
         self.retroToggled.emit(retro)
-        print(f"[SettingsService] Rétro-enregistrement {'activé' if retro else 'désactivé'}")
+        logger.info(f"[SettingsService] Rétro-enregistrement {'activé' if retro else 'désactivé'}")
 
     def setPreSeconds(self, secs: int):
         """Change la durée du pré-enregistrement."""
-        print(f"[SettingsService] Modification des secondes de pré-enregistrement à {secs}")
+        logger.info(f"[SettingsService] Modification des secondes de pré-enregistrement à {secs}")
         self._qs.setValue("preSeconds", secs)
         self.preSecondsChanged.emit(secs)
 
@@ -68,25 +70,25 @@ class SettingsService(QObject):
 
     def addSampleLibrary(self, path: str):
         """Ajoute une nouvelle librairie de samples à la base de données."""
-        print(f"[SettingsService] Ajout de la librairie de samples : {path}")
+        logger.info(f"[SettingsService] Ajout de la librairie de samples : {path}")
         SampleBank(path)
         self.libraries = SampleBank.get_all_libraries()
         self.librariesChanged.emit(self.libraries)
 
     def removeSampleLibrary(self, library_id: int):
         """Supprime une librairie de samples de la base de données."""
-        print(f"[SettingsService] Suppression de la librairie de samples avec ID : {library_id}")
+        logger.info(f"[SettingsService] Suppression de la librairie de samples avec ID : {library_id}")
         try:
             SampleBank.delete_library(library_id)
             # puis tu relaances get_all_libraries() et tu réaffiches la liste
             self.libraries = SampleBank.get_all_libraries()
             self.librariesChanged.emit(self.libraries)
         except ValueError as e:
-            print("Erreur à la suppression :", e)
+            logger.info("Erreur à la suppression :", e)
 
     def updateLibraryOrder(self, ordered_ids: list):
         """Met à jour l'ordre des librairies en base de données."""
-        print(f"[SettingsService] Mise à jour de l'ordre des librairies : {ordered_ids}")
+        logger.info(f"[SettingsService] Mise à jour de l'ordre des librairies : {ordered_ids}")
         SampleBank.reorder_libraries(ordered_ids)
         self.libraries = SampleBank.get_all_libraries()
         self.librariesChanged.emit(self.libraries)
@@ -146,7 +148,7 @@ class SettingsService(QObject):
 
     def toggleAutoNormalize(self):
         """Inverse l'état de l'auto-normalisation et le persiste dans QSettings."""
-        print("[SettingsService] Basculement de l'état de l'auto-normalisation")
+        logger.info("[SettingsService] Basculement de l'état de l'auto-normalisation")
         enabled = not self._qs.value("autoNormalizeEnabled", False, type=bool)
         self._qs.setValue("autoNormalizeEnabled", enabled)
         self.autoNormalizeToggled.emit(enabled)
@@ -160,7 +162,7 @@ class SettingsService(QObject):
 
     def setNormalizationLevel(self, level: int):
         """Change le niveau de normalisation et le persiste dans QSettings."""
-        print(f"[SettingsService] Modification du niveau de normalisation à {level} LUFS")
+        logger.info(f"[SettingsService] Modification du niveau de normalisation à {level} LUFS")
         self._qs.setValue("normalizationLevel", level)
         self.normalizationLevelChanged.emit(level)
 

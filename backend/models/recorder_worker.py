@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from collections import deque
 from backend.models.sample import Sample
+import logging
+logger = logging.getLogger("recorder_worker")
 
 
 def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial_device_name=None):
@@ -21,7 +23,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
     - initial_device_name : nom du device loopback à forcer (optionnel)
     """
 
-    print("recorder_worker: Démarrage du worker…")
+    logger.info("recorder_worker: Démarrage du worker…")
 
     # ------- Fonction utilitaire interne pour (re)chercher et (re)ouvrir un microphone ----------
     def open_microphone(device_name):
@@ -52,7 +54,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
         if mic_info is None:
             raise RuntimeError("Aucun périphérique audio disponible pour l'enregistrement !")
 
-        print(f"recorder_worker: Ouverture du périphérique '{mic_info.name}'")
+        logger.info(f"recorder_worker: Ouverture du périphérique '{mic_info.name}'")
         # Ouvre et retourne l'objet Recorder
         return mic_info.recorder(samplerate=sample_rate), mic_info.name
 
@@ -106,7 +108,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                         # 2.a) Changer de device (on sort pour réinitialiser le with + open) ---
                         if action == 'set_device':
                             new_name = cmd[1]
-                            print(f"recorder_worker: Changement de device demandé → '{new_name}'")
+                            logger.info(f"recorder_worker: Changement de device demandé → '{new_name}'")
                             selected_device_name = new_name
                             # On interrompt la boucle interne pour rouvrir le nouveau mic
                             break
@@ -114,7 +116,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                         # 2.b) Changer de sample rate → sortir pour ré-ouvrir
                         elif action == 'set_sample_rate':
                             new_rate = cmd[1]
-                            print(f"recorder_worker: Commande set_sample_rate → {new_rate} Hz")
+                            logger.info(f"recorder_worker: Commande set_sample_rate → {new_rate} Hz")
                             # On met à jour sample_rate et maxlen
                             sample_rate = new_rate
                             maxlen = int(pre_seconds * sample_rate / block_size)
@@ -175,7 +177,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                             new_pre = cmd[1]
                             maxlen = int(new_pre * sample_rate / block_size)
                             retro_buf = deque(retro_buf, maxlen=maxlen)
-                            print(f"recorder_worker: Nouveau buffer rétro → {new_pre}s")
+                            logger.info(f"recorder_worker: Nouveau buffer rétro → {new_pre}s")
 
                         # 2.f) (Autres commandes éventuelles) ...
                         #     Par exemple : pause, ajustement du sample_rate, etc.
@@ -194,11 +196,11 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
 
         except Exception as e:
             # En cas d’erreur (déconnexion du device, exception Soundcard, etc.), on réessaie
-            print(f"recorder_worker: Erreur (réinitialisation du microphone) : {e}")
+            logger.info(f"recorder_worker: Erreur (réinitialisation du microphone) : {e}")
             time.sleep(0.5)
             # On retourne en début de while True pour retenter l’ouverture du mic
             continue
 
     # En sortie des deux boucles, on signale au service principal la fin
     resp_q.put(('shutdown_ack', None))
-    print("recorder_worker: Fermeture complète du worker.")
+    logger.info("recorder_worker: Fermeture complète du worker.")
