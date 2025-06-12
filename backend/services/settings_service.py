@@ -40,7 +40,10 @@ class SettingsService(QObject):
 
 
         logger.info("[SettingsService] Initialisation des paramètres de l'application")
-        logger.info("[SettingsService]self.loopback_device", self.loopback_device)
+        logger.info(
+            "[SettingsService] loopback_device : %s",
+            self.loopback_device
+        )
 
     # ——— Retro Recording —————————————————————————————
 
