@@ -3,8 +3,8 @@ from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QMenu, QMessageBox
 )
 
-from PyQt6.QtGui import QCursor, QMouseEvent
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent
+from PyQt6.QtGui import QCursor, QMouseEvent, QDrag
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QMimeData
 import pyqtgraph as pg
 import numpy as np
 import sounddevice as sd
@@ -18,6 +18,7 @@ from frontend.custom_widgets import SaveWaveformDialog
 from backend.models.AppContext import AppContext
 from backend.services.notification_service import NotificationType
 import bisect
+import pickle
 
 from .marker_manager import MarkerManager
 from .waveform.waveform_loader import WaveformLoaderThread
@@ -38,6 +39,7 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
 
         cut = menu.                 addAction("Cut                      Ctrl + X")
         export = menu.              addAction("Export Selection         Ctrl + E")
+        drag_act = menu.            addAction("Drag Selection")
         add_markers_action = menu.  addAction("Add markers at edges     Ctrl + Shift + G")
 
         # place ici tes autres actions...
@@ -54,6 +56,8 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
         elif action is export:
             # on appelle la méthode _export_region sur le parent (n’écrase pas la waveform en mémoire)
             self._parent._export_region(start, end)
+        elif action is drag_act:
+            self._parent.start_slice_drag(start, end)
         elif action is add_markers_action:
             # on ajoute des marqueurs aux bords de la région
             if end > start:
@@ -730,6 +734,28 @@ class WaveformWidget(QWidget):
         self.app_context.sample_store.add(target)
 
         QMessageBox.information(self, "Export réussi", f"Segment exporté dans :\n{target}")
+
+    def start_slice_drag(self, start: float, end: float):
+        """Initie un glisser-déposer pour la portion [start,end]."""
+        s0 = int(start * self.sample_rate)
+        s1 = int(end * self.sample_rate)
+        if s1 <= s0:
+            return
+        array = self.waveform_data[s0:s1].astype("float32")
+        name = os.path.basename(self.audio_file_path)
+        mime = QMimeData()
+        payload = {
+            "audio_data": array,
+            "sample_rate": self.sample_rate,
+            "name": name,
+        }
+        mime.setData(
+            "application/x-sample-slice-data",
+            pickle.dumps(payload),
+        )
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
 
 # —————————————————————————————————————————————————————— Playback ——————————————————————————————————————————————————————
 
