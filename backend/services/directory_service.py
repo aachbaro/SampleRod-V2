@@ -13,7 +13,9 @@ class DirectoryService:
     """Service utilitaire pour importer des fichiers dans un dossier."""
 
     def __init__(self, sample_service: SampleService):
-        self.sample_service = sample_service
+        # sample_service correspond au même store que celui utilisé
+        # par le WaveformWidget (méthode .add())
+        self.sample_store = sample_service
         logger.info("[DirectoryService] Initialisation du service")
 
     def list_samples(self, folder: str) -> list[str]:
@@ -61,7 +63,8 @@ class DirectoryService:
                     dst = os.path.join(folder, os.path.basename(src))
                     try:
                         shutil.copy(src, dst)
-                        self.sample_service.add_sample(dst)
+                        # Création de l'entrée en base identique à l'export Waveform
+                        self.sample_store.add(dst)
                         logger.info(f"[DirectoryService] Fichier copié {src} -> {dst}")
                     except Exception:
                         pass
@@ -84,13 +87,14 @@ class DirectoryService:
 
         try:
             sf.write(dest, arr, sr)
-            self.sample_service.add_sample(dest)
+            # Ajout en base pour le nouveau fichier
+            self.sample_store.add(dest)
             logger.info(f"[DirectoryService] Slice enregistrée : {dest}")
         except Exception as e:
             logger.info(f"[DirectoryService] save slice error: {e}")
 
     def _copy_sample(self, folder: str, sample_id: int):
-        sample = self.sample_service._get(sample_id)
+        sample = self.sample_store._get(sample_id)
         if not sample:
             return
         src = sample.path
@@ -105,7 +109,8 @@ class DirectoryService:
 
         try:
             shutil.copy(src, dest)
-            self.sample_service.add_sample(dest)
+            # Ajout en base pour le fichier copié
+            self.sample_store.add(dest)
             logger.info(f"[DirectoryService] Sample copié : {src} -> {dest}")
         except Exception as e:
             logger.info(f"[DirectoryService] copy sample error: {e}")
