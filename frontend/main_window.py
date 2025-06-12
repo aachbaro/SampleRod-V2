@@ -1,5 +1,14 @@
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import (
+    QMainWindow,
+    QTabWidget,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QSplitter,
+)
 from PyQt6.QtCore import Qt
 import os
 import logging
@@ -53,7 +62,6 @@ class MainWindow(QMainWindow):
         self.sample_list_widget = SampleListWidget(
             app_context=self.app_context
         )
-        samples_layout.addWidget(self.sample_list_widget)
 
         # ---- Panel directory tabs ----
         dir_panel = QWidget()
@@ -65,7 +73,13 @@ class MainWindow(QMainWindow):
         self.dir_tab_widget.tabCloseRequested.connect(self._close_directory_tab)
         dir_layout.addWidget(self.add_dir_btn)
         dir_layout.addWidget(self.dir_tab_widget)
-        samples_layout.addWidget(dir_panel)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.sample_list_widget)
+        splitter.addWidget(dir_panel)
+        splitter.setSizes([300, 150])
+
+        samples_layout.addWidget(splitter)
 
         self.tab_widget.addTab(samples_tab, "Liste des Samples")
 
