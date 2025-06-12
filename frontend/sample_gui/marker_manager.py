@@ -1,8 +1,39 @@
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QListWidgetItem
+from PyQt6.QtCore import Qt, QMimeData
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem
+from PyQt6.QtGui import QDrag
 import pyqtgraph as pg
 import numpy as np
 import bisect
+import pickle
+import os
+
+class MarkerListWidget(QListWidget):
+    """List displaying markers and serving as drag source for slices."""
+
+    def __init__(self, editor, parent=None):
+        super().__init__(parent)
+        self.editor = editor
+        self.setDragEnabled(True)
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if not item:
+            return
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(payload, dict):
+            return
+        mime = QMimeData()
+        mime.setData(
+            "application/x-sample-slice-data",
+            pickle.dumps({
+                "audio_data": payload.get("audio_data"),
+                "sample_rate": payload.get("sample_rate"),
+                "name": payload.get("name"),
+            })
+        )
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec(Qt.DropAction.CopyAction)
 
 class ClickableMarkerLine(pg.InfiniteLine):
     """Line capable of removing itself on double-click."""
@@ -27,9 +58,23 @@ class MarkerManager:
 
     def refresh_marker_list(self):
         self.marker_list.clear()
+        sr = self.widget.sample_rate or 44100
+        data = self.widget.waveform_data
+        name = os.path.basename(self.widget.audio_file_path)
         for i, t in enumerate(self.markers):
-            item = QListWidgetItem(f"M{i+1} — {t:.3f}s")
-            item.setData(Qt.ItemDataRole.UserRole, t)
+            end_t = self.markers[i + 1] if i + 1 < len(self.markers) else self.widget.duration
+            s0 = int(t * sr)
+            s1 = int(end_t * sr)
+            slice_array = data[s0:s1].astype("float32") if data is not None else np.array([], dtype="float32")
+            duration = end_t - t
+            item = QListWidgetItem(f"M{i+1} — {t:.3f}s ({duration:.2f}s)")
+            payload = {
+                "time": t,
+                "audio_data": slice_array,
+                "sample_rate": sr,
+                "name": name,
+            }
+            item.setData(Qt.ItemDataRole.UserRole, payload)
             self.marker_list.addItem(item)
 
     def add_marker(self, t):

@@ -5,7 +5,6 @@ from backend.services.directory_service import DirectoryService
 
 import os
 
-
 class DirectoryWidget(QWidget):
     """Simple widget to import samples into a folder via drag & drop."""
     # Signal émis quand on change de dossier

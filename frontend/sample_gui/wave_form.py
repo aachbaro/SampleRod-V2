@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QListWidget, QListWidgetItem, QMenu, QMessageBox
+    QListWidgetItem, QMenu, QMessageBox
 )
 
 from PyQt6.QtGui import QCursor, QMouseEvent, QDrag
@@ -20,7 +20,8 @@ from backend.services.notification_service import NotificationType
 import bisect
 import pickle
 
-from .marker_manager import MarkerManager
+from .marker_manager import MarkerManager, MarkerListWidget
+from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.history_stack import HistoryStack
 
@@ -229,10 +230,9 @@ class WaveformWidget(QWidget):
         self.timer.start(5)
 
         # — Liste des marqueurs
-        self.marker_list = QListWidget()
+        self.marker_list = MarkerListWidget(self)
         self.marker_list.itemClicked.connect(self.on_marker_list_clicked)
         self.marker_list.itemDoubleClicked.connect(self.on_marker_list_double_clicked)
-        self.layout.addWidget(self.marker_list)
         self.layout.addWidget(self.marker_list)
 
 
@@ -330,7 +330,8 @@ class WaveformWidget(QWidget):
         self.marker_manager.remove_marker(t)
 
     def on_marker_list_clicked(self, item: QListWidgetItem):
-        t = item.data(Qt.ItemDataRole.UserRole)
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        t = payload.get("time") if isinstance(payload, dict) else payload
         # trouve l'indice exact
         idx = self.markers.index(t)
         self.current_marker_idx = idx
@@ -360,7 +361,8 @@ class WaveformWidget(QWidget):
         print(f"Région mise à jour: {t:.3f}s → {t2:.3f}s")
 
     def on_marker_list_double_clicked(self, item: QListWidgetItem):
-        t = item.data(Qt.ItemDataRole.UserRole)
+        payload = item.data(Qt.ItemDataRole.UserRole)
+        t = payload.get("time") if isinstance(payload, dict) else payload
         self.remove_marker(t)
 
     def _refresh_marker_list(self):

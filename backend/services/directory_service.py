@@ -8,10 +8,13 @@ from PyQt6.QtCore import QMimeData
 from backend.services.sample_service import SampleService
 
 class DirectoryService:
+    """Service utilitaire pour importer des fichiers dans un dossier."""
+
     def __init__(self, sample_service: SampleService):
         self.sample_service = sample_service
 
     def list_samples(self, folder: str) -> list[str]:
+        """Return list of file names inside folder."""
         if not os.path.isdir(folder):
             return []
         return sorted(
@@ -20,7 +23,9 @@ class DirectoryService:
         )
 
     def handle_drop(self, folder: str, mime: QMimeData) -> None:
+        """Handle drop event with custom MIME data."""
         os.makedirs(folder, exist_ok=True)
+
         for fmt in ("application/x-sample-slice-data", "application/x-sample-card"):
             if not mime.hasFormat(fmt):
                 continue
@@ -37,9 +42,9 @@ class DirectoryService:
                     self._save_slice(folder, payload)
                 elif "sample_id" in payload:
                     self._copy_sample(folder, payload["sample_id"])
-                return  # on sort après avoir traité le payload
+                return  # on sort après traitement
 
-            # Fallback : lecture texte (anciens chemins)
+            # Fallback : anciens formats texte (chemins)
             data = bytes(mime.data(fmt)).decode(errors="ignore")
             for line in filter(None, data.splitlines()):
                 src = line.strip()
@@ -51,9 +56,9 @@ class DirectoryService:
                     except Exception:
                         pass
 
-    # ---- Méthodes privées ----
+    # ------------------------------------------------------------------ utils
     def _save_slice(self, folder: str, payload: dict):
-        arr = np.asarray(payload["audio_data"], dtype="float32")
+        arr = np.asarray(payload.get("audio_data"), dtype="float32")
         sr = int(payload.get("sample_rate", 44100))
         name = payload.get("name", "slice")
         if not name.lower().endswith(".wav"):
