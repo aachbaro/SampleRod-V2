@@ -14,18 +14,23 @@ class DirectoryService:
 
     def __init__(self, sample_service: SampleService):
         self.sample_service = sample_service
+        logger.info("[DirectoryService] Initialisation du service")
 
     def list_samples(self, folder: str) -> list[str]:
         """Return list of file names inside folder."""
         if not os.path.isdir(folder):
+            logger.info(f"[DirectoryService] Dossier introuvable: {folder}")
             return []
-        return sorted(
+        files = sorted(
             f for f in os.listdir(folder)
             if os.path.isfile(os.path.join(folder, f))
         )
+        logger.info(f"[DirectoryService] {len(files)} fichiers listés dans {folder}")
+        return files
 
     def handle_drop(self, folder: str, mime: QMimeData) -> None:
         """Handle drop event with custom MIME data."""
+        logger.info(f"[DirectoryService] Dépôt dans {folder}")
         os.makedirs(folder, exist_ok=True)
 
         for fmt in ("application/x-sample-slice-data", "application/x-sample-card"):
@@ -41,8 +46,10 @@ class DirectoryService:
             # Si c'est un dict picklé, on traite slice ou sample
             if isinstance(payload, dict):
                 if "audio_data" in payload:
+                    logger.info("[DirectoryService] Sauvegarde d'une slice depuis le drag&drop")
                     self._save_slice(folder, payload)
                 elif "sample_id" in payload:
+                    logger.info("[DirectoryService] Copie d'un sample depuis le drag&drop")
                     self._copy_sample(folder, payload["sample_id"])
                 return  # on sort après traitement
 
@@ -55,6 +62,7 @@ class DirectoryService:
                     try:
                         shutil.copy(src, dst)
                         self.sample_service.add_sample(dst)
+                        logger.info(f"[DirectoryService] Fichier copié {src} -> {dst}")
                     except Exception:
                         pass
 
@@ -77,6 +85,7 @@ class DirectoryService:
         try:
             sf.write(dest, arr, sr)
             self.sample_service.add_sample(dest)
+            logger.info(f"[DirectoryService] Slice enregistrée : {dest}")
         except Exception as e:
             logger.info(f"[DirectoryService] save slice error: {e}")
 
@@ -97,5 +106,6 @@ class DirectoryService:
         try:
             shutil.copy(src, dest)
             self.sample_service.add_sample(dest)
+            logger.info(f"[DirectoryService] Sample copié : {src} -> {dest}")
         except Exception as e:
             logger.info(f"[DirectoryService] copy sample error: {e}")

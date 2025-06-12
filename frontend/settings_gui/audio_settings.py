@@ -9,6 +9,9 @@ from backend.models.AppContext import AppContext
 import soundcard as sc
 
 
+import logging
+logger = logging.getLogger("audio_settings")
+
 class AudioSettingsWidget(QWidget):
     """
     Un widget de paramètres audio : sample rate, micro en loopback, etc.
@@ -28,6 +31,7 @@ class AudioSettingsWidget(QWidget):
         self.settings.autoNormalizeToggled.connect(self.auto_norm_checkbox.setChecked)
         self.settings.normalizationLevelChanged.connect(self.lufs_spin.setValue)
         self._load_settings()
+        logger.info("[AudioSettings] Initialisation")
 
     def _build_ui(self):
         """
@@ -110,6 +114,7 @@ class AudioSettingsWidget(QWidget):
                 if mic.name == cur_dev.name:
                     self.loopback_combo.setCurrentIndex(i)
                     break
+        logger.info("[AudioSettings] Paramètres chargés")
 
     def _populate_loopback_devices(self):
         """Remplit la combo et retourne la liste des devices."""
@@ -129,6 +134,7 @@ class AudioSettingsWidget(QWidget):
         rate = self.sample_rate_combo.itemData(index)
         if rate:
             self.sampleRateChanged.emit(rate)
+            logger.info(f"[AudioSettings] Sample rate sélectionné : {rate}")
 
     def _save_settings(self):
         # Sample rate
@@ -136,9 +142,11 @@ class AudioSettingsWidget(QWidget):
         if rate:
             # persiste et émet sampleRateChanged
             self.settings.setSampleRate(rate)
+            logger.info(f"[AudioSettings] Sample rate enregistré : {rate}")
 
         # Loopback
         dev = self.loopback_combo.currentData()
         if dev is not None:
             # persiste et émet loopbackDeviceChanged
             self.settings.setLoopbackDevice(dev)
+            logger.info(f"[AudioSettings] Loopback sélectionné : {dev.name if dev else 'None'}")

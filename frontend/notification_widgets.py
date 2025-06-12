@@ -19,6 +19,9 @@ from PyQt6.QtGui import QFont
 
 from backend.services.notification_service import NotificationService, Notification, NotificationType
 
+import logging
+logger = logging.getLogger("notification_widgets")
+
 
 class NotificationPopup(QFrame):
     """
@@ -46,6 +49,7 @@ class NotificationPopup(QFrame):
         self.notif = notification
         self._build_ui()
         self._animate_in()
+        logger.info(f"[NotificationWidgets] Popup '{notification.title}' affiché")
 
         # Timer pour disparaître
         self.timer = QTimer(self)
@@ -162,11 +166,13 @@ class NotificationCenter(QWidget):
         self.list.addItem(text)
         self.notifications.append(notification)
         self.list.scrollToBottom()
+        logger.info(f"[NotificationWidgets] Notification ajoutée au centre : {notification.title}")
 
     def clear(self):
         """Purge toutes les notifications du centre et libère la liste."""
         self.list.clear()
         self.notifications.clear()
+        logger.info("[NotificationWidgets] Centre vidé")
 
 
 class NotificationManager(QObject):
@@ -192,6 +198,7 @@ class NotificationManager(QObject):
         # Ajout au centre
         if self.center:
             self.center.add_notification(notification)
+        logger.info(f"[NotificationWidgets] Nouvelle notification : {notification.title}")
 
         # Création et affichage du popup
         popup = NotificationPopup(notification, parent=self.parent())
@@ -237,3 +244,4 @@ class NotificationManager(QObject):
         if popup in self.popups:
             self.popups.remove(popup)
             self._reposition_popups()
+            logger.info("[NotificationWidgets] Popup fermé")
