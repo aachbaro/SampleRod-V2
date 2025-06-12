@@ -4,6 +4,8 @@ from PyQt6.QtCore import QMimeData, pyqtSignal
 from backend.services.directory_service import DirectoryService
 
 import os
+import logging
+logger = logging.getLogger("directory_widget")
 
 class DirectoryWidget(QWidget):
     """Simple widget to import samples into a folder via drag & drop."""
@@ -15,6 +17,7 @@ class DirectoryWidget(QWidget):
         self.service = service
         self.current_dir = ""
         self._build_ui()
+        logger.info("[DirectoryWidget] Initialisation")
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -33,12 +36,17 @@ class DirectoryWidget(QWidget):
             self.refresh_list()
             # On notifie que le dossier a changé
             self.directoryChanged.emit(d)
+            logger.info(f"[DirectoryWidget] Dossier sélectionné : {d}")
+        else:
+            logger.info("[DirectoryWidget] Sélection de dossier annulée")
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
         if self._accepts(event.mimeData()):
+            logger.info("[DirectoryWidget] dragEnter: accepté")
             event.acceptProposedAction()
         else:
+            logger.info("[DirectoryWidget] dragEnter: refusé")
             event.ignore()
 
     def dragMoveEvent(self, event):
@@ -46,13 +54,16 @@ class DirectoryWidget(QWidget):
 
     def dropEvent(self, event):
         if not self.current_dir:
+            logger.info("[DirectoryWidget] dropEvent ignoré (aucun dossier choisi)")
             event.ignore()
             return
         if self._accepts(event.mimeData()):
+            logger.info("[DirectoryWidget] dropEvent accepté")
             self.service.handle_drop(self.current_dir, event.mimeData())
             self.refresh_list()
             event.acceptProposedAction()
         else:
+            logger.info("[DirectoryWidget] dropEvent refusé")
             event.ignore()
 
     def _accepts(self, mime: QMimeData) -> bool:
@@ -64,5 +75,7 @@ class DirectoryWidget(QWidget):
     def refresh_list(self):
         self.list_widget.clear()
         if self.current_dir:
-            for name in self.service.list_samples(self.current_dir):
+            files = self.service.list_samples(self.current_dir)
+            logger.info(f"[DirectoryWidget] Rafraîchissement de la liste ({len(files)} fichiers)")
+            for name in files:
                 self.list_widget.addItem(name)

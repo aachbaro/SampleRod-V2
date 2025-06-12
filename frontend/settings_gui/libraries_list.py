@@ -15,6 +15,8 @@ from backend.services.settings_service import SettingsService
 from backend.models.AppContext import AppContext
 
 import os
+import logging
+logger = logging.getLogger("libraries_list")
 
 class SettingsLibrariesList(QWidget):
     """ Widget pour gérer la liste des bibliothèques de samples """
@@ -71,6 +73,7 @@ class SettingsLibrariesList(QWidget):
         self.library_list_widget.setVisible(not vis)
         self.add_library_button.setVisible(not vis)
         self.toggle_button.setText("▼" if vis else "▲")
+        logger.info(f"[LibrariesList] Liste {'masquée' if vis else 'affichée'}")
 
     def selectDirectory(self):
         # 1) Récupère le dernier dossier ou, si vide, le home de l’utilisateur
@@ -82,13 +85,16 @@ class SettingsLibrariesList(QWidget):
             QFileDialog.Option.ShowDirsOnly
         )
         if not d:
+            logger.info("[LibrariesList] Sélection annulée")
             return
         self._qs.setValue("lastLibraryDir", d)
         self.settings_service.addSampleLibrary(d)
+        logger.info(f"[LibrariesList] Bibliothèque ajoutée : {d}")
 
     def deleteLibrary(self, library_to_delete):
         """ Supprime une bibliothèque """
         self.settings_service.removeSampleLibrary(library_to_delete.id)
+        logger.info(f"[LibrariesList] Bibliothèque supprimée id={library_to_delete.id}")
 
     def updateLibraryOrder(self):
         ordered_ids = []
@@ -97,10 +103,12 @@ class SettingsLibrariesList(QWidget):
             lib  = item.data(Qt.ItemDataRole.UserRole)  # un SampleBank
             ordered_ids.append(lib.id)
         self.settings_service.updateLibraryOrder(ordered_ids)
+        logger.info(f"[LibrariesList] Nouvel ordre : {ordered_ids}")
 
     def refreshLibraryList(self, libraries=None):
         """ Met à jour l'affichage de la liste des bibliothèques """
         self.library_list_widget.clear()
+        logger.info("[LibrariesList] Rafraîchissement de la liste des bibliothèques")
 
         for library in sorted(libraries, key=lambda lib: lib.position):
             item_widget = QWidget()

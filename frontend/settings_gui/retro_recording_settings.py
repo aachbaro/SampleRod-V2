@@ -7,6 +7,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal
 from backend.services.settings_service import SettingsService
 
+import logging
+logger = logging.getLogger("retro_recording")
+
 class RetroRecordingWidget(QWidget):
     retroRecordingUpdated = pyqtSignal()
 
@@ -37,6 +40,7 @@ class RetroRecordingWidget(QWidget):
         self.settingsService.preSecondsChanged.connect(self.duration_input.setValue)
         self.toggle_checkbox.setChecked(self.settingsService.isRetroEnabled())
         self.duration_input.setValue(self.settingsService.getPreSeconds())
+        logger.info("[RetroRecording] Initialisation")
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -79,10 +83,13 @@ class RetroRecordingWidget(QWidget):
     def save_duration(self):
         # Informe le service (persistance + signal)
         self.settingsService.setPreSeconds(self.duration_input.value())
+        logger.info(f"[RetroRecording] Durée enregistrée : {self.duration_input.value()}s")
         self.confirm_button.setEnabled(False)
 
     def toggle_recording(self):
         # Informe le service (persistance + signal)
         self.settingsService.toggleRetro()
+        state = 'activé' if self.toggle_checkbox.isChecked() else 'désactivé'
+        logger.info(f"[RetroRecording] Rétro-enregistrement {state}")
         # On peut aussi émettre un signal local si besoin
         self.retroRecordingUpdated.emit()
