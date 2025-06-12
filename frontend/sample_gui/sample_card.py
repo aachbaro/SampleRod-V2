@@ -1,8 +1,10 @@
-from PyQt6.QtWidgets import QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout, \
-    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox, QComboBox, QApplication, QCheckBox, QFileDialog
-
-from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer
-from PyQt6.QtGui import QIcon, QKeySequence, QShortcut, QDrag, QMimeData
+from PyQt6.QtWidgets import (
+    QWidget, QLabel, QPushButton, QHBoxLayout, QVBoxLayout,
+    QSpacerItem, QSizePolicy, QLineEdit, QMessageBox,
+    QComboBox, QApplication, QCheckBox, QFileDialog
+)
+from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer, QMimeData
+from PyQt6.QtGui import QIcon, QKeySequence, QShortcut, QDrag
 from PyQt6.QtCore import QEvent
 import pickle
 import qtawesome as qta

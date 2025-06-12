@@ -1,6 +1,7 @@
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton
 from PyQt6.QtCore import Qt
+import os
 
 import qtawesome as qta
 
@@ -10,6 +11,9 @@ from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
 from frontend.sample_gui.sample_list import SampleListWidget
 from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
+from frontend.directory_widget import DirectoryWidget
+
+from backend.services.directory_service import DirectoryService
 
 from backend.models.sample import Sample
 from backend.models.AppContext import AppContext
@@ -19,6 +23,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.app_context = app_context
         self.settings = self.app_context.settings
+        self.directory_service = DirectoryService(self.app_context.sample_store)
         
         self._setup_window()
         self._build_ui()
@@ -42,11 +47,24 @@ class MainWindow(QMainWindow):
 
         # --- Onglet 'Liste des Samples'
         samples_tab = QWidget()
-        samples_layout = QVBoxLayout(samples_tab)
+        samples_layout = QHBoxLayout(samples_tab)
         self.sample_list_widget = SampleListWidget(
             app_context=self.app_context
         )
         samples_layout.addWidget(self.sample_list_widget)
+
+        # ---- Panel directory tabs ----
+        dir_panel = QWidget()
+        dir_layout = QVBoxLayout(dir_panel)
+        self.add_dir_btn = QPushButton("Add directory")
+        self.add_dir_btn.clicked.connect(self._add_directory_tab)
+        self.dir_tab_widget = QTabWidget()
+        self.dir_tab_widget.setTabsClosable(True)
+        self.dir_tab_widget.tabCloseRequested.connect(self._close_directory_tab)
+        dir_layout.addWidget(self.add_dir_btn)
+        dir_layout.addWidget(self.dir_tab_widget)
+        samples_layout.addWidget(dir_panel)
+
         self.tab_widget.addTab(samples_tab, "Liste des Samples")
 
         # --- Onglet 'Paramètres'
@@ -140,3 +158,24 @@ class MainWindow(QMainWindow):
         # si on vient de l'ouvrir, on remet le badge à zéro
         if visible:
             self._clear_badge()
+
+    # ------------------------------------------------------------------ Directories
+    def _add_directory_tab(self):
+        widget = DirectoryWidget(self.directory_service)
+        widget.directoryChanged.connect(
+            lambda path, w=widget: self._update_dir_tab_text(w, path)
+        )
+        index = self.dir_tab_widget.addTab(widget, "New directory")
+        self.dir_tab_widget.setCurrentIndex(index)
+
+    def _update_dir_tab_text(self, widget: DirectoryWidget, path: str):
+        name = os.path.basename(path) or path
+        idx = self.dir_tab_widget.indexOf(widget)
+        if idx != -1:
+            self.dir_tab_widget.setTabText(idx, name)
+
+    def _close_directory_tab(self, index: int):
+        w = self.dir_tab_widget.widget(index)
+        if w:
+            w.deleteLater()
+        self.dir_tab_widget.removeTab(index)
