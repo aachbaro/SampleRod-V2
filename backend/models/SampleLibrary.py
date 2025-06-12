@@ -3,6 +3,8 @@ from sqlalchemy.sql import func
 from backend.db import Base, SessionLocal
 import os
 from pathlib import Path
+import logging
+logger = logging.getLogger("SampleLibrary")
 
 class SampleBank(Base):
     """Classe représentant une librairie de samples de l'utilisateur"""
@@ -15,7 +17,7 @@ class SampleBank(Base):
     def __init__(self, path: str):
         session = SessionLocal()
         session.expire_on_commit = False
-        print(f"Sample Bank: Initialisation avec {path}")
+        logger.info(f"Sample Bank: Initialisation avec {path}")
 
         path_resolved = str(Path(path).resolve())  # Conversion en chemin absolu
 
@@ -40,7 +42,7 @@ class SampleBank(Base):
         session.commit()
         session.close()
 
-        print(f"Classe SampleBank: La librairie {self.path} a été ajoutée avec succès")
+        logger.info(f"Classe SampleBank: La librairie {self.path} a été ajoutée avec succès")
 
     def __repr__(self):
         return f"<SampleBank id={self.id}, position={self.position}, path={self.path}>"
@@ -49,7 +51,7 @@ class SampleBank(Base):
         """
         Convertit l'instance en dictionnaire pour faciliter le transfert de données.
         """
-        print("SampleBank.to_dict")
+        logger.info("SampleBank.to_dict")
         return {
             'id': self.id,
             'path': self.path,
@@ -62,7 +64,7 @@ class SampleBank(Base):
         Récupère toutes les instances de SampleBank depuis la base de données,
         triées par position.
         """
-        print("Récupération des librairies depuis la base de données")
+        logger.info("Récupération des librairies depuis la base de données")
         with SessionLocal() as session:
             return session.query(SampleBank).order_by(SampleBank.position).all()
         

@@ -4,6 +4,8 @@ from backend.db import SessionLocal
 from backend.models.sample import Sample
 from backend.models.normalize_worker import NormalizeWorker
 from backend.services.notification_service import NotificationType
+import logging
+logger = logging.getLogger("sample_service")
 
 class SampleService(QObject):
     """
@@ -26,7 +28,7 @@ class SampleService(QObject):
 
     def __init__(self, app_context):
         super().__init__()
-        print("[SampleService] Initialisation du service")
+        logger.info("[SampleService] Initialisation du service")
         # cache local de tous les échantillons
         self._samples = []
         self._normalize_threads = {}
@@ -43,7 +45,7 @@ class SampleService(QObject):
         self._integrity_worker.fileMissing.connect(self.removeFromHistory)
         # (optionnel) gérer les durations incohérentes
         self._integrity_worker.durationMismatch.connect(
-            lambda sid, d: print(f"[Integrity] Durée corrigée for sample {sid} → {d:.2f}s")
+            lambda sid, d: logger.info(f"[Integrity] Durée corrigée for sample {sid} → {d:.2f}s")
         )
         self._integrity_worker.start()
 
@@ -54,7 +56,7 @@ class SampleService(QObject):
             with SessionLocal() as session:
                 self._samples = session.query(Sample).order_by(Sample.id).all()
         except SQLAlchemyError as e:
-            print(f"[SampleService] init load error: {e}")
+            logger.info(f"[SampleService] init load error: {e}")
             self._samples = []
         finally:
             self.samplesChanged.emit(list(self._samples))
@@ -114,7 +116,7 @@ class SampleService(QObject):
 
 
         except Exception as e:
-            print(f"[SampleService] add error: {e}")
+            logger.info(f"[SampleService] add error: {e}")
         finally:
             # 5) Émission de la liste mise à jour
             self.samplesChanged.emit(list(self._samples))
@@ -142,14 +144,14 @@ class SampleService(QObject):
             )
             self.sampleDeleted.emit(sample_id)
         except Exception as e:
-            print(f"[SampleService] delete error: {e}")
+            logger.info(f"[SampleService] delete error: {e}")
             # ▶ Erreur lors de la suppression
             self.app_context.notifications.notify(
                 title="❌ Erreur suppression",
                 message=str(e),
                 type=NotificationType.ERROR
             )
-            print(f"[SampleService] delete error: {e}")
+            logger.info(f"[SampleService] delete error: {e}")
         finally:
             self.samplesChanged.emit(list(self._samples))
 
@@ -178,7 +180,7 @@ class SampleService(QObject):
                 message=str(e),
                 type=NotificationType.ERROR
             )
-            print(f"[SampleService] rename error: {e}")
+            logger.info(f"[SampleService] rename error: {e}")
         finally:
             self.samplesChanged.emit(list(self._samples))
 
@@ -206,7 +208,7 @@ class SampleService(QObject):
                 message=str(e),
                 type=NotificationType.ERROR
             )
-            print(f"[SampleService] move error: {e}")
+            logger.info(f"[SampleService] move error: {e}")
         finally:
             self.samplesChanged.emit(list(self._samples))
 
@@ -251,7 +253,7 @@ class SampleService(QObject):
                 message=str(e),
                 type=NotificationType.ERROR
             )
-            print(f"[SampleService] removeFromHistory error: {e}")
+            logger.info(f"[SampleService] removeFromHistory error: {e}")
         finally:
             # Toujours ré-émission de la liste
             self.samplesChanged.emit(list(self._samples))
@@ -277,7 +279,7 @@ class SampleService(QObject):
             for samp in [s for s in self._samples if s.id in sample_ids]:
                 if os.path.isfile(samp.path):
                     os.remove(samp.path)
-                    print(f"[SampleService] Fichier {samp.path} supprimé")
+                    logger.info(f"[SampleService] Fichier {samp.path} supprimé")
 
             # 3) Suppression en base dans une seule session
             session = SessionLocal()
@@ -295,7 +297,7 @@ class SampleService(QObject):
             for sample_id in sample_ids:
                 self.sampleDeleted.emit(sample_id)
         except Exception as e:
-            print(f"[SampleService] bulkDelete error: {e}")
+            logger.info(f"[SampleService] bulkDelete error: {e}")
         finally:
             # 6) N’émettre qu’UN SEUL samplesChanged à la fin
             self.samplesChanged.emit(list(self._samples))

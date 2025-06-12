@@ -7,6 +7,8 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from dataclasses import dataclass
 from enum import Enum, auto
 from datetime import datetime
+import logging
+logger = logging.getLogger("notification_service")
 
 
 class NotificationType(Enum):
@@ -52,7 +54,7 @@ class NotificationService(QObject):
         :param type:    Type de la notification (INFO, SUCCESS, WARNING, ERROR)
         :param duration:Durée d'affichage en millisecondes
         """
-        print(f"NotificationService: Création d'une notification '{title}' ({type.name})")
+        logger.info(f"NotificationService: Création d'une notification '{title}' ({type.name})")
         notif = Notification(
             id=self._next_id,
             title=title,

@@ -2,6 +2,8 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton
 from PyQt6.QtCore import Qt
 import os
+import logging
+logger = logging.getLogger("main_window")
 
 import qtawesome as qta
 
@@ -135,7 +137,7 @@ class MainWindow(QMainWindow):
 
     def _exit_procedure(self):
         """Actions de nettoyage avant fermeture"""
-        print("Fermeture de l'application proprement...")
+        logger.info("Fermeture de l'application proprement...")
         if self.app_context.recorder.is_recording:
             self.app_context.recorder.stop()
         # TODO: autres nettoyages (sauvegarde, etc.)

@@ -1,5 +1,7 @@
 import os
 import sys
+import logging
+logger = logging.getLogger("record_widget")
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -216,7 +218,7 @@ class RecordWidgetWindow(QMainWindow):
             self.library_name.setText("No library.")
 
     def updateRetroRecording(self):
-        print("update Retro Recoring from record widget")
+        logger.info("update Retro Recoring from record widget")
         if self.retro_time_selected > self.settings.getPreSeconds():
             self.retro_time_selected = self.settings.getPreSeconds()
             self.updateRecordButtonDisplay()
@@ -345,9 +347,9 @@ class RecordWidgetWindow(QMainWindow):
 
     def _poll_worker(self):
         for msg, payload in self.app_context.recorder.poll():
-            print(f"record_widget: polling {msg} {payload}")
+            logger.info(f"record_widget: polling {msg} {payload}")
             if msg == 'done':
-                print("record_widget: done received from service.")
+                logger.info("record_widget: done received from service.")
                 path = payload
                 # Vérification du silence du fichier enregistré
                 try:
@@ -355,7 +357,7 @@ class RecordWidgetWindow(QMainWindow):
                     is_silent = not np.any(np.abs(data) > 1e-8)
                 except Exception as e:
                     # En cas d'erreur de lecture, on considère le fichier comme non muet
-                    print(f"record_widget: erreur lecture WAV {path}: {e}")
+                    logger.info(f"record_widget: erreur lecture WAV {path}: {e}")
                     is_silent = False
 
                 if is_silent:

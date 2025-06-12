@@ -4,6 +4,8 @@ import multiprocessing as mp
 from backend.models.recorder_worker import recorder_worker
 from backend.services.settings_service import SettingsService
 from backend.models.sample import Sample
+import logging
+logger = logging.getLogger("recorder_service")
 
 class RecorderService(QObject):
     """
@@ -46,26 +48,26 @@ class RecorderService(QObject):
         self.is_recording = False
         self.worker.start()
         if self.retro_enabled:
-            print("RecorderService: rétro-enregistrement activé au démarrage")
+            logger.info("RecorderService: rétro-enregistrement activé au démarrage")
             self.cmd_queue.put(('enable_retro',))
 
     @pyqtSlot(bool)
     def onRetroToggled(self, enabled: bool):
         """Slot appelé à chaque fois qu’on active/désactive le rétro."""
-        print("RecorderService: onRetroToggled called with signal: ", enabled)
+        logger.info("RecorderService: onRetroToggled called with signal: ", enabled)
         self.retro_enabled = enabled
         if enabled:
-            print("RecorderService: retro activé")
+            logger.info("RecorderService: retro activé")
             self.cmd_queue.put(('enable_retro',))
         else:
-            print("RecorderService: retro désactivé")
+            logger.info("RecorderService: retro désactivé")
             self.cmd_queue.put(('disable_retro',))
 
     @pyqtSlot(int)
     def onPreSecondsChanged(self, secs: int):
         """Slot appelé à chaque fois qu’on change la durée du buffer retro."""
         self.pre_seconds = secs
-        print(f"RecorderService: retro buffer -> {secs}s")
+        logger.info(f"RecorderService: retro buffer -> {secs}s")
         # si le worker supporte la modification à chaud :
         self.cmd_queue.put(('set_retro_time', secs))
 
@@ -74,7 +76,7 @@ class RecorderService(QObject):
         """Slot appelé quand on change le device loopback dans les settings."""
         name = device.name if device else None
         self.loopback_name = name
-        print(f"RecorderService: changement de loopback → {name}")
+        logger.info(f"RecorderService: changement de loopback → {name}")
         # on prévient le worker et on ré-active le rétro s’il l’était déjà
         self.cmd_queue.put(('set_device', name))
         if self.retro_enabled:
@@ -89,7 +91,7 @@ class RecorderService(QObject):
         la capture au nouveau sample rate.
         """
         # self.cmd_q est la queue liée au worker (Queue pour ordres)
-        print(f"RecorderService: demande de changement de sample_rate → {new_rate}")
+        logger.info(f"RecorderService: demande de changement de sample_rate → {new_rate}")
         self.cmd_queue.put(('set_sample_rate', new_rate))
 
     def record_button_clicked(self, selected_library, retro_time=None):
@@ -105,29 +107,29 @@ class RecorderService(QObject):
 
     def enable_retro(self):
         """Enable background retro recording."""
-        print("RecorderService: enable_retro called")
+        logger.info("RecorderService: enable_retro called")
         self.cmd_queue.put(('enable_retro',))
 
     def disable_retro(self):
         """Disable background retro recording."""
-        print("RecorderService: disable_retro called")
+        logger.info("RecorderService: disable_retro called")
         self.cmd_queue.put(('disable_retro',))
 
     def start(self, output_folder, retro_time):
         """Démarre l’enregistrement live."""
-        print(f"RecorderService: démarrage vers {output_folder} (retro={retro_time}s)")
+        logger.info(f"RecorderService: démarrage vers {output_folder} (retro={retro_time}s)")
         self.is_recording = True
         self.cmd_queue.put(('start', output_folder, retro_time))
 
     def stop(self):
         """Arrête l’enregistrement."""
-        print("RecorderService: arrêt")
+        logger.info("RecorderService: arrêt")
         self.is_recording = False
         self.cmd_queue.put(('stop',))
 
     def shutdown(self, timeout=2):
         """Arrêt propre du worker."""
-        print("RecorderService: shutdown")
+        logger.info("RecorderService: shutdown")
         self.cmd_queue.put(('shutdown',))
         try:
             msg, _ = self.resp_queue.get(timeout=timeout)
@@ -153,7 +155,7 @@ class RecorderService(QObject):
             elif msg == 'stopped':
                 self.is_recording = False
             elif msg == 'retro_enabled':
-                print(f"RecorderService: retro_enabled -> {payload}")
+                logger.info(f"RecorderService: retro_enabled -> {payload}")
                 self.retro_enabled = payload
             elif msg == 'done':
                 others.append(('done', payload))

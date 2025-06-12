@@ -3,6 +3,8 @@
 import os
 import numpy as np
 import soundfile as sf
+import logging
+logger = logging.getLogger("normalize_worker")
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -51,7 +53,7 @@ class NormalizeWorker(QThread):
         4) Écrase le fichier avec le résultat
         5) Signale la fin
         """
-        print(f"[NormalizeWorker] Démarrage de la normalisation pour {self.file_path} (mode={self.mode}, target_db={self.target_db})")
+        logger.info(f"[NormalizeWorker] Démarrage de la normalisation pour {self.file_path} (mode={self.mode}, target_db={self.target_db})")
         # 1) Envoi du signal de démarrage
         self.startedNormalization.emit(self.sample_id)
 
@@ -59,7 +61,7 @@ class NormalizeWorker(QThread):
         try:
             data, sr = sf.read(self.file_path, dtype="float32")
         except Exception as e:
-            print(f"[NormalizeWorker] Erreur lors de la lecture de {self.file_path}: {e}")
+            logger.info(f"[NormalizeWorker] Erreur lors de la lecture de {self.file_path}: {e}")
             # On émet tout de même le signal de fin pour éviter que la carte UI reste bloquée
             self.finishedNormalization.emit(self.sample_id)
             return
@@ -119,7 +121,7 @@ class NormalizeWorker(QThread):
                         data = data * (0.999 / max_after)
 
                 except Exception as e:
-                    print(f"[NormalizeWorker] Erreur LUFS pour {self.file_path}: {e}")
+                    logger.info(f"[NormalizeWorker] Erreur LUFS pour {self.file_path}: {e}")
                     # Fallback en RMS
                     rms_lin = np.sqrt(np.mean(np.square(data), axis=0))
                     rms_lin_max = np.max(rms_lin)
@@ -146,16 +148,16 @@ class NormalizeWorker(QThread):
 
         else:
             # Mode inconnu : on ne fait rien
-            print(f"[NormalizeWorker] Mode inconnu '{self.mode}' pour {self.file_path}")
+            logger.info(f"[NormalizeWorker] Mode inconnu '{self.mode}' pour {self.file_path}")
 
         # 4) Réécriture du fichier WAV normalisé (écrase l’original)
         try:
             sf.write(self.file_path, data, sr)
-            print(f"[NormalizeWorker] Normalisation terminée pour {self.file_path}")
+            logger.info(f"[NormalizeWorker] Normalisation terminée pour {self.file_path}")
             self.finishedNormalization.emit(self.sample_id)
         except Exception as e:
             err = f"Écriture impossible : {e}"
-            print(f"[NormalizeWorker] {err}")
+            logger.info(f"[NormalizeWorker] {err}")
             self.normalizationFailed.emit(self.sample_id, err)
 
         # 5) Signal de fin de normalisation

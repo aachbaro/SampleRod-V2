@@ -2,6 +2,8 @@
 
 from pathlib import Path
 import sys
+import logging
+logger = logging.getLogger("AppContext")
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from backend.models.sample import Sample
@@ -21,7 +23,7 @@ class AppContext:
     Cette classe est utilisée pour initialiser les services nécessaires à l'application.
     """
     def __init__(self):
-        print("Initialisation de AppContext...")
+        logger.info("Initialisation de AppContext...")
 
         self.notifications = NotificationService()
 

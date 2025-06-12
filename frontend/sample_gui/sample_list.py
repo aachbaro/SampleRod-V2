@@ -2,6 +2,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QScrollArea, QToolBar, QToolButton,
     QMenu, QFileDialog
 )
+import logging
+logger = logging.getLogger("sample_list")
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import pyqtSlot, QSize, Qt, QSettings
@@ -225,7 +227,7 @@ class SampleListWidget(QWidget):
 
     @pyqtSlot(int, bool)
     def onSelectionChanged(self, sample_id: int, checked: bool):
-        print("onSelectionChanged:", sample_id, checked)
+        logger.info("onSelectionChanged:", sample_id, checked)
         if checked:
             self.selected_ids.add(sample_id)
         else:
@@ -584,4 +586,3 @@ class SampleListWidget(QWidget):
 
         # 6) On scroll vers le haut pour voir les nouveaux items
         self.scroll_area.verticalScrollBar().setValue(0)
-

@@ -3,6 +3,8 @@ from PyQt6.QtWidgets import (
     QSpacerItem, QSizePolicy, QLineEdit, QMessageBox,
     QComboBox, QApplication, QCheckBox, QFileDialog
 )
+import logging
+logger = logging.getLogger("sample_card")
 from PyQt6.QtCore import pyqtSignal, Qt, QSize, QTimer, QMimeData
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut, QDrag
 from PyQt6.QtCore import QEvent
@@ -558,7 +560,7 @@ class SampleCard(QWidget):
             except Exception:
                 pass
 
-        print(f"[SampleCard] Déplacer l’échantillon {self.sample.id} → {new_dir}")
+        logger.info(f"[SampleCard] Déplacer l’échantillon {self.sample.id} → {new_dir}")
         # émet vers le SampleListWidget → SampleService.move()
         self.sampleMoved.emit(self.sample.id, new_dir)
         # on repasse la combo sur « dossier courant »
@@ -630,7 +632,7 @@ class SampleCard(QWidget):
         self.isChecked = checked
         # On émet directement le booléen vers le parent
         self.selectionChanged.emit(self.sample.id, checked)
-        print(f"Checkbox toggled: {self.sample.id} is now {'checked' if checked else 'unchecked'}")
+        logger.info(f"Checkbox toggled: {self.sample.id} is now {'checked' if checked else 'unchecked'}")
         # Conserver le style visuel si vous voulez colorer la carte quand elle est cochée :
         self.setProperty("checked", checked)
         self.style().unpolish(self)

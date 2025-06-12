@@ -2,6 +2,8 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidgetItem, QMenu, QMessageBox
 )
+import logging
+logger = logging.getLogger("wave_form")
 
 from PyQt6.QtGui import QCursor, QMouseEvent, QDrag
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QMimeData
@@ -256,7 +258,7 @@ class WaveformWidget(QWidget):
 
     def set_waveform_data(self, y, sr, dur):
         if y.size == 0 or sr == 0:
-            print("[WaveformWidget] Fichier vide ou erreur")
+            logger.info("[WaveformWidget] Fichier vide ou erreur")
             return
         self.waveform_data, self.sample_rate, self.duration = y, sr, dur
         vb = self.plot.getViewBox()
@@ -358,7 +360,7 @@ class WaveformWidget(QWidget):
         # mets à jour play_start / play_end et place la tête de lecture
         self.play_start, self.play_end = t, t2
         self.read_head.setPos(t)
-        print(f"Région mise à jour: {t:.3f}s → {t2:.3f}s")
+        logger.info(f"Région mise à jour: {t:.3f}s → {t2:.3f}s")
 
     def on_marker_list_double_clicked(self, item: QListWidgetItem):
         payload = item.data(Qt.ItemDataRole.UserRole)
@@ -379,7 +381,7 @@ class WaveformWidget(QWidget):
         # pose du marker
         self.play_start = x
         self._loop_start_sample = int(x * self.sample_rate)
-        print(f"Région : début {self.play_start:.3f}s")
+        logger.info(f"Région : début {self.play_start:.3f}s")
         if self.marker:
             self.plot.removeItem(self.marker)
         self.marker = pg.InfiniteLine(
@@ -398,7 +400,7 @@ class WaveformWidget(QWidget):
         # remet à jour la région côté visuel
         self.region.setRegion([start, end])
         self.play_start, self.play_end = start, end
-        # print(f"Région : début {start:.3f}s — fin {end:.3f}s")
+        # logger.info(f"Région : début {start:.3f}s — fin {end:.3f}s")
 
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
@@ -562,7 +564,7 @@ class WaveformWidget(QWidget):
              and event.button() == Qt.MouseButton.LeftButton \
              and self._creating:
 
-            print("Fin du drag")
+            logger.info("Fin du drag")
 
             pos       = self.plot.getViewBox().mapSceneToView(event.scenePos())
             release_x = float(np.clip(pos.x(), 0, self.duration))
@@ -877,11 +879,11 @@ class WaveformWidget(QWidget):
                 if getattr(self.stream, 'active', False):
                     self.stream.stop()
             except Exception as e:
-                print(f"[WaveformWidget] Erreur stop: {e}")
+                logger.info(f"[WaveformWidget] Erreur stop: {e}")
             try:
                 self.stream.close()
             except Exception as e:
-                print(f"[WaveformWidget] Erreur close: {e}")
+                logger.info(f"[WaveformWidget] Erreur close: {e}")
             finally:
                 self.stream = None
         self.is_playing = False
@@ -960,9 +962,9 @@ class WaveformWidget(QWidget):
         self._debug_history()
 
     def _debug_history(self):
-        print("=== Historique des commandes ===")
-        print(self.history)
-        print("================================")
+        logger.info("=== Historique des commandes ===")
+        logger.info(self.history)
+        logger.info("================================")
 
 # —————————————————————————————————————————————— Save / export ——————————————————————————————————————————————
 
@@ -1107,7 +1109,7 @@ class WaveformWidget(QWidget):
         # Met à jour play_start/play_end et positionne la tête
         self.play_start, self.play_end = t_left, t_right
         self.read_head.setPos(t_left)
-        print(f"Région créée par Ctrl+double-clic : {t_left:.3f}s → {t_right:.3f}s")
+        logger.info(f"Région créée par Ctrl+double-clic : {t_left:.3f}s → {t_right:.3f}s")
 
 
 class NoLeftDragViewBox(pg.ViewBox):
