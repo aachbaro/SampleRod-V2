@@ -129,7 +129,7 @@ class SampleListWidget(QWidget):
         self.filter_combo = QComboBox()
         self.filter_combo.setToolTip("Filtrer par dossier")
         self.filter_combo.currentIndexChanged.connect(self.onFilterChanged)
-        self.updateFilterOptions(self.app_context.settings.libraries)
+        self.updateFilterOptions()
         self.toolbar.addSeparator()
         self.toolbar.addWidget(self.filter_combo)
 
@@ -161,6 +161,7 @@ class SampleListWidget(QWidget):
         Slot appelé quand SampleService met à jour son cache.
         » Met à jour la liste interne et reconstruit les cartes.
         """
+        self.updateFilterOptions()
         self.refresh_samples()
 
     @pyqtSlot(int)
@@ -626,14 +627,20 @@ class SampleListWidget(QWidget):
         self.scroll_area.verticalScrollBar().setValue(0)
 
     # ------------------------------------------------------------------ Filtrage
-    def updateFilterOptions(self, libraries):
+    def updateFilterOptions(self, _=None):
         """Met à jour la liste déroulante des dossiers de filtre."""
+        current = self.filter_combo.currentData()
+        dirs = sorted(self.sample_store.get_sample_directories())
         self.filter_combo.blockSignals(True)
         self.filter_combo.clear()
         self.filter_combo.addItem("Tous", None)
-        for lib in sorted(libraries, key=lambda l: l.position):
-            name = os.path.basename(lib.path) or lib.path
-            self.filter_combo.addItem(name, lib.path)
+        for d in dirs:
+            name = os.path.basename(d) or d
+            self.filter_combo.addItem(name, d)
+        if current is not None:
+            idx = self.filter_combo.findData(current)
+            if idx != -1:
+                self.filter_combo.setCurrentIndex(idx)
         self.filter_combo.blockSignals(False)
 
     @pyqtSlot()
