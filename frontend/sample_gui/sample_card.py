@@ -105,6 +105,8 @@ class SampleCard(QWidget):
         self.rename_input.setStyleSheet(
             "background-color: #444; color: #ffffff; border: 1px solid #f7cd36; padding: 4px;"
         )
+        # Valider le renommage avec la touche Entr\u00e9e, comme dans le DirectoryWidget
+        self.rename_input.returnPressed.connect(self.submitRename)
 
         self.check_button = QPushButton()
         self.check_button.setIcon(qta.icon('fa5s.check', color='green'))
