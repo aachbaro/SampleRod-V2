@@ -100,8 +100,6 @@ class DirectoryListWidget(QListWidget):
         self.parent_widget = parent  # ton DirectoryWidget
 
     def dragEnterEvent(self, event):
-        fmt = event.mimeData().formats()
-        print("DirectoryListWidget dragEnter formats:", fmt)
         if self.parent_widget._accepts(event.mimeData()):
             event.acceptProposedAction()
         else:
