@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QFileDialog,
     QSizePolicy,
+    QComboBox,
 )
 import logging
 logger = logging.getLogger("sample_list")
@@ -30,6 +31,7 @@ class SampleListWidget(QWidget):
         self.app_context  = app_context
         self.sample_store: SampleService = app_context.sample_store
         self.samples = []  # liste des samples à afficher
+        self.current_filter_dirs = []  # dossiers actifs pour le filtrage
         self.selected_ids  = set()        # ensemble des IDs cochés
         self._qs = QSettings("SampleRod", "Main")
 
@@ -44,6 +46,7 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleFinishedNormalization.connect(self.onFinishedNormalization)
         self.sample_store.sampleNormalizationFailed.connect(self.onNormalizationFailed)
         self.sample_store.sampleRemovedFromHistory.connect(self.onSampleRemovedFromHistory)
+        self.app_context.settings.librariesChanged.connect(self.updateFilterOptions)
         # 2) stockage des cartes existantes
         self._card_widgets = {}
 
@@ -51,7 +54,7 @@ class SampleListWidget(QWidget):
         self.init_ui()
 
         # 4) initialisation de la liste avec le cache actuel
-        self.onSamplesChanged(self.sample_store.get_cached())
+        self.refresh_samples()
 
     def init_ui(self):
         """
@@ -114,6 +117,14 @@ class SampleListWidget(QWidget):
         self.actions_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toolbar.addWidget(self.actions_btn)
 
+        # ─── Filtre de bibliothèque ───
+        self.filter_combo = QComboBox()
+        self.filter_combo.setToolTip("Filtrer par dossier")
+        self.filter_combo.currentIndexChanged.connect(self.onFilterChanged)
+        self.updateFilterOptions(self.app_context.settings.libraries)
+        self.toolbar.addSeparator()
+        self.toolbar.addWidget(self.filter_combo)
+
          # ─── Autoriser le glisser-déposer de fichiers ───
         self.setAcceptDrops(True)
 
@@ -134,11 +145,7 @@ class SampleListWidget(QWidget):
         Slot appelé quand SampleService met à jour son cache.
         » Met à jour la liste interne et reconstruit les cartes.
         """
-        # 1) on stocke la nouvelle liste
-        self.samples = samples
-        # 2) on reconstruit l'affichage
-        self.refreshList()
-        self.updateSelectActions()
+        self.refresh_samples()
 
     @pyqtSlot(int)
     def onSampleAdded(self, sample_id: int):
@@ -151,9 +158,12 @@ class SampleListWidget(QWidget):
         # 1) trouve l'objet Sample dans le cache du service
         new_sample = next(
             (s for s in self.sample_store.get_cached() if s.id == sample_id),
-            None
+            None,
         )
         if new_sample is None:
+            return
+
+        if not self._path_matches_filter(new_sample.path):
             return
 
         # 2) l'ajoute en début de liste interne
@@ -592,3 +602,34 @@ class SampleListWidget(QWidget):
 
         # 6) On scroll vers le haut pour voir les nouveaux items
         self.scroll_area.verticalScrollBar().setValue(0)
+
+    # ------------------------------------------------------------------ Filtrage
+    def updateFilterOptions(self, libraries):
+        """Met à jour la liste déroulante des dossiers de filtre."""
+        self.filter_combo.blockSignals(True)
+        self.filter_combo.clear()
+        self.filter_combo.addItem("Tous", None)
+        for lib in sorted(libraries, key=lambda l: l.position):
+            name = os.path.basename(lib.path) or lib.path
+            self.filter_combo.addItem(name, lib.path)
+        self.filter_combo.blockSignals(False)
+
+    @pyqtSlot()
+    def onFilterChanged(self):
+        data = self.filter_combo.currentData()
+        self.current_filter_dirs = [] if data is None else [data]
+        self.refresh_samples()
+
+    def refresh_samples(self):
+        if self.current_filter_dirs:
+            self.samples = self.sample_store.get_samples_in_dirs(self.current_filter_dirs)
+        else:
+            self.samples = self.sample_store.get_cached()
+        self.refreshList()
+
+    def _path_matches_filter(self, path: str) -> bool:
+        if not self.current_filter_dirs:
+            return True
+        ap = os.path.abspath(path)
+        return any(ap.startswith(os.path.abspath(d)) for d in self.current_filter_dirs)
+

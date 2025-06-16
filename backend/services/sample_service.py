@@ -72,6 +72,16 @@ class SampleService(QObject):
     def get_cached(self):
         """Retourne la liste courante en mémoire."""
         return list(self._samples)
+
+    def get_samples_in_dirs(self, directories: list[str]) -> list[Sample]:
+        """Retourne les samples dont le chemin commence par l'un des dossiers fournis."""
+        if not directories:
+            return self.get_cached()
+        dirs = [os.path.abspath(d) for d in directories]
+        return [
+            s for s in self._samples
+            if any(os.path.abspath(s.path).startswith(d) for d in dirs)
+        ]
     
     def add(self, path: str):
         """
