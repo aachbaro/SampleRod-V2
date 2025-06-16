@@ -155,6 +155,33 @@ class SampleService(QObject):
         finally:
             self.samplesChanged.emit(list(self._samples))
 
+    def delete_by_path(self, file_path: str):
+        """Supprime un fichier par son chemin et nettoie la BDD si nécessaire."""
+        samp = next((s for s in self._samples if s.path == file_path), None)
+        if samp:
+            self.delete(samp.id)
+            return True, None
+
+        import os
+        try:
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                self.app_context.notifications.notify(
+                    title="⚠️ Sample supprimé",
+                    message=os.path.basename(file_path),
+                    type=NotificationType.WARNING,
+                )
+                return True, None
+            raise FileNotFoundError(file_path)
+        except Exception as e:
+            logger.info(f"[SampleService] delete_by_path error: {e}")
+            self.app_context.notifications.notify(
+                title="❌ Erreur suppression",
+                message=str(e),
+                type=NotificationType.ERROR,
+            )
+            return False, str(e)
+
     def rename(self, sample_id: int, new_name: str):
         """
         Renomme le sample (FS + BD), met à jour le cache, et émet sampleRenamed + samplesChanged.
