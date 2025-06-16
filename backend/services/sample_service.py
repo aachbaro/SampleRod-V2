@@ -4,6 +4,7 @@ from backend.db import SessionLocal
 from backend.models.sample import Sample
 from backend.models.normalize_worker import NormalizeWorker
 from backend.services.notification_service import NotificationType
+import os
 import logging
 logger = logging.getLogger("sample_service")
 
@@ -180,6 +181,55 @@ class SampleService(QObject):
                 message=str(e),
                 type=NotificationType.ERROR,
             )
+            return False, str(e)
+
+    def rename_by_path(self, file_path: str, new_name: str):
+        """Renomme un fichier par son chemin et met à jour la BDD si besoin."""
+        samp = next((s for s in self._samples if s.path == file_path), None)
+        if samp:
+            old_name = samp.name
+            sample_id = samp.id
+            try:
+                samp.rename(new_name)
+                samp.name = new_name
+                self.sampleRenamed.emit(sample_id, new_name)
+                self.app_context.notifications.notify(
+                    title="✅ Sample renommé",
+                    message=f"{old_name} → {new_name}",
+                    type=NotificationType.SUCCESS,
+                )
+                return True, None
+            except Exception as e:
+                self.app_context.notifications.notify(
+                    title="❌ Erreur renommage",
+                    message=str(e),
+                    type=NotificationType.ERROR,
+                )
+                logger.info(f"[SampleService] rename_by_path error: {e}")
+                return False, str(e)
+            finally:
+                self.samplesChanged.emit(list(self._samples))
+
+        folder = os.path.dirname(file_path)
+        old_basename = os.path.basename(file_path)
+        ext = os.path.splitext(old_basename)[1]
+        new_filename = new_name.strip() + ext
+        new_path = os.path.join(folder, new_filename)
+        try:
+            os.rename(file_path, new_path)
+            self.app_context.notifications.notify(
+                title="✅ Fichier renommé",
+                message=f"{old_basename} → {new_filename}",
+                type=NotificationType.SUCCESS,
+            )
+            return True, None
+        except Exception as e:
+            self.app_context.notifications.notify(
+                title="❌ Erreur renommage",
+                message=str(e),
+                type=NotificationType.ERROR,
+            )
+            logger.info(f"[SampleService] rename_by_path error: {e}")
             return False, str(e)
 
     def rename(self, sample_id: int, new_name: str):
