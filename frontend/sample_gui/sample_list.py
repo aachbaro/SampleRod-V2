@@ -8,12 +8,13 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QSizePolicy,
     QComboBox,
+    QLabel,
 )
 import logging
 logger = logging.getLogger("sample_list")
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import pyqtSlot, QSize, Qt, QSettings
+from PyQt6.QtCore import pyqtSlot, pyqtSignal, QSize, Qt, QSettings, QThread
 import qtawesome as qta
 from frontend.sample_gui.sample_card import SampleCard
 from backend.models.AppContext import AppContext
@@ -34,6 +35,13 @@ class SampleListWidget(QWidget):
         self.current_filter_dirs = []  # dossiers actifs pour le filtrage
         self.selected_ids  = set()        # ensemble des IDs cochés
         self._qs = QSettings("SampleRod", "Main")
+
+        # pagination
+        self.page_size = 50
+        self.current_offset = 0
+        self.is_loading = False
+        self.more_available = True
+        self._loader_thread = None
 
         # 1) abonnements aux signaux du service
         self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
@@ -137,7 +145,15 @@ class SampleListWidget(QWidget):
         self.content_layout.setContentsMargins(10, 10, 10, 10)
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
-        self.refreshList()
+
+        # Indicateur de chargement
+        self.loading_label = QLabel("Chargement...")
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.loading_label.hide()
+        self.content_layout.addWidget(self.loading_label)
+
+        # Scroll listener pour chargement progressif
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self.onScrollValueChanged)
 
     @pyqtSlot(list)
     def onSamplesChanged(self, samples: list):
@@ -186,6 +202,8 @@ class SampleListWidget(QWidget):
         # 4) stocke la carte et affiche-la en tête du layout
         self._card_widgets[sample_id] = card
         self.content_layout.insertWidget(0, card)
+        self.current_offset += 1
+        self.updateSelectActions()
 
     @pyqtSlot(int)
     def delete_sample(self, sample_id: int):
@@ -310,6 +328,8 @@ class SampleListWidget(QWidget):
             del self._card_widgets[sample_id]
             # mettre à jour selected_ids si besoin
             self.selected_ids.discard(sample_id)
+            if self.current_offset > 0:
+                self.current_offset -= 1
         self.updateSelectActions()
 
     @pyqtSlot()
@@ -408,6 +428,8 @@ class SampleListWidget(QWidget):
             card.deleteLater()
             del self._card_widgets[sample_id]
             self.selected_ids.discard(sample_id)
+            if self.current_offset > 0:
+                self.current_offset -= 1
         self.updateSelectActions()
 
     @pyqtSlot(int, str, str)
@@ -621,15 +643,92 @@ class SampleListWidget(QWidget):
         self.refresh_samples()
 
     def refresh_samples(self):
-        if self.current_filter_dirs:
-            self.samples = self.sample_store.get_samples_in_dirs(self.current_filter_dirs)
-        else:
-            self.samples = self.sample_store.get_cached()
-        self.refreshList()
+        # Réinitialise l'affichage et charge la première page
+        self.samples = []
+        self.current_offset = 0
+        self.more_available = True
+        self.is_loading = False
+
+        for card in list(self._card_widgets.values()):
+            self.content_layout.removeWidget(card)
+            card.deleteLater()
+        self._card_widgets.clear()
+
+        self.loading_label.show()
+        self.load_next_page()
+        self.updateSelectActions()
 
     def _path_matches_filter(self, path: str) -> bool:
         if not self.current_filter_dirs:
             return True
         ap = os.path.abspath(path)
         return any(ap.startswith(os.path.abspath(d)) for d in self.current_filter_dirs)
+
+    # ---------------------- Chargement progressif ----------------------
+    def onScrollValueChanged(self, value: int):
+        bar = self.scroll_area.verticalScrollBar()
+        if (not self.is_loading and self.more_available and value >= bar.maximum() - 200):
+            self.load_next_page()
+
+    def load_next_page(self):
+        if self.is_loading or not self.more_available:
+            return
+        self.is_loading = True
+        self.loading_label.show()
+        self._loader_thread = SamplesPageLoader(
+            self.sample_store,
+            self.current_offset,
+            self.page_size,
+            self.current_filter_dirs,
+        )
+        self._loader_thread.samplesReady.connect(self.onSamplesLoaded)
+        self._loader_thread.start()
+
+    @pyqtSlot(list)
+    def onSamplesLoaded(self, samples: list):
+        self.loading_label.hide()
+        self.is_loading = False
+        self._loader_thread = None
+        if not samples:
+            self.more_available = False
+            return
+
+        for samp in samples:
+            self.samples.append(samp)
+            card = SampleCard(samp, self.app_context)
+            card.deleteSample.connect(self.delete_sample)
+            card.removeFromHistory.connect(self.sample_store.removeFromHistory)
+            card.renameSample.connect(self.rename_sample)
+            card.sampleMoved.connect(self.move_sample)
+            card.normalizeClicked.connect(self.onNormalizeClicked)
+            card.selectionChanged.connect(self.onSelectionChanged)
+            self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
+            self.sample_store.sampleMoved.connect(card.onMoveSuccess)
+
+            self._card_widgets[samp.id] = card
+            # Insérer avant l'indicateur de chargement
+            idx = self.content_layout.indexOf(self.loading_label)
+            self.content_layout.insertWidget(idx, card)
+
+        self.current_offset += len(samples)
+        if len(samples) < self.page_size:
+            self.more_available = False
+        self.updateSelectActions()
+
+
+class SamplesPageLoader(QThread):
+    """Thread pour charger une page de samples sans bloquer l'UI."""
+
+    samplesReady = pyqtSignal(list)
+
+    def __init__(self, service: SampleService, offset: int, limit: int, dirs: list[str]):
+        super().__init__()
+        self.service = service
+        self.offset = offset
+        self.limit = limit
+        self.dirs = dirs
+
+    def run(self):
+        results = self.service.get_samples(self.offset, self.limit, self.dirs)
+        self.samplesReady.emit(results)
 

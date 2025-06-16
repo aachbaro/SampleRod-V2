@@ -1,5 +1,6 @@
 from PyQt6.QtCore import QObject, pyqtSignal
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import or_
 from backend.db import SessionLocal
 from backend.models.sample import Sample
 from backend.models.normalize_worker import NormalizeWorker
@@ -82,6 +83,22 @@ class SampleService(QObject):
             s for s in self._samples
             if any(os.path.abspath(s.path).startswith(d) for d in dirs)
         ]
+
+    def get_samples(self, offset: int, limit: int, filter_dirs: list[str] | None = None) -> list[Sample]:
+        """Retourne une page de samples directement depuis la BDD."""
+        session = SessionLocal()
+        try:
+            query = session.query(Sample)
+            if filter_dirs:
+                abs_dirs = [os.path.abspath(d) for d in filter_dirs]
+                query = query.filter(or_(*[Sample.path.like(f"{d}%") for d in abs_dirs]))
+            query = query.order_by(Sample.id.desc()).offset(offset).limit(limit)
+            return query.all()
+        except SQLAlchemyError as e:
+            logger.info(f"[SampleService] get_samples error: {e}")
+            return []
+        finally:
+            session.close()
     
     def add(self, path: str):
         """
