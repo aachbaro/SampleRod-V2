@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QSizePolicy,
 )
-from PyQt6.QtCore import QMimeData, pyqtSignal
+from PyQt6.QtCore import QMimeData, pyqtSignal, QSettings
 
 from backend.services.directory_service import DirectoryService
 
@@ -22,7 +22,8 @@ class DirectoryWidget(QWidget):
     def __init__(self, service: DirectoryService, parent=None):
         super().__init__(parent)
         self.service = service
-        self.current_dir = ""
+        self._qs = QSettings("SampleRod", "Main")
+        self.current_dir = self._qs.value("last_directory", "", type=str)
         self._build_ui()
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.setMinimumWidth(100)
@@ -42,6 +43,7 @@ class DirectoryWidget(QWidget):
         d = QFileDialog.getExistingDirectory(self, "Choose folder", start_dir)
         if d:
             self.current_dir = d
+            self._qs.setValue("last_directory", d)
             self.refresh_list()
             # On notifie que le dossier a changé
             self.directoryChanged.emit(d)
