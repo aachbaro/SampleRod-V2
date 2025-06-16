@@ -36,6 +36,10 @@ class SampleListWidget(QWidget):
         self.active_dirs = set()  # dossiers actifs pour le filtrage
         self.selected_ids  = set()        # ensemble des IDs cochés
         self._qs = QSettings("SampleRod", "Main")
+        # Utilisé pour ignorer le rafraîchissement global quand on met à jour
+        # un seul sample (ajout, renommage, suppression, déplacement…) depuis
+        # cette vue.
+        self._ignore_next_refresh = False
 
         # pagination
         self.page_size = 50
@@ -174,6 +178,14 @@ class SampleListWidget(QWidget):
         » Met à jour la liste interne et reconstruit les cartes.
         """
         self.updateFilterOptions()
+        if self._ignore_next_refresh:
+            # L'ajout/suppression/renommage d'un sample déclenche également
+            # samplesChanged. Dans ces cas, la vue est déjà à jour via les
+            # slots dédiés, on se contente donc d'ignorer ce rafraîchissement
+            # global pour éviter de recharger toute la liste.
+            self._ignore_next_refresh = False
+            return
+
         self.refresh_samples()
 
     @pyqtSlot(int)
@@ -201,7 +213,7 @@ class SampleListWidget(QWidget):
         # 3) crée la carte et connecte uniquement ses signaux
         card = SampleCard(new_sample, self.app_context)
         card.deleteSample.connect(self.delete_sample)
-        card.removeFromHistory.connect(self.sample_store.removeFromHistory)
+        card.removeFromHistory.connect(self.remove_from_history)
         card.renameSample.connect(self.rename_sample)
         card.sampleMoved.connect(self.move_sample)
 
@@ -221,17 +233,26 @@ class SampleListWidget(QWidget):
     @pyqtSlot(int)
     def delete_sample(self, sample_id: int):
         """Déclenche la suppression via le service."""
+        self._ignore_next_refresh = True
         self.sample_store.delete(sample_id)
 
     @pyqtSlot(int, str)
     def rename_sample(self, sample_id: int, new_name: str):
         """Déclenche le renommage via le service."""
+        self._ignore_next_refresh = True
         self.sample_store.rename(sample_id, new_name)
 
     @pyqtSlot(int, str)
     def move_sample(self, sample_id: int, target_folder: str):
         """Déclenche le déplacement via le service."""
+        self._ignore_next_refresh = True
         self.sample_store.move(sample_id, target_folder)
+
+    @pyqtSlot(int)
+    def remove_from_history(self, sample_id: int):
+        """Déclenche la suppression de l'historique via le service."""
+        self._ignore_next_refresh = True
+        self.sample_store.removeFromHistory(sample_id)
 
     @pyqtSlot(int)
     def onStartedNormalization(self, sample_id: int):
@@ -316,6 +337,7 @@ class SampleListWidget(QWidget):
         # Ajouter chaque sample au service (création FS + BD + normalisation auto si activée)
         for path in fichiers:
             try:
+                self._ignore_next_refresh = True
                 self.sample_store.add(path)
             except Exception as e:
                 # En cas d’erreur, on affiche un message et on continue
@@ -363,6 +385,7 @@ class SampleListWidget(QWidget):
 
         to_remove = list(self.selected_ids)
         for sample_id in to_remove:
+            self._ignore_next_refresh = True
             self.sample_store.removeFromHistory(sample_id)
 
         # on vide la sélection et on désactive les actions
@@ -397,7 +420,7 @@ class SampleListWidget(QWidget):
                 # nouvelle carte, connexion des signaux
                 card = SampleCard(samp, self.app_context)
                 card.deleteSample.connect(self.delete_sample)
-                card.removeFromHistory.connect(self.sample_store.removeFromHistory)
+                card.removeFromHistory.connect(self.remove_from_history)
                 card.renameSample.connect(self.rename_sample)
                 card.sampleMoved.connect(self.move_sample)
                 card.normalizeClicked.connect(self.onNormalizeClicked)
@@ -481,7 +504,7 @@ class SampleListWidget(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            # Attention : créer une copie de la liste avant d'itérer, 
+            # Attention : créer une copie de la liste avant d'itérer,
             # car delete() met à jour self.selected_ids via onSampleDeleted
             to_delete = list(self.selected_ids)
             # Si on supprime un sample en cours de lecture, on coupe l'audio…
@@ -489,6 +512,7 @@ class SampleListWidget(QWidget):
             if current in to_delete:
                 self.app_context.audio_player.clear_audio()
 
+            self._ignore_next_refresh = True
             self.sample_store.bulkDelete(to_delete)
             # Après suppression, on vide selected_ids
             self.selected_ids.clear()
@@ -509,6 +533,7 @@ class SampleListWidget(QWidget):
             return
 
         for sample_id in list(self.selected_ids):
+            self._ignore_next_refresh = True
             self.sample_store.move(sample_id, dossier)
 
         # (Optionnel) Décoche tout à la fin :
@@ -624,6 +649,7 @@ class SampleListWidget(QWidget):
 
         # 3) Ajouter chaque fichier
         for p in paths:
+            self._ignore_next_refresh = True
             self.sample_store.add(p)
 
         # 4) Déconnecter le hook
@@ -724,7 +750,7 @@ class SampleListWidget(QWidget):
             self.samples.append(samp)
             card = SampleCard(samp, self.app_context)
             card.deleteSample.connect(self.delete_sample)
-            card.removeFromHistory.connect(self.sample_store.removeFromHistory)
+            card.removeFromHistory.connect(self.remove_from_history)
             card.renameSample.connect(self.rename_sample)
             card.sampleMoved.connect(self.move_sample)
             card.normalizeClicked.connect(self.onNormalizeClicked)
