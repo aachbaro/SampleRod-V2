@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSettings
 import os
 import logging
 logger = logging.getLogger("main_window")
@@ -132,6 +132,8 @@ class MainWindow(QMainWindow):
 
         self.app_context.notifications.notificationAdded.connect(self._increment_badge)
 
+        self._restore_directories()
+
     def _init_signals(self):
         """Connecte les signaux entre composants"""
         # Quand un nouvel échantillon est enregistré, on l'ajoute à la liste
@@ -167,6 +169,19 @@ class MainWindow(QMainWindow):
         self._unread_count = 0
         self._notif_badge.hide()
 
+    def _restore_directories(self):
+        """Reopen directories stored in settings if they still exist."""
+        qs = QSettings("SampleRod", "Main")
+        dirs = qs.value("recent_directories", [], type=list)
+        missing = []
+        for path in dirs:
+            if os.path.exists(path):
+                self._add_directory_tab(path)
+            else:
+                missing.append(path)
+        if missing:
+            logger.info(f"[MainWindow] Dossiers introuvables: {missing}")
+
     def _on_notif_button_clicked(self):
         # on inverse la visibilité du centre
         visible = not self.notif_center.isVisible()
@@ -176,13 +191,15 @@ class MainWindow(QMainWindow):
             self._clear_badge()
 
     # ------------------------------------------------------------------ Directories
-    def _add_directory_tab(self):
-        widget = DirectoryWidget(self.directory_service, self.app_context)
+    def _add_directory_tab(self, path: str | None = None):
+        widget = DirectoryWidget(self.directory_service, self.app_context, path=path)
         widget.directoryChanged.connect(
             lambda path, w=widget: self._update_dir_tab_text(w, path)
         )
         index = self.dir_tab_widget.addTab(widget, "New directory")
         self.dir_tab_widget.setCurrentIndex(index)
+        if path:
+            self._update_dir_tab_text(widget, path)
 
     def _update_dir_tab_text(self, widget: DirectoryWidget, path: str):
         name = os.path.basename(path) or path
@@ -193,5 +210,7 @@ class MainWindow(QMainWindow):
     def _close_directory_tab(self, index: int):
         w = self.dir_tab_widget.widget(index)
         if w:
+            if getattr(w, "current_dir", None):
+                DirectoryWidget.remove_from_history(w.current_dir)
             w.deleteLater()
         self.dir_tab_widget.removeTab(index)

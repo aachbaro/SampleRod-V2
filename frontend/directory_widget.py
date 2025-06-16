@@ -27,19 +27,22 @@ class DirectoryWidget(QWidget):
     # Signal émis quand on change de dossier
     directoryChanged = pyqtSignal(str)
 
-    def __init__(self, service: DirectoryService, app_context: AppContext, parent=None):
+    def __init__(self, service: DirectoryService, app_context: AppContext, parent=None, path: str | None = None):
         super().__init__(parent)
         self.service = service
         self.app_context = app_context
         self._current_item = None
         self._qs = QSettings("SampleRod", "Main")
-        self.current_dir = self._qs.value("last_directory", "", type=str)
+        self.current_dir = path or self._qs.value("last_directory", "", type=str)
         self._build_ui()
         # Mise à jour des items lorsqu'un renommage survient ailleurs dans l'application
         self.app_context.sample_store.sampleRenamed.connect(self.on_sample_renamed)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.setMinimumWidth(100)
         logger.info("[DirectoryWidget] Initialisation")
+
+        if path:
+            self.open_directory(path)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -54,14 +57,34 @@ class DirectoryWidget(QWidget):
         start_dir = self.current_dir or os.path.expanduser("~")
         d = QFileDialog.getExistingDirectory(self, "Choose folder", start_dir)
         if d:
-            self.current_dir = d
-            self._qs.setValue("last_directory", d)
-            self.refresh_list()
-            # On notifie que le dossier a changé
-            self.directoryChanged.emit(d)
+            self.open_directory(d)
             logger.info(f"[DirectoryWidget] Dossier sélectionné : {d}")
         else:
             logger.info("[DirectoryWidget] Sélection de dossier annulée")
+
+    def open_directory(self, path: str) -> None:
+        """Set current directory, refresh list and update history."""
+        if not path:
+            return
+        self.current_dir = path
+        self._qs.setValue("last_directory", path)
+        self._add_recent_directory(path)
+        self.refresh_list()
+        self.directoryChanged.emit(path)
+
+    def _add_recent_directory(self, path: str) -> None:
+        """Add path to the history of recent directories."""
+        dirs = self._qs.value("recent_directories", [], type=list)
+        try:
+            dirs = list(dirs)
+        except Exception:
+            dirs = []
+        if path in dirs:
+            dirs.remove(path)
+        dirs.insert(0, path)
+        if len(dirs) > 10:
+            dirs = dirs[:10]
+        self._qs.setValue("recent_directories", dirs)
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
@@ -152,6 +175,19 @@ class DirectoryWidget(QWidget):
                 base = os.path.splitext(os.path.basename(new_path))[0]
                 widget.rename_input.setText(base)
                 break
+
+    @staticmethod
+    def remove_from_history(path: str) -> None:
+        """Remove a directory from the stored history."""
+        qs = QSettings("SampleRod", "Main")
+        dirs = qs.value("recent_directories", [], type=list)
+        try:
+            dirs = list(dirs)
+        except Exception:
+            dirs = []
+        if path in dirs:
+            dirs.remove(path)
+            qs.setValue("recent_directories", dirs)
 
 
 
