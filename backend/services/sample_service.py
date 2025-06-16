@@ -74,6 +74,10 @@ class SampleService(QObject):
         """Retourne la liste courante en mémoire."""
         return list(self._samples)
 
+    def get_sample_directories(self) -> set[str]:
+        """Retourne l'ensemble des dossiers contenant les samples chargés."""
+        return {os.path.dirname(s.path) for s in self._samples}
+
     def get_samples_in_dirs(self, directories: list[str]) -> list[Sample]:
         """Retourne les samples dont le chemin commence par l'un des dossiers fournis."""
         if not directories:
