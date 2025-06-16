@@ -177,7 +177,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Directories
     def _add_directory_tab(self):
-        widget = DirectoryWidget(self.directory_service)
+        widget = DirectoryWidget(self.directory_service, self.app_context)
         widget.directoryChanged.connect(
             lambda path, w=widget: self._update_dir_tab_text(w, path)
         )
