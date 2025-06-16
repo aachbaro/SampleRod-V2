@@ -32,11 +32,14 @@ class DirectoryWidget(QWidget):
         self.service = service
         self.app_context = app_context
         self._current_item = None
+        self._items_by_id = {}
         self._qs = QSettings("SampleRod", "Main")
         self.current_dir = path or self._qs.value("last_directory", "", type=str)
         self._build_ui()
         # Mise à jour des items lorsqu'un renommage survient ailleurs dans l'application
         self.app_context.sample_store.sampleRenamed.connect(self.on_sample_renamed)
+        self.app_context.sample_store.sampleDeleted.connect(self.on_sample_deleted)
+        self.app_context.sample_store.sampleMoved.connect(self.on_sample_moved)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.setMinimumWidth(100)
         logger.info("[DirectoryWidget] Initialisation")
@@ -151,30 +154,97 @@ class DirectoryWidget(QWidget):
 
     def refresh_list(self):
         self.list_widget.clear()
+        self._items_by_id.clear()
         if self.current_dir:
             files = self.service.list_samples(self.current_dir)
-            logger.info(f"[DirectoryWidget] Rafraîchissement de la liste ({len(files)} fichiers)")
+            logger.info(
+                f"[DirectoryWidget] Rafraîchissement de la liste ({len(files)} fichiers)"
+            )
+            cache = {
+                s.path: s.id
+                for s in self.app_context.sample_store.get_cached()
+            }
             for name in files:
                 path = os.path.join(self.current_dir, name)
-                item_widget = DirectoryListItemWidget(path, self)
+                sample_id = cache.get(path)
+                item_widget = DirectoryListItemWidget(path, self, sample_id)
                 list_item = QListWidgetItem(self.list_widget)
                 list_item.setSizeHint(item_widget.sizeHint())
                 self.list_widget.addItem(list_item)
                 self.list_widget.setItemWidget(list_item, item_widget)
+                if sample_id is not None:
+                    self._items_by_id[sample_id] = (list_item, item_widget)
 
     def on_sample_renamed(self, sample_id: int, old_path: str, new_path: str):
         """Met à jour l'entrée correspondante si elle est affichée."""
         if os.path.dirname(old_path) != self.current_dir:
             return
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            widget = self.list_widget.itemWidget(item)
-            if widget and widget.file_path == old_path:
+        item = self._items_by_id.get(sample_id)
+        if item:
+            _, widget = item
+            widget.file_path = new_path
+            widget.name_label.setText(os.path.basename(new_path))
+            base = os.path.splitext(os.path.basename(new_path))[0]
+            widget.rename_input.setText(base)
+
+    def on_sample_deleted(self, sample_id: int):
+        """Retire l'entrée si elle est présente."""
+        item = self._items_by_id.get(sample_id)
+        if item:
+            _, widget = item
+            self._remove_widget(widget)
+            if self._current_item is widget:
+                try:
+                    self.app_context.audio_player.clear_audio()
+                except Exception:
+                    pass
+                self._current_item = None
+            self._items_by_id.pop(sample_id, None)
+
+    def on_sample_moved(self, sample_id: int, target_folder: str):
+        """Met à jour ou retire l'entrée selon le nouveau dossier."""
+        sample = next(
+            (s for s in self.app_context.sample_store.get_cached() if s.id == sample_id),
+            None,
+        )
+        if not sample:
+            return
+        new_path = sample.path
+        in_list = sample_id in self._items_by_id
+        if target_folder == self.current_dir:
+            if in_list:
+                _, widget = self._items_by_id[sample_id]
                 widget.file_path = new_path
                 widget.name_label.setText(os.path.basename(new_path))
                 base = os.path.splitext(os.path.basename(new_path))[0]
                 widget.rename_input.setText(base)
+            else:
+                item_widget = DirectoryListItemWidget(new_path, self, sample_id)
+                list_item = QListWidgetItem(self.list_widget)
+                list_item.setSizeHint(item_widget.sizeHint())
+                self.list_widget.addItem(list_item)
+                self.list_widget.setItemWidget(list_item, item_widget)
+                self._items_by_id[sample_id] = (list_item, item_widget)
+        else:
+            if in_list:
+                _, widget = self._items_by_id.pop(sample_id)
+                self._remove_widget(widget)
+                if self._current_item is widget:
+                    try:
+                        self.app_context.audio_player.clear_audio()
+                    except Exception:
+                        pass
+                    self._current_item = None
+
+    def _remove_widget(self, widget: 'DirectoryListItemWidget') -> None:
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if self.list_widget.itemWidget(item) is widget:
+                self.list_widget.takeItem(i)
+                widget.deleteLater()
                 break
+        if widget.sample_id is not None:
+            self._items_by_id.pop(widget.sample_id, None)
 
     @staticmethod
     def remove_from_history(path: str) -> None:
@@ -222,10 +292,11 @@ class DirectoryListWidget(QListWidget):
 
 
 class DirectoryListItemWidget(QWidget):
-    def __init__(self, file_path: str, parent_widget: DirectoryWidget):
+    def __init__(self, file_path: str, parent_widget: DirectoryWidget, sample_id: int | None = None):
         super().__init__()
         self.file_path = file_path
         self.parent_widget = parent_widget
+        self.sample_id = sample_id
 
         self.name_label = QLabel(os.path.basename(file_path))
         self.name_label.mouseDoubleClickEvent = self._start_rename
@@ -300,8 +371,9 @@ class DirectoryListItemWidget(QWidget):
         success, err = self.parent_widget.app_context.sample_store.delete_by_path(self.file_path)
         if not success and err:
             QMessageBox.warning(self, "Erreur", err)
-
-        self.parent_widget.refresh_list()
+        if self.sample_id is None:
+            # Not tracked in DB, remove immediately
+            self.parent_widget._remove_widget(self)
 
     def set_playing(self, playing: bool):
         icon_name = 'fa5s.pause' if playing else 'fa5s.play'
