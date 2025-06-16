@@ -66,19 +66,6 @@ class SampleService(QObject):
     def get_cached(self):
         """Retourne la liste courante en mémoire."""
         return list(self._samples)
-
-    def get_samples(self, offset: int = 0, limit: int | None = None, dirs: list[str] | None = None):
-        """Retourne une liste de samples filtrée par dossiers."""
-        samples = self.get_cached()
-        if dirs:
-            import os
-            norm_dirs = {os.path.abspath(d) for d in dirs}
-            samples = [s for s in samples if os.path.dirname(os.path.abspath(s.path)) in norm_dirs]
-        if offset:
-            samples = samples[offset:]
-        if limit is not None:
-            samples = samples[:limit]
-        return samples
     
     def add(self, path: str):
         """

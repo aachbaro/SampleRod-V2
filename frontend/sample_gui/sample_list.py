@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QToolBar, QToolButton,
+    QWidget, QVBoxLayout, QScrollArea, QToolBar, QToolButton,
     QMenu, QFileDialog
 )
 from PyQt6.QtGui import QAction
@@ -7,7 +7,6 @@ from PyQt6.QtWidgets import QMessageBox
 from PyQt6.QtCore import pyqtSlot, QSize, Qt, QSettings
 import qtawesome as qta
 from frontend.sample_gui.sample_card import SampleCard
-from frontend.sample_gui.directory_filter_card import DirectoryFilterCard
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
 import os
@@ -24,7 +23,6 @@ class SampleListWidget(QWidget):
         self.samples = []  # liste des samples à afficher
         self.selected_ids  = set()        # ensemble des IDs cochés
         self._qs = QSettings("SampleRod", "Main")
-        self.active_dirs = set()
 
         # 1) abonnements aux signaux du service
         self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
@@ -107,12 +105,6 @@ class SampleListWidget(QWidget):
         self.actions_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toolbar.addWidget(self.actions_btn)
 
-        # ─── Filtres par dossier ───
-        self.filter_layout = QHBoxLayout()
-        main_layout.addLayout(self.filter_layout)
-        self.app_context.settings.librariesChanged.connect(self._rebuild_filters)
-        self._rebuild_filters(self.app_context.settings.libraries)
-
          # ─── Autoriser le glisser-déposer de fichiers ───
         self.setAcceptDrops(True)
 
@@ -125,7 +117,7 @@ class SampleListWidget(QWidget):
         self.content_layout.setContentsMargins(10, 10, 10, 10)
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
-        self.refresh_samples()
+        self.refreshList()
 
     @pyqtSlot(list)
     def onSamplesChanged(self, samples: list):
@@ -135,8 +127,8 @@ class SampleListWidget(QWidget):
         """
         # 1) on stocke la nouvelle liste
         self.samples = samples
-        # 2) on reconstruit l'affichage filtré
-        self.refresh_samples()
+        # 2) on reconstruit l'affichage
+        self.refreshList()
         self.updateSelectActions()
 
     @pyqtSlot(int)
@@ -153,9 +145,6 @@ class SampleListWidget(QWidget):
             None
         )
         if new_sample is None:
-            return
-
-        if os.path.dirname(new_sample.path) not in self.active_dirs:
             return
 
         # 2) l'ajoute en début de liste interne
@@ -387,36 +376,6 @@ class SampleListWidget(QWidget):
         self.content_layout.addStretch()
 
         self.updateSelectActions()
-
-    def _rebuild_filters(self, libraries):
-        while self.filter_layout.count():
-            item = self.filter_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                self.filter_layout.removeWidget(w)
-                w.deleteLater()
-        self.active_dirs.clear()
-        for lib in libraries:
-            path = getattr(lib, 'path', None) or lib.get('path') if isinstance(lib, dict) else None
-            if not path:
-                continue
-            card = DirectoryFilterCard(path, True)
-            card.toggled.connect(self.onDirectoryToggled)
-            self.filter_layout.addWidget(card)
-            self.active_dirs.add(path)
-        self.refresh_samples()
-
-    @pyqtSlot(str, bool)
-    def onDirectoryToggled(self, directory: str, active: bool):
-        if active:
-            self.active_dirs.add(directory)
-        else:
-            self.active_dirs.discard(directory)
-        self.refresh_samples()
-
-    def refresh_samples(self):
-        self.samples = self.sample_store.get_samples(dirs=list(self.active_dirs))
-        self.refreshList()
 
 
     # ──────────── SLOTS SERVICE → UI ────────────
