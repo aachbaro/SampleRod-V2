@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import (
     QMenu,
     QFileDialog,
     QSizePolicy,
-    QComboBox,
     QLabel,
+    QHBoxLayout,
 )
 import logging
 logger = logging.getLogger("sample_list")
@@ -19,6 +19,7 @@ import qtawesome as qta
 from frontend.sample_gui.sample_card import SampleCard
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
+from frontend.sample_gui.directory_filter_card import DirectoryFilterCard
 import os
 from backend.models.normalize_worker import NormalizeWorker
 
@@ -32,7 +33,7 @@ class SampleListWidget(QWidget):
         self.app_context  = app_context
         self.sample_store: SampleService = app_context.sample_store
         self.samples = []  # liste des samples à afficher
-        self.current_filter_dirs = []  # dossiers actifs pour le filtrage
+        self.active_dirs = set()  # dossiers actifs pour le filtrage
         self.selected_ids  = set()        # ensemble des IDs cochés
         self._qs = QSettings("SampleRod", "Main")
 
@@ -57,6 +58,7 @@ class SampleListWidget(QWidget):
         self.app_context.settings.librariesChanged.connect(self.updateFilterOptions)
         # 2) stockage des cartes existantes
         self._card_widgets = {}
+        self._filter_cards = {}
 
         # 3) création de l’UI
         self.init_ui()
@@ -125,13 +127,23 @@ class SampleListWidget(QWidget):
         self.actions_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toolbar.addWidget(self.actions_btn)
 
-        # ─── Filtre de bibliothèque ───
-        self.filter_combo = QComboBox()
-        self.filter_combo.setToolTip("Filtrer par dossier")
-        self.filter_combo.currentIndexChanged.connect(self.onFilterChanged)
+        # ─── Filtres sous forme de cartes ───
+        self.filter_scroll = QScrollArea()
+        self.filter_scroll.setWidgetResizable(True)
+        self.filter_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.filter_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.filter_scroll.setFixedHeight(50)
+        self.filter_container = QWidget()
+        self.filter_layout = QHBoxLayout(self.filter_container)
+        self.filter_layout.setContentsMargins(5, 5, 5, 5)
+        self.filter_layout.setSpacing(5)
+        self.filter_scroll.setWidget(self.filter_container)
+        main_layout.addWidget(self.filter_scroll)
         self.updateFilterOptions()
-        self.toolbar.addSeparator()
-        self.toolbar.addWidget(self.filter_combo)
 
          # ─── Autoriser le glisser-déposer de fichiers ───
         self.setAcceptDrops(True)
@@ -628,25 +640,33 @@ class SampleListWidget(QWidget):
 
     # ------------------------------------------------------------------ Filtrage
     def updateFilterOptions(self, _=None):
-        """Met à jour la liste déroulante des dossiers de filtre."""
-        current = self.filter_combo.currentData()
+        """Reconstruit les cartes de filtres en fonction des dossiers."""
         dirs = sorted(self.sample_store.get_sample_directories())
-        self.filter_combo.blockSignals(True)
-        self.filter_combo.clear()
-        self.filter_combo.addItem("Tous", None)
-        for d in dirs:
-            name = os.path.basename(d) or d
-            self.filter_combo.addItem(name, d)
-        if current is not None:
-            idx = self.filter_combo.findData(current)
-            if idx != -1:
-                self.filter_combo.setCurrentIndex(idx)
-        self.filter_combo.blockSignals(False)
 
-    @pyqtSlot()
-    def onFilterChanged(self):
-        data = self.filter_combo.currentData()
-        self.current_filter_dirs = [] if data is None else [data]
+        if not self.active_dirs:
+            self.active_dirs = set(dirs)
+        else:
+            self.active_dirs &= set(dirs)
+            self.active_dirs |= set(dirs) - self.active_dirs
+
+        for card in list(self._filter_cards.values()):
+            self.filter_layout.removeWidget(card)
+            card.deleteLater()
+        self._filter_cards.clear()
+
+        for d in dirs:
+            card = DirectoryFilterCard(d, d in self.active_dirs)
+            card.toggled.connect(self.onDirectoryToggled)
+            self.filter_layout.addWidget(card)
+            self._filter_cards[d] = card
+
+
+    @pyqtSlot(str, bool)
+    def onDirectoryToggled(self, path: str, is_active: bool):
+        if is_active:
+            self.active_dirs.add(path)
+        else:
+            self.active_dirs.discard(path)
         self.refresh_samples()
 
     def refresh_samples(self):
@@ -666,10 +686,10 @@ class SampleListWidget(QWidget):
         self.updateSelectActions()
 
     def _path_matches_filter(self, path: str) -> bool:
-        if not self.current_filter_dirs:
+        if not self.active_dirs:
             return True
         ap = os.path.abspath(path)
-        return any(ap.startswith(os.path.abspath(d)) for d in self.current_filter_dirs)
+        return any(ap.startswith(os.path.abspath(d)) for d in self.active_dirs)
 
     # ---------------------- Chargement progressif ----------------------
     def onScrollValueChanged(self, value: int):
@@ -686,7 +706,7 @@ class SampleListWidget(QWidget):
             self.sample_store,
             self.current_offset,
             self.page_size,
-            self.current_filter_dirs,
+            list(self.active_dirs),
         )
         self._loader_thread.samplesReady.connect(self.onSamplesLoaded)
         self._loader_thread.start()
