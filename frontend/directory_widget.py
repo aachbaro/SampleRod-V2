@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QSizePolicy,
     QLabel,
+    QLineEdit,
     QHBoxLayout,
     QListWidgetItem,
     QMessageBox,
@@ -175,6 +176,11 @@ class DirectoryListItemWidget(QWidget):
         self.parent_widget = parent_widget
 
         self.name_label = QLabel(os.path.basename(file_path))
+        self.name_label.mouseDoubleClickEvent = self._start_rename
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        self.rename_input = QLineEdit(base_name)
+        self.rename_input.hide()
+        self.rename_input.editingFinished.connect(self._submit_rename)
         self.play_button = QPushButton()
         self.play_button.setFixedSize(30, 30)
         self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
@@ -187,12 +193,39 @@ class DirectoryListItemWidget(QWidget):
 
         layout = QHBoxLayout(self)
         layout.addWidget(self.name_label)
+        layout.addWidget(self.rename_input)
         layout.addStretch()
         layout.addWidget(self.play_button)
         layout.addWidget(self.delete_button)
 
     def _on_clicked(self):
         self.parent_widget.toggle_preview(self)
+
+    def _start_rename(self, event):
+        base_name = os.path.splitext(os.path.basename(self.file_path))[0]
+        self.rename_input.setText(base_name)
+        self.name_label.hide()
+        self.rename_input.show()
+        self.rename_input.setFocus()
+        self.rename_input.selectAll()
+
+    def _submit_rename(self):
+        new_name = self.rename_input.text().strip()
+        old_base = os.path.splitext(os.path.basename(self.file_path))[0]
+        if new_name and new_name != old_base:
+            success, err = self.parent_widget.app_context.sample_store.rename_by_path(
+                self.file_path, new_name
+            )
+            if success:
+                ext = os.path.splitext(self.file_path)[1]
+                folder = os.path.dirname(self.file_path)
+                new_path = os.path.join(folder, new_name + ext)
+                self.file_path = new_path
+                self.name_label.setText(os.path.basename(new_path))
+            elif err:
+                QMessageBox.warning(self, "Erreur", err)
+        self.rename_input.hide()
+        self.name_label.show()
 
     def _on_delete(self):
         reply = QMessageBox.question(
