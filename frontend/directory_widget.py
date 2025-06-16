@@ -10,8 +10,10 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QListWidgetItem,
     QMessageBox,
+    QTreeView,
+    QFileSystemModel,
 )
-from PyQt6.QtCore import QMimeData, pyqtSignal, QSettings
+from PyQt6.QtCore import QMimeData, pyqtSignal, QSettings, QDir
 import qtawesome as qta
 import wave
 
@@ -21,6 +23,62 @@ from backend.models.AppContext import AppContext
 import os
 import logging
 logger = logging.getLogger("directory_widget")
+
+
+class DirectoryTreeWidget(QTreeView):
+    """Tree view displaying directories with persistent expanded state."""
+
+    directorySelected = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._qs = QSettings("SampleRod", "Main")
+        self._model = QFileSystemModel(self)
+        self._model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot)
+        self._model.setRootPath("")
+        self.setModel(self._model)
+        self.expanded.connect(self._on_expanded)
+        self.collapsed.connect(self._on_collapsed)
+        self.clicked.connect(self._emit_selection)
+        self.restore_expanded_state()
+
+    # ------------------------------------------------------------------ slots
+    def _emit_selection(self, index):
+        path = self._model.filePath(index)
+        self.directorySelected.emit(path)
+
+    def _on_expanded(self, index):
+        path = self._model.filePath(index)
+        expanded = self._qs.value("directory_state", [], type=list)
+        if path not in expanded:
+            expanded.append(path)
+            self._qs.setValue("directory_state", expanded)
+
+    def _on_collapsed(self, index):
+        path = self._model.filePath(index)
+        expanded = self._qs.value("directory_state", [], type=list)
+        if path in expanded:
+            expanded.remove(path)
+            self._qs.setValue("directory_state", expanded)
+
+    # ------------------------------------------------------------------ utils
+    def restore_expanded_state(self):
+        expanded = self._qs.value("directory_state", [], type=list)
+        for path in expanded:
+            idx = self._model.index(path)
+            if idx.isValid():
+                self.expand(idx)
+
+    def setRootDirectory(self, path: str):
+        idx = self._model.index(path)
+        if idx.isValid():
+            self.setRootIndex(idx)
+
+    def setCurrentDirectory(self, path: str):
+        idx = self._model.index(path)
+        if idx.isValid():
+            self.setCurrentIndex(idx)
+
 
 class DirectoryWidget(QWidget):
     """Simple widget to import samples into a folder via drag & drop."""
@@ -35,6 +93,10 @@ class DirectoryWidget(QWidget):
         self._qs = QSettings("SampleRod", "Main")
         self.current_dir = self._qs.value("last_directory", "", type=str)
         self._build_ui()
+        self.tree_widget.setRootDirectory(os.path.expanduser("~"))
+        if self.current_dir:
+            self.tree_widget.setCurrentDirectory(self.current_dir)
+        self.refresh_list()
         # Mise à jour des items lorsqu'un renommage survient ailleurs dans l'application
         self.app_context.sample_store.sampleRenamed.connect(self.on_sample_renamed)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
@@ -45,9 +107,12 @@ class DirectoryWidget(QWidget):
         layout = QVBoxLayout(self)
         self.choose_btn = QPushButton("Choose folder")
         self.choose_btn.clicked.connect(self._on_choose)
+        self.tree_widget = DirectoryTreeWidget(self)
+        self.tree_widget.directorySelected.connect(self._on_tree_selected)
         self.list_widget = DirectoryListWidget(self)
         self.list_widget.setAcceptDrops(True)
         layout.addWidget(self.choose_btn)
+        layout.addWidget(self.tree_widget)
         layout.addWidget(self.list_widget)
 
     def _on_choose(self):
@@ -56,12 +121,19 @@ class DirectoryWidget(QWidget):
         if d:
             self.current_dir = d
             self._qs.setValue("last_directory", d)
+            self.tree_widget.setCurrentDirectory(d)
             self.refresh_list()
             # On notifie que le dossier a changé
             self.directoryChanged.emit(d)
             logger.info(f"[DirectoryWidget] Dossier sélectionné : {d}")
         else:
             logger.info("[DirectoryWidget] Sélection de dossier annulée")
+
+    def _on_tree_selected(self, path: str):
+        self.current_dir = path
+        self._qs.setValue("last_directory", path)
+        self.refresh_list()
+        self.directoryChanged.emit(path)
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
