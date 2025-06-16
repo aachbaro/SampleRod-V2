@@ -46,15 +46,15 @@ class DirectoryFilterCard(QWidget):
         self.setProperty("active", self.is_active)
         self.setStyleSheet(
             """
-            DirectoryFilterCard {
+            #DirectoryFilterCard {
                 border: 1px solid #555;
                 border-radius: 6px;
             }
-            DirectoryFilterCard[active="true"] {
+            #DirectoryFilterCard[active="true"] {
                 background-color: #555;
                 color: white;
             }
-            DirectoryFilterCard[active="false"] {
+            #DirectoryFilterCard[active="false"] {
                 background-color: #333;
                 color: #888;
             }
