@@ -35,6 +35,8 @@ class DirectoryWidget(QWidget):
         self._qs = QSettings("SampleRod", "Main")
         self.current_dir = self._qs.value("last_directory", "", type=str)
         self._build_ui()
+        # Mise à jour des items lorsqu'un renommage survient ailleurs dans l'application
+        self.app_context.sample_store.sampleRenamed.connect(self.on_sample_renamed)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.setMinimumWidth(100)
         logger.info("[DirectoryWidget] Initialisation")
@@ -136,6 +138,20 @@ class DirectoryWidget(QWidget):
                 list_item.setSizeHint(item_widget.sizeHint())
                 self.list_widget.addItem(list_item)
                 self.list_widget.setItemWidget(list_item, item_widget)
+
+    def on_sample_renamed(self, sample_id: int, old_path: str, new_path: str):
+        """Met à jour l'entrée correspondante si elle est affichée."""
+        if os.path.dirname(old_path) != self.current_dir:
+            return
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            widget = self.list_widget.itemWidget(item)
+            if widget and widget.file_path == old_path:
+                widget.file_path = new_path
+                widget.name_label.setText(os.path.basename(new_path))
+                base = os.path.splitext(os.path.basename(new_path))[0]
+                widget.rename_input.setText(base)
+                break
 
 
 

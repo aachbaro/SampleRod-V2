@@ -400,16 +400,13 @@ class SampleListWidget(QWidget):
             self.selected_ids.discard(sample_id)
         self.updateSelectActions()
 
-    @pyqtSlot(int, str)
-    def onSampleRenamed(self, sample_id: int, new_name: str):
-        """Après renommage : ferme la waveform, met à jour nom & chemin, rafraîchit."""
+    @pyqtSlot(int, str, str)
+    def onSampleRenamed(self, sample_id: int, old_path: str, new_path: str):
+        """Après renommage : ferme la waveform et met à jour la carte."""
         card = self._card_widgets.get(sample_id)
         if card:
-            old_path = card.sample.path
             self.close_waveforms_for_path(old_path)
-            ext = os.path.splitext(old_path)[1]
-            new_path = os.path.join(os.path.dirname(old_path), new_name + ext)
-            card.sample.name = new_name
+            card.sample.name = os.path.splitext(os.path.basename(new_path))[0]
             card.sample.path = new_path
             card.refresh_display()
 

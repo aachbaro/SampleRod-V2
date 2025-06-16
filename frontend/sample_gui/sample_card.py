@@ -496,15 +496,10 @@ class SampleCard(QWidget):
         if self.app_context.audio_player.is_playing and self.sample.id == sample_id:
              QTimer.singleShot(100, self.updateSlider)
 
-    def onRenameSuccess(self, sample_id, new_name):
+    def onRenameSuccess(self, sample_id, old_path, new_path):
         if self.sample.id == sample_id:
-            # 1) reconstruire le nouveau chemin
-            old_path = self.sample.path
-            directory = os.path.dirname(old_path)
-            ext = os.path.splitext(old_path)[1]
-            new_path = os.path.join(directory, new_name + ext)
-
-            # 2) mettre à jour le modèle et l'affichage
+            # Mise à jour du modèle et de l'affichage avec le nouveau chemin
+            new_name = os.path.splitext(os.path.basename(new_path))[0]
             self.sample.name = new_name
             self.sample.path = new_path
             self.name_label.setText(new_name)
