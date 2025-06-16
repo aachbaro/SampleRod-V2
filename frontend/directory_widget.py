@@ -5,10 +5,16 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QFileDialog,
     QSizePolicy,
+    QLabel,
+    QHBoxLayout,
+    QListWidgetItem,
 )
 from PyQt6.QtCore import QMimeData, pyqtSignal, QSettings
+import qtawesome as qta
+import wave
 
 from backend.services.directory_service import DirectoryService
+from backend.models.AppContext import AppContext
 
 import os
 import logging
@@ -19,9 +25,11 @@ class DirectoryWidget(QWidget):
     # Signal émis quand on change de dossier
     directoryChanged = pyqtSignal(str)
 
-    def __init__(self, service: DirectoryService, parent=None):
+    def __init__(self, service: DirectoryService, app_context: AppContext, parent=None):
         super().__init__(parent)
         self.service = service
+        self.app_context = app_context
+        self._current_item = None
         self._qs = QSettings("SampleRod", "Main")
         self.current_dir = self._qs.value("last_directory", "", type=str)
         self._build_ui()
@@ -83,13 +91,49 @@ class DirectoryWidget(QWidget):
             or mime.hasFormat("application/x-sample-card")
         )
 
+    def _get_duration(self, path: str) -> float:
+        """Return duration of a wav file in seconds."""
+        try:
+            with wave.open(path, 'rb') as w:
+                return w.getnframes() / w.getframerate()
+        except Exception:
+            return 0.0
+
+    def toggle_preview(self, item_widget: 'DirectoryListItemWidget') -> None:
+        """Toggle playback of the item using the shared audio player."""
+        file_path = item_widget.file_path
+        sample_id = hash(file_path) & 0x7FFFFFFF
+        duration = self._get_duration(file_path)
+
+        ap = self.app_context.audio_player
+
+        if ap.is_playing and ap.current_sample_id == sample_id:
+            ap.clear_audio()
+            item_widget.set_playing(False)
+            self._current_item = None
+            return
+
+        if ap.is_playing:
+            ap.clear_audio()
+            if self._current_item:
+                self._current_item.set_playing(False)
+
+        ap.toggle_play(sample_id, file_path, duration)
+        item_widget.set_playing(True)
+        self._current_item = item_widget
+
     def refresh_list(self):
         self.list_widget.clear()
         if self.current_dir:
             files = self.service.list_samples(self.current_dir)
             logger.info(f"[DirectoryWidget] Rafraîchissement de la liste ({len(files)} fichiers)")
             for name in files:
-                self.list_widget.addItem(name)
+                path = os.path.join(self.current_dir, name)
+                item_widget = DirectoryListItemWidget(path, self)
+                list_item = QListWidgetItem(self.list_widget)
+                list_item.setSizeHint(item_widget.sizeHint())
+                self.list_widget.addItem(list_item)
+                self.list_widget.setItemWidget(list_item, item_widget)
 
 
 
@@ -121,3 +165,28 @@ class DirectoryListWidget(QListWidget):
             event.acceptProposedAction()
         else:
             event.ignore()
+
+
+class DirectoryListItemWidget(QWidget):
+    def __init__(self, file_path: str, parent_widget: DirectoryWidget):
+        super().__init__()
+        self.file_path = file_path
+        self.parent_widget = parent_widget
+
+        self.name_label = QLabel(os.path.basename(file_path))
+        self.play_button = QPushButton()
+        self.play_button.setFixedSize(30, 30)
+        self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
+        self.play_button.clicked.connect(self._on_clicked)
+
+        layout = QHBoxLayout(self)
+        layout.addWidget(self.name_label)
+        layout.addStretch()
+        layout.addWidget(self.play_button)
+
+    def _on_clicked(self):
+        self.parent_widget.toggle_preview(self)
+
+    def set_playing(self, playing: bool):
+        icon_name = 'fa5s.pause' if playing else 'fa5s.play'
+        self.play_button.setIcon(qta.icon(icon_name, color='lightgray'))
