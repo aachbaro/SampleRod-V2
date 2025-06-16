@@ -20,7 +20,10 @@ class SampleService(QObject):
     sampleAdded = pyqtSignal(int)            # émet l’ID du sample ajouté
     samplesChanged = pyqtSignal(list)        # émet la liste complète des Sample
     sampleDeleted  = pyqtSignal(int)         # émet l’ID supprimé
-    sampleRenamed  = pyqtSignal(int, str)    # émet (ID, nouveau nom)
+    # Emis après un renommage. Fournit l'ID du sample, l'ancien chemin complet
+    # et le nouveau chemin complet pour permettre la mise à jour de toutes les
+    # vues sans avoir à recharger la liste complète.
+    sampleRenamed  = pyqtSignal(int, str, str)    # émet (ID, ancien chemin, nouveau chemin)
     sampleMoved    = pyqtSignal(int, str)    # émet (ID, nouveau dossier)
     sampleStartedNormalization  = pyqtSignal(int)      # émet l’ID du sample en cours de normalisation
     sampleFinishedNormalization = pyqtSignal(int)       # émet l’ID du sample normalisé
@@ -189,10 +192,12 @@ class SampleService(QObject):
         if samp:
             old_name = samp.name
             sample_id = samp.id
+            old_path = samp.path
             try:
                 samp.rename(new_name)
                 samp.name = new_name
-                self.sampleRenamed.emit(sample_id, new_name)
+                new_path = samp.path
+                self.sampleRenamed.emit(sample_id, old_path, new_path)
                 self.app_context.notifications.notify(
                     title="✅ Sample renommé",
                     message=f"{old_name} → {new_name}",
@@ -240,10 +245,12 @@ class SampleService(QObject):
         if not samp:
             return
         old_name = samp.name
+        old_path = samp.path
         try:
             samp.rename(new_name)
             samp.name = new_name
-            self.sampleRenamed.emit(sample_id, new_name)
+            new_path = samp.path
+            self.sampleRenamed.emit(sample_id, old_path, new_path)
             # ▶ Succès
             self.app_context.notifications.notify(
                 title="✅ Sample renommé",
