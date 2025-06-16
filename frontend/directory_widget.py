@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QHBoxLayout,
     QListWidgetItem,
+    QMessageBox,
 )
 from PyQt6.QtCore import QMimeData, pyqtSignal, QSettings
 import qtawesome as qta
@@ -179,13 +180,43 @@ class DirectoryListItemWidget(QWidget):
         self.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
         self.play_button.clicked.connect(self._on_clicked)
 
+        self.delete_button = QPushButton()
+        self.delete_button.setFixedSize(30, 30)
+        self.delete_button.setIcon(qta.icon('fa5s.trash-alt', color='red'))
+        self.delete_button.clicked.connect(self._on_delete)
+
         layout = QHBoxLayout(self)
         layout.addWidget(self.name_label)
         layout.addStretch()
         layout.addWidget(self.play_button)
+        layout.addWidget(self.delete_button)
 
     def _on_clicked(self):
         self.parent_widget.toggle_preview(self)
+
+    def _on_delete(self):
+        reply = QMessageBox.question(
+            self,
+            "Supprimer",
+            f"Supprimer le fichier '{os.path.basename(self.file_path)}' ?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Arrêt de la lecture si ce fichier est en cours
+        ap = self.parent_widget.app_context.audio_player
+        if ap.current_sample_path == self.file_path:
+            try:
+                ap.clear_audio()
+            except Exception:
+                pass
+
+        success, err = self.parent_widget.app_context.sample_store.delete_by_path(self.file_path)
+        if not success and err:
+            QMessageBox.warning(self, "Erreur", err)
+
+        self.parent_widget.refresh_list()
 
     def set_playing(self, playing: bool):
         icon_name = 'fa5s.pause' if playing else 'fa5s.play'
