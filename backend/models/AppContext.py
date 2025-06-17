@@ -143,3 +143,11 @@ class AudioPlayer:
             return pos
         pos += self.last_set_pos * 1000
         return pos
+
+    def is_playing_sample(self, sample_id: int) -> bool:
+        """Return True if the given sample is currently playing."""
+        return self.is_playing and self.current_sample_id == sample_id
+
+    def stop_playback(self):
+        """Stop playback and release any loaded resources."""
+        self.clear_audio()
