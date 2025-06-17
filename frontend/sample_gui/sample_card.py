@@ -283,6 +283,9 @@ class SampleCard(QWidget):
         for child in self.findChildren(QWidget):
             child.installEventFilter(self)
 
+        self.id_label = QLabel(f"ID: {self.sample.id}", self)
+        self.layout().addWidget(self.id_label)
+
     def _build_shortcuts(self):
         """Raccourcis actifs seulement quand **cette** SampleCard (ou un de ses enfants) a le focus."""
         for seq, handler in [
