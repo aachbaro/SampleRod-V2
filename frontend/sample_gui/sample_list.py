@@ -261,7 +261,7 @@ class SampleListWidget(QWidget):
 
     @pyqtSlot(int, bool)
     def onSelectionChanged(self, sample_id: int, checked: bool):
-        logger.info("onSelectionChanged:", sample_id, checked)
+        logger.info("onSelectionChanged: sample_id=%s, checked=%s", sample_id, checked)
         if checked:
             self.selected_ids.add(sample_id)
         else:
