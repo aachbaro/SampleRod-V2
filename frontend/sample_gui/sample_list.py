@@ -373,6 +373,8 @@ class SampleListWidget(QWidget):
         for ancien_id in list(self._card_widgets):
             if ancien_id not in ids_courants:
                 w = self._card_widgets.pop(ancien_id)
+                # stoppe toute lecture via waveform avant de retirer la carte
+                self.close_waveforms_for_path(w.sample.path)
                 self.content_layout.removeWidget(w)
                 w.deleteLater()
 
@@ -651,11 +653,43 @@ class SampleListWidget(QWidget):
         self.current_page = page
         self.refreshList()
 
+    def change_page(self, page: int):
+        """Gère le changement de page et arrête la lecture si nécessaire."""
+        # Calcul des IDs de la nouvelle page
+        ordered = sorted(self.samples, key=lambda s: s.created_at, reverse=True)
+        start = (page - 1) * self.samples_per_page
+        end = start + self.samples_per_page
+        ids_page = {s.id for s in ordered[start:end]}
+
+        # 1) Vérifie la lecture via WaveformWidget
+        for sid, card in list(self._card_widgets.items()):
+            if sid not in ids_page and card.wave_edition_widget:
+                try:
+                    card.wave_edition_widget.stop_audio()
+                except Exception:
+                    pass
+                try:
+                    card.wave_edition_widget.timer.stop()
+                except Exception:
+                    pass
+
+        # 2) Vérifie la lecture via l'AudioPlayer global
+        current_id = self.app_context.audio_player.current_sample_id
+        if current_id != -1 and current_id not in ids_page:
+            player = self.app_context.audio_player
+            if hasattr(player, "stop_playback"):
+                try:
+                    player.stop_playback()
+                except Exception:
+                    pass
+
+        self.setCurrentPage(page)
+
     def _prev_page(self):
         if self.current_page > 1:
-            self.setCurrentPage(self.current_page - 1)
+            self.change_page(self.current_page - 1)
 
     def _next_page(self):
         max_pages = (len(self.samples) - 1) // self.samples_per_page + 1
         if self.current_page < max_pages:
-            self.setCurrentPage(self.current_page + 1)
+            self.change_page(self.current_page + 1)
