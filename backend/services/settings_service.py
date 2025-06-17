@@ -16,6 +16,7 @@ class SettingsService(QObject):
     loopbackDeviceChanged = pyqtSignal(object)
     autoNormalizeToggled   = pyqtSignal(bool)
     normalizationLevelChanged = pyqtSignal(int)
+    samplesPerPageChanged = pyqtSignal(int)
 
     def __init__(self, app_context):
         super().__init__()
@@ -28,6 +29,11 @@ class SettingsService(QObject):
         self.loopback_device = None
         self.sample_rate = 44100  # valeur récupérée du QSettings
         self._sample_rate = self.sample_rate
+
+        self.samples_per_page = self._qs.value(
+            "display/samples_per_page", 20, type=int
+        )
+        self.samplesPerPageChanged.emit(self.samples_per_page)
 
         auto_norm = self._qs.value("autoNormalizeEnabled", False, type=bool)
         self.normalization_level = self._qs.value("normalizationLevel", -14, type=int)  # ex : -14 LUFS
@@ -174,3 +180,16 @@ class SettingsService(QObject):
 
     def getNormalizationLevel(self) -> int:
         return self._qs.value("normalizationLevel", -14, type=int)
+
+    # ------------------------------------------------------------------ Display Settings
+    def setSamplesPerPage(self, count: int):
+        """Change le nombre de samples affichés par page."""
+        logger.info(
+            f"[SettingsService] Modification du nombre de samples/page à {count}"
+        )
+        self.samples_per_page = count
+        self._qs.setValue("display/samples_per_page", count)
+        self.samplesPerPageChanged.emit(count)
+
+    def getSamplesPerPage(self) -> int:
+        return self._qs.value("display/samples_per_page", 20, type=int)

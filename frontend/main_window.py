@@ -21,6 +21,7 @@ from frontend.settings_gui.libraries_list import SettingsLibrariesList
 from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
 from frontend.sample_gui.sample_list import SampleListWidget
 from frontend.settings_gui.audio_settings import AudioSettingsWidget
+from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.directory_widget import DirectoryWidget
 
@@ -89,9 +90,11 @@ class MainWindow(QMainWindow):
         self.settings_libraries_list = SettingsLibrariesList(self.app_context)
         self.settings_retro_widget = RetroRecordingWidget(self.settings)
         self.audio_settings_widget = AudioSettingsWidget(self.app_context)
+        self.display_settings_widget = DisplaySettingsWidget(self.settings)
         settings_layout.addWidget(self.settings_libraries_list)
         settings_layout.addWidget(self.settings_retro_widget)
         settings_layout.addWidget(self.audio_settings_widget)
+        settings_layout.addWidget(self.display_settings_widget)
         
         settings_layout.addStretch()
         self.tab_widget.addTab(settings_tab, "Paramètres")
