@@ -58,11 +58,7 @@ class SampleService(QObject):
         
         try:
             with SessionLocal() as session:
-                self._samples = (
-                    session.query(Sample)
-                    .order_by(Sample.created_at.desc())
-                    .all()
-                )
+                self._samples = session.query(Sample).order_by(Sample.id).all()
         except SQLAlchemyError as e:
             logger.info(f"[SampleService] init load error: {e}")
             self._samples = []
@@ -100,8 +96,8 @@ class SampleService(QObject):
 
             # 2) Mise à jour du cache
             self._samples.append(new_sample)
-            # 3) Tri du cache par date d'ajout décroissante
-            self._samples.sort(key=lambda s: s.created_at, reverse=True)
+            # 3) Optionnel : tri du cache par ID croissant
+            self._samples.sort(key=lambda s: s.id)
             # 4) Émission du signal d'ajout
             self.sampleAdded.emit(new_sample.id)
 
