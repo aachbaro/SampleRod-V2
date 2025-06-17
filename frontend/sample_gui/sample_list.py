@@ -47,6 +47,7 @@ class SampleListWidget(QWidget):
         self.is_loading = False
         self.more_available = True
         self._loader_thread = None
+        self._loader_token = 0
 
         # 1) abonnements aux signaux du service
         self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
@@ -669,22 +670,25 @@ class SampleListWidget(QWidget):
         """Reconstruit les cartes de filtres en fonction des dossiers."""
         dirs = sorted(self.sample_store.get_sample_directories())
 
-        if not self.active_dirs:
-            self.active_dirs = set(dirs)
-        else:
-            self.active_dirs &= set(dirs)
-            self.active_dirs |= set(dirs) - self.active_dirs
-
-        for card in list(self._filter_cards.values()):
-            self.filter_layout.removeWidget(card)
-            card.deleteLater()
-        self._filter_cards.clear()
+        prev_cards = self._filter_cards
+        self._filter_cards = {}
+        new_active_dirs = set()
 
         for d in dirs:
-            card = DirectoryFilterCard(d, d in self.active_dirs)
+            prev_card = prev_cards.get(d)
+            active = prev_card.is_active if prev_card else True
+            if active:
+                new_active_dirs.add(d)
+            card = DirectoryFilterCard(d, active)
             card.toggled.connect(self.onDirectoryToggled)
             self.filter_layout.addWidget(card)
             self._filter_cards[d] = card
+
+        for card in prev_cards.values():
+            self.filter_layout.removeWidget(card)
+            card.deleteLater()
+
+        self.active_dirs = new_active_dirs
 
 
     @pyqtSlot(str, bool)
@@ -697,6 +701,7 @@ class SampleListWidget(QWidget):
 
     def refresh_samples(self):
         # Réinitialise l'affichage et charge la première page
+        self._loader_token += 1
         self.samples = []
         self.current_offset = 0
         self.more_available = True
@@ -713,7 +718,7 @@ class SampleListWidget(QWidget):
 
     def _path_matches_filter(self, path: str) -> bool:
         if not self.active_dirs:
-            return True
+            return False
         ap = os.path.abspath(path)
         return any(ap.startswith(os.path.abspath(d)) for d in self.active_dirs)
 
@@ -726,6 +731,10 @@ class SampleListWidget(QWidget):
     def load_next_page(self):
         if self.is_loading or not self.more_available:
             return
+        if not self.active_dirs:
+            self.more_available = False
+            self.loading_label.hide()
+            return
         self.is_loading = True
         self.loading_label.show()
         self._loader_thread = SamplesPageLoader(
@@ -733,12 +742,15 @@ class SampleListWidget(QWidget):
             self.current_offset,
             self.page_size,
             list(self.active_dirs),
+            self._loader_token,
         )
         self._loader_thread.samplesReady.connect(self.onSamplesLoaded)
         self._loader_thread.start()
 
-    @pyqtSlot(list)
-    def onSamplesLoaded(self, samples: list):
+    @pyqtSlot(int, list)
+    def onSamplesLoaded(self, token: int, samples: list):
+        if token != self._loader_token:
+            return
         self.loading_label.hide()
         self.is_loading = False
         self._loader_thread = None
@@ -772,16 +784,17 @@ class SampleListWidget(QWidget):
 class SamplesPageLoader(QThread):
     """Thread pour charger une page de samples sans bloquer l'UI."""
 
-    samplesReady = pyqtSignal(list)
+    samplesReady = pyqtSignal(int, list)
 
-    def __init__(self, service: SampleService, offset: int, limit: int, dirs: list[str]):
+    def __init__(self, service: SampleService, offset: int, limit: int, dirs: list[str], token: int):
         super().__init__()
         self.service = service
         self.offset = offset
         self.limit = limit
         self.dirs = dirs
+        self.token = token
 
     def run(self):
         results = self.service.get_samples(self.offset, self.limit, self.dirs)
-        self.samplesReady.emit(results)
+        self.samplesReady.emit(self.token, results)
 
