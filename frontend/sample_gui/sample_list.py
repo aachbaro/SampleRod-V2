@@ -32,9 +32,12 @@ class SampleListWidget(QWidget):
         # stocke le contexte et le service métier
         self.app_context  = app_context
         self.sample_store: SampleService = app_context.sample_store
+        self.settings = self.app_context.settings
         self.samples = []  # liste des samples à afficher
         self.selected_ids  = set()        # ensemble des IDs cochés
         self._qs = QSettings("SampleRod", "Main")
+        self.samples_per_page = self.settings.getSamplesPerPage()
+        self.current_page = 1
 
         # 1) abonnements aux signaux du service
         self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
@@ -49,6 +52,9 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleRemovedFromHistory.connect(self.onSampleRemovedFromHistory)
         # 2) stockage des cartes existantes
         self._card_widgets = {}
+
+        # mise à jour en cas de changement de paramètres
+        self.settings.samplesPerPageChanged.connect(self.onSamplesPerPageChanged)
 
         # 3) création de l’UI
         self.init_ui()
@@ -139,6 +145,8 @@ class SampleListWidget(QWidget):
 
         self.prev_button = QPushButton("Précédent")
         self.next_button = QPushButton("Suivant")
+        self.prev_button.clicked.connect(self._prev_page)
+        self.next_button.clicked.connect(self._next_page)
 
         self.pagination_layout.addWidget(self.prev_button)
         self.pagination_layout.addWidget(self.next_button)
@@ -349,20 +357,28 @@ class SampleListWidget(QWidget):
         self.updateSelectActions()
 
     def refreshList(self):
-        # 1) on prend la liste inversée (du plus récent au plus ancien)
-        ordered_samples = list(reversed(self.samples))
+        """Reconstruit la liste des cartes en fonction de la pagination."""
+        # 1) tri décroissant par date de création
+        ordered_samples = sorted(
+            self.samples, key=lambda s: s.created_at, reverse=True
+        )
+
+        total_samples = len(ordered_samples)
+        start_idx = (self.current_page - 1) * self.samples_per_page
+        end_idx = start_idx + self.samples_per_page
+        page_samples = ordered_samples[start_idx:end_idx]
 
         # 2) on supprime les cartes obsolètes
-        ids_courants = {s.id for s in ordered_samples}
+        ids_courants = {s.id for s in page_samples}
         for ancien_id in list(self._card_widgets):
             if ancien_id not in ids_courants:
                 w = self._card_widgets.pop(ancien_id)
                 self.content_layout.removeWidget(w)
                 w.deleteLater()
 
-        # 3) on (ré)crée / met à jour les cartes dans l'ordre
+        # 3) on (ré)crée / met à jour les cartes dans l'ordre de la page
         cartes_ordonnees = []
-        for samp in ordered_samples:
+        for samp in page_samples:
             if samp.id in self._card_widgets:
                 card = self._card_widgets[samp.id]
                 # Si on veut rafraîchir la donnée du sample (en cas de mise à jour)
@@ -401,6 +417,13 @@ class SampleListWidget(QWidget):
         for w in cartes_ordonnees:
             self.content_layout.addWidget(w)
         self.content_layout.addStretch()
+
+        if total_samples == 0:
+            self.updatePaginationLabel(0, 0, 0)
+        else:
+            self.updatePaginationLabel(
+                start_idx + 1, min(end_idx, total_samples), total_samples
+            )
 
         self.updateSelectActions()
 
@@ -614,3 +637,25 @@ class SampleListWidget(QWidget):
     def updatePaginationLabel(self, start_idx: int, end_idx: int, total_samples: int):
         """Met à jour le label de pagination."""
         self.pagination_label.setText(f"{start_idx} - {end_idx} / {total_samples}")
+
+    @pyqtSlot(int)
+    def onSamplesPerPageChanged(self, count: int):
+        """Slot appelé lorsque le paramètre de pagination change."""
+        self.samples_per_page = count
+        self.setCurrentPage(1)
+
+    def setCurrentPage(self, page: int):
+        """Change la page actuelle et rafraîchit la liste."""
+        if page < 1:
+            page = 1
+        self.current_page = page
+        self.refreshList()
+
+    def _prev_page(self):
+        if self.current_page > 1:
+            self.setCurrentPage(self.current_page - 1)
+
+    def _next_page(self):
+        max_pages = (len(self.samples) - 1) // self.samples_per_page + 1
+        if self.current_page < max_pages:
+            self.setCurrentPage(self.current_page + 1)
