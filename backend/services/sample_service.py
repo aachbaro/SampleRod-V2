@@ -246,19 +246,35 @@ class SampleService(QObject):
             return
         old_name = samp.name
         old_path = samp.path
+        player = self.app_context.audio_player
+        if hasattr(player, "is_playing_sample") and player.is_playing_sample(sample_id):
+            try:
+                player.stop_playback()
+                import time, pygame
+                t0 = time.time()
+                while pygame.mixer.music.get_busy():
+                    if time.time() - t0 > 2:
+                        raise RuntimeError("Impossible d'arrêter la lecture")
+                    time.sleep(0.05)
+            except Exception as e:
+                self.app_context.notifications.notify(
+                    title="❌ Erreur arrêt lecture",
+                    message=str(e),
+                    type=NotificationType.ERROR
+                )
+                logger.info(f"[SampleService] rename stop playback error: {e}")
+                return
         try:
             samp.rename(new_name)
             samp.name = new_name
             new_path = samp.path
             self.sampleRenamed.emit(sample_id, old_path, new_path)
-            # ▶ Succès
             self.app_context.notifications.notify(
                 title="✅ Sample renommé",
                 message=f"{old_name} → {new_name}",
                 type=NotificationType.SUCCESS
             )
         except Exception as e:
-            # ▶ Erreur
             self.app_context.notifications.notify(
                 title="❌ Erreur renommage",
                 message=str(e),
