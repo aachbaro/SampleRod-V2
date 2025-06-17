@@ -1,11 +1,14 @@
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QScrollArea,
     QToolBar,
     QToolButton,
+    QPushButton,
     QMenu,
     QFileDialog,
+    QLabel,
     QSizePolicy,
 )
 import logging
@@ -126,6 +129,21 @@ class SampleListWidget(QWidget):
         self.content_layout.setContentsMargins(10, 10, 10, 10)
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
+
+        # ─── Zone de pagination ───
+        self.pagination_layout = QHBoxLayout()
+        self.pagination_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.pagination_label = QLabel("0 - 0 / 0")
+        self.pagination_layout.addWidget(self.pagination_label)
+
+        self.prev_button = QPushButton("Précédent")
+        self.next_button = QPushButton("Suivant")
+
+        self.pagination_layout.addWidget(self.prev_button)
+        self.pagination_layout.addWidget(self.next_button)
+
+        main_layout.addLayout(self.pagination_layout)
         self.refreshList()
 
     @pyqtSlot(list)
@@ -592,3 +610,7 @@ class SampleListWidget(QWidget):
 
         # 6) On scroll vers le haut pour voir les nouveaux items
         self.scroll_area.verticalScrollBar().setValue(0)
+
+    def updatePaginationLabel(self, start_idx: int, end_idx: int, total_samples: int):
+        """Met à jour le label de pagination."""
+        self.pagination_label.setText(f"{start_idx} - {end_idx} / {total_samples}")
