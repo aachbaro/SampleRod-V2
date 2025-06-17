@@ -38,6 +38,8 @@ class SampleListWidget(QWidget):
         self._qs = QSettings("SampleRod", "Main")
         self.samples_per_page = self.settings.getSamplesPerPage()
         self.current_page = 1
+        # page pouvant temporairement contenir un échantillon supplémentaire
+        self._overflow_page = None
 
         # 1) abonnements aux signaux du service
         self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
@@ -203,6 +205,12 @@ class SampleListWidget(QWidget):
         self._card_widgets[sample_id] = card
         self.content_layout.insertWidget(0, card)
 
+        if self.current_page == 1:
+            self._overflow_page = 1
+            total = len(self.samples)
+            end_idx = self.samples_per_page + 1
+            self.updatePaginationLabel(1, min(end_idx, total), total)
+
     @pyqtSlot(int)
     def delete_sample(self, sample_id: int):
         """Déclenche la suppression via le service."""
@@ -365,7 +373,10 @@ class SampleListWidget(QWidget):
 
         total_samples = len(ordered_samples)
         start_idx = (self.current_page - 1) * self.samples_per_page
-        end_idx = start_idx + self.samples_per_page
+        per_page = self.samples_per_page
+        if self._overflow_page == self.current_page:
+            per_page += 1
+        end_idx = start_idx + per_page
         page_samples = ordered_samples[start_idx:end_idx]
 
         # 2) on supprime les cartes obsolètes
@@ -644,6 +655,7 @@ class SampleListWidget(QWidget):
     def onSamplesPerPageChanged(self, count: int):
         """Slot appelé lorsque le paramètre de pagination change."""
         self.samples_per_page = count
+        self._overflow_page = None
         self.setCurrentPage(1)
 
     def setCurrentPage(self, page: int):
@@ -682,6 +694,9 @@ class SampleListWidget(QWidget):
                     player.stop_playback()
                 except Exception:
                     pass
+
+        # sortie du mode dépassement temporaire lors d'un changement de page
+        self._overflow_page = None
 
         self.setCurrentPage(page)
 
