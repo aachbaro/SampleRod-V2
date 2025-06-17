@@ -1,5 +1,6 @@
 from PyQt6.QtCore import QObject, pyqtSignal
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy import or_
 from backend.db import SessionLocal
 from backend.models.sample import Sample
 from backend.models.normalize_worker import NormalizeWorker
@@ -72,6 +73,20 @@ class SampleService(QObject):
     def get_cached(self):
         """Retourne la liste courante en mémoire."""
         return list(self._samples)
+
+    def get_samples(self, offset: int = 0, limit: int = 50, filter_dirs: list[str] | None = None) -> list[Sample]:
+        """Retourne une portion de samples depuis la base, filtrée optionnellement."""
+        try:
+            with SessionLocal() as session:
+                query = session.query(Sample)
+                if filter_dirs:
+                    conditions = [Sample.path.like(os.path.join(d, "%")) for d in filter_dirs]
+                    query = query.filter(or_(*conditions))
+                query = query.order_by(Sample.id).offset(offset).limit(limit)
+                return query.all()
+        except SQLAlchemyError as e:
+            logger.info(f"[SampleService] get_samples error: {e}")
+            return []
     
     def add(self, path: str):
         """

@@ -29,12 +29,10 @@ class SampleListWidget(QWidget):
         # stocke le contexte et le service métier
         self.app_context  = app_context
         self.sample_store: SampleService = app_context.sample_store
-        self.samples = []  # liste des samples à afficher
         self.selected_ids  = set()        # ensemble des IDs cochés
         self._qs = QSettings("SampleRod", "Main")
 
         # 1) abonnements aux signaux du service
-        self.sample_store.samplesChanged.   connect(self.onSamplesChanged)
         self.sample_store.sampleAdded.      connect(self.onSampleAdded)
         self.sample_store.sampleDeleted.    connect(self.onSampleDeleted)
         self.sample_store.sampleRenamed.    connect(self.onSampleRenamed)
@@ -47,11 +45,19 @@ class SampleListWidget(QWidget):
         # 2) stockage des cartes existantes
         self._card_widgets = {}
 
+        # Pagination state
+        self.page_size = 50
+        self.current_offset = 0
+        self.is_loading = False
+        self.more_available = True
+        self.active_dirs = None
+
         # 3) création de l’UI
         self.init_ui()
 
-        # 4) initialisation de la liste avec le cache actuel
-        self.onSamplesChanged(self.sample_store.get_cached())
+        # 4) chargement initial avec pagination
+        self.reset_pagination()
+        self.load_next_page()
 
     def init_ui(self):
         """
@@ -126,27 +132,16 @@ class SampleListWidget(QWidget):
         self.content_layout.setContentsMargins(10, 10, 10, 10)
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
-        self.refreshList()
+        self.content_layout.addStretch()
+        self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
-    @pyqtSlot(list)
-    def onSamplesChanged(self, samples: list):
-        """
-        Slot appelé quand SampleService met à jour son cache.
-        » Met à jour la liste interne et reconstruit les cartes.
-        """
-        # 1) on stocke la nouvelle liste
-        self.samples = samples
-        # 2) on reconstruit l'affichage
-        self.refreshList()
-        self.updateSelectActions()
 
     @pyqtSlot(int)
     def onSampleAdded(self, sample_id: int):
         """
         Quand un nouveau sample est ajouté :
-        - on le récupère dans le cache
-        - on l'ajoute en tête de self.samples
-        - on crée et on affiche sa SampleCard tout en haut
+        - on récupère l'objet depuis le cache
+        - on crée et on affiche sa SampleCard en tête de liste
         """
         # 1) trouve l'objet Sample dans le cache du service
         new_sample = next(
@@ -156,26 +151,10 @@ class SampleListWidget(QWidget):
         if new_sample is None:
             return
 
-        # 2) l'ajoute en début de liste interne
-        self.samples.insert(0, new_sample)
-
-        # 3) crée la carte et connecte uniquement ses signaux
-        card = SampleCard(new_sample, self.app_context)
-        card.deleteSample.connect(self.delete_sample)
-        card.removeFromHistory.connect(self.sample_store.removeFromHistory)
-        card.renameSample.connect(self.rename_sample)
-        card.sampleMoved.connect(self.move_sample)
-
-        card.selectionChanged.connect(self.onSelectionChanged)
-        card.normalizeClicked.connect(self.onNormalizeClicked)
-
-        # signaux retour (rename/move)
-        self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
-        self.sample_store.sampleMoved  .connect(card.onMoveSuccess)
-
-        # 4) stocke la carte et affiche-la en tête du layout
-        self._card_widgets[sample_id] = card
-        self.content_layout.insertWidget(0, card)
+        # 2) crée la carte et l'affiche en tête
+        self._append_card(new_sample, prepend=True)
+        bar = self.scroll_area.verticalScrollBar()
+        bar.setValue(0)
 
     @pyqtSlot(int)
     def delete_sample(self, sample_id: int):
@@ -328,62 +307,6 @@ class SampleListWidget(QWidget):
         self.bulk_move_act.setEnabled(False)
         self.bulk_normalize_act.setEnabled(False)
         self.bulk_archive_act.setEnabled(False)
-        self.updateSelectActions()
-
-    def refreshList(self):
-        # 1) on prend la liste inversée (du plus récent au plus ancien)
-        ordered_samples = list(reversed(self.samples))
-
-        # 2) on supprime les cartes obsolètes
-        ids_courants = {s.id for s in ordered_samples}
-        for ancien_id in list(self._card_widgets):
-            if ancien_id not in ids_courants:
-                w = self._card_widgets.pop(ancien_id)
-                self.content_layout.removeWidget(w)
-                w.deleteLater()
-
-        # 3) on (ré)crée / met à jour les cartes dans l'ordre
-        cartes_ordonnees = []
-        for samp in ordered_samples:
-            if samp.id in self._card_widgets:
-                card = self._card_widgets[samp.id]
-                # Si on veut rafraîchir la donnée du sample (en cas de mise à jour)
-                card.sample = samp
-                card.refresh_display()
-            else:
-                # nouvelle carte, connexion des signaux
-                card = SampleCard(samp, self.app_context)
-                card.deleteSample.connect(self.delete_sample)
-                card.removeFromHistory.connect(self.sample_store.removeFromHistory)
-                card.renameSample.connect(self.rename_sample)
-                card.sampleMoved.connect(self.move_sample)
-                card.normalizeClicked.connect(self.onNormalizeClicked)
-                card.selectionChanged.connect(self.onSelectionChanged)
-
-                # Signaux retour du service
-                self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
-                self.sample_store.sampleMoved   .connect(card.onMoveSuccess)
-                # On stocke la carte
-                self._card_widgets[samp.id] = card
-
-                # Si l'ID était déjà dans self.selected_ids, on coche la checkbox
-                if samp.id in self.selected_ids:
-                    card.checkbox.setChecked(True)
-
-            cartes_ordonnees.append(card)
-
-        # 4) on vide le layout (sans supprimer les widgets)
-        while self.content_layout.count():
-            item = self.content_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                self.content_layout.removeWidget(w)
-
-        # 5) on ajoute les cartes dans l’ordre, puis un stretch final
-        for w in cartes_ordonnees:
-            self.content_layout.addWidget(w)
-        self.content_layout.addStretch()
-
         self.updateSelectActions()
 
 
@@ -592,3 +515,70 @@ class SampleListWidget(QWidget):
 
         # 6) On scroll vers le haut pour voir les nouveaux items
         self.scroll_area.verticalScrollBar().setValue(0)
+
+    # ─── Pagination helpers ───
+    def _on_scroll(self, value):
+        bar = self.scroll_area.verticalScrollBar()
+        if value >= bar.maximum() - 50:
+            self.load_next_page()
+
+    def reset_pagination(self):
+        self.current_offset = 0
+        self.more_available = True
+        self.is_loading = False
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self.content_layout.addStretch()
+        self._card_widgets.clear()
+        self.selected_ids.clear()
+        self.updateSelectActions()
+
+    def load_next_page(self):
+        if self.is_loading or not self.more_available:
+            return
+        self.is_loading = True
+        samples = self.sample_store.get_samples(
+            offset=self.current_offset,
+            limit=self.page_size,
+            filter_dirs=self.active_dirs,
+        )
+        self.onSamplesLoaded(samples)
+
+    @pyqtSlot(list)
+    def onSamplesLoaded(self, samples: list):
+        self.is_loading = False
+        if not samples:
+            self.more_available = False
+            return
+        self.current_offset += len(samples)
+        for samp in samples:
+            if samp.id in self._card_widgets:
+                continue
+            self._append_card(samp)
+
+    def _append_card(self, samp, prepend: bool = False):
+        card = SampleCard(samp, self.app_context)
+        card.deleteSample.connect(self.delete_sample)
+        card.removeFromHistory.connect(self.sample_store.removeFromHistory)
+        card.renameSample.connect(self.rename_sample)
+        card.sampleMoved.connect(self.move_sample)
+        card.selectionChanged.connect(self.onSelectionChanged)
+        card.normalizeClicked.connect(self.onNormalizeClicked)
+        self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
+        self.sample_store.sampleMoved.connect(card.onMoveSuccess)
+        if prepend:
+            index = 0
+        else:
+            index = self.content_layout.count() - 1
+            if index < 0:
+                index = 0
+        self.content_layout.insertWidget(index, card)
+        self._card_widgets[samp.id] = card
+
+    def set_active_dirs(self, dirs: list[str] | None):
+        self.active_dirs = dirs
+        self.reset_pagination()
+        self.load_next_page()
