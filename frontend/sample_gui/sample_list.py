@@ -45,6 +45,7 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleDeleted.    connect(self.onSampleDeleted)
         self.sample_store.sampleRenamed.    connect(self.onSampleRenamed)
         self.sample_store.sampleMoved.      connect(self.onSampleMoved)
+        self.sample_store.sampleDurationChanged.connect(self.onSampleDurationChanged)
         # -> Abonnement aux nouveaux signaux de normalisation
         self.sample_store.sampleStartedNormalization.connect(self.onStartedNormalization)
         self.sample_store.sampleFinishedNormalization.connect(self.onFinishedNormalization)
@@ -466,6 +467,13 @@ class SampleListWidget(QWidget):
             card.updateLibraryCombo(self.app_context.settings.libraries)
             # 2) On rafraîchit tout de même l’affichage du nom (et autres labels)
             card.refresh_display()
+
+    @pyqtSlot(int, float)
+    def onSampleDurationChanged(self, sample_id: int, new_duration: float):
+        card = self._card_widgets.get(sample_id)
+        if card:
+            card.sample.duration = new_duration
+            card.length_label.setText(f"{new_duration:.1f}s")
 
     # ─────────────────── Bulk Actions ───────────────────
     def bulkDelete(self):

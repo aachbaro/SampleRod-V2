@@ -5,6 +5,7 @@ from backend.models.sample import Sample
 from backend.models.normalize_worker import NormalizeWorker
 from backend.services.notification_service import NotificationType
 import os
+import wave
 import logging
 logger = logging.getLogger("sample_service")
 
@@ -25,6 +26,7 @@ class SampleService(QObject):
     # vues sans avoir à recharger la liste complète.
     sampleRenamed  = pyqtSignal(int, str, str)    # émet (ID, ancien chemin, nouveau chemin)
     sampleMoved    = pyqtSignal(int, str)    # émet (ID, nouveau dossier)
+    sampleDurationChanged = pyqtSignal(int, float)  # émet (ID, nouvelle durée)
     sampleStartedNormalization  = pyqtSignal(int)      # émet l’ID du sample en cours de normalisation
     sampleFinishedNormalization = pyqtSignal(int)       # émet l’ID du sample normalisé
     sampleNormalizationFailed   = pyqtSignal(int, str)  # émet (ID, message d’erreur)
@@ -48,9 +50,7 @@ class SampleService(QObject):
         # on retire directement l’entrée en base (sans toucher au fichier)
         self._integrity_worker.fileMissing.connect(self.removeFromHistory)
         # (optionnel) gérer les durations incohérentes
-        self._integrity_worker.durationMismatch.connect(
-            lambda sid, d: logger.info(f"[Integrity] Durée corrigée for sample {sid} → {d:.2f}s")
-        )
+        self._integrity_worker.durationMismatch.connect(self._onDurationMismatch)
         self._integrity_worker.start()
 
     def _initialize_cache(self):
@@ -312,13 +312,45 @@ class SampleService(QObject):
         finally:
             self.samplesChanged.emit(list(self._samples))
 
+    def updateDurationFromFile(self, file_path: str):
+        """Recalcul la durée d'un fichier et met à jour la base et le cache."""
+        samp = next((s for s in self._samples if s.path == file_path), None)
+        if not samp:
+            return
+        try:
+            with wave.open(file_path, 'rb') as w:
+                new_duration = w.getnframes() / w.getframerate()
+        except Exception as e:
+            logger.info(f"[SampleService] updateDurationFromFile error: {e}")
+            return
+
+        session = SessionLocal()
+        try:
+            inst = session.get(Sample, samp.id)
+            if inst:
+                inst.duration = new_duration
+                session.commit()
+            samp.duration = new_duration
+            self.sampleDurationChanged.emit(samp.id, new_duration)
+        except SQLAlchemyError as e:
+            session.rollback()
+            logger.info(f"[SampleService] updateDurationFromFile DB error: {e}")
+        finally:
+            session.close()
+
     def _get(self, sample_id: int):
         """Retourne l’instance en cache ou None."""
         return next((s for s in self._samples if s.id == sample_id), None)
-    
+
     def _onNormalizationFailed(self, sample_id: int, message: str):
         # Réémet le signal vers l’UI
         self.sampleNormalizationFailed.emit(sample_id, message)
+
+    def _onDurationMismatch(self, sample_id: int, new_duration: float):
+        samp = self._get(sample_id)
+        if samp:
+            samp.duration = new_duration
+            self.sampleDurationChanged.emit(sample_id, new_duration)
 
     def removeFromHistory(self, sample_id: int):
         """

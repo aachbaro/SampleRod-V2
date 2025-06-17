@@ -1003,9 +1003,8 @@ class WaveformWidget(QWidget):
         svc = self.app_context.sample_store
 
         if overwrite:
-            # l’overwrite ne change pas le path, on recharge juste le cache pour
-            # mettre à jour duration/created_at via le modèle
-            svc.load_all()
+            # recalculer la durée et mettre à jour le service uniquement pour ce fichier
+            svc.updateDurationFromFile(target)
             # Notification when the file is saved over the original
             self.app_context.notifications.notify(
                 title="✅ Fichier sauvegardé",
