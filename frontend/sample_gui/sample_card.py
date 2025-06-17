@@ -570,6 +570,11 @@ class SampleCard(QWidget):
             self.updateLibraryCombo(self.settings.libraries)
             self.refresh_display()
 
+    def onDurationChanged(self, sample_id, new_duration):
+        if self.sample.id == sample_id:
+            self.sample.duration = new_duration
+            self.length_label.setText(f"{new_duration:.1f}s")
+
     def focusInEvent(self, event):
         # quand **tout** (parent ou enfant) reçoit le focus, on marque la carte comme “focused”
         self.setProperty("focused", True)
