@@ -194,6 +194,12 @@ class WaveformWidget(QWidget):
         self.plot.setBackground('#222')
         self.plot.hideAxis('left')
         self.plot.setMouseEnabled(x=True, y=False)
+
+        self.curve = pg.PlotDataItem(pen=pg.mkPen('w', width=1))
+        self.curve.setDownsampling(auto=True, method='peak')
+        self.curve.setClipToView(True)
+        self.plot.addItem(self.curve)
+
         self.layout.addWidget(self.plot)
 
         # — Contrôles
@@ -263,43 +269,39 @@ class WaveformWidget(QWidget):
         self.loader.start()
 
     def set_waveform_data(self, y, sr, dur):
-        if y.size == 0 or sr == 0:
-            logger.info("[WaveformWidget] Fichier vide ou erreur")
-            return
-        self.waveform_data, self.sample_rate, self.duration = y, sr, dur
+        # conversion float32 contigu
+        self.waveform_data = y.astype('float32', order='C')
+        self.sample_rate = sr
+        self.duration    = dur
+
+        # décimation pour l'affichage
+        max_points = 10000
+        step = max(1, len(y) // max_points)
+        self._display_data = self.waveform_data[::step]
+        self._display_x    = np.linspace(0, dur, len(self._display_data))
+
+    # **Verrouille désormais les limites X/Y du ViewBox** sur la durée réelle
         vb = self.plot.getViewBox()
-        vb.setLimits(xMin=0, xMax=dur, yMin=-1, yMax=1)
-        self._redraw_all()
+        vb.setLimits(
+            xMin=0, xMax=self.duration,
+            yMin=-1, yMax=1,
+            minXRange=0.01,
+            maxXRange=self.duration
+        )
+
+        self._draw_waveform()
 
     def _draw_waveform(self):
-        # 1) on vide la vue
-        self.plot.clear()
+        if self.waveform_data is None or not self.waveform_data.size:
+            self.curve.setData([], [])
+            return
 
-        # 2) normalisation uniquement pour l'affichage
-        if self.waveform_data is not None and self.waveform_data.size:
-            peak = np.max(np.abs(self.waveform_data))
-            if peak > 0:
-                y_display = self.waveform_data / peak
-            else:
-                y_display = self.waveform_data
-        else:
-            y_display = np.array([])
+        # normalisation pour l'affichage
+        self.curve.setData(self._display_x, self._display_data)
 
-        # 3) on trace la forme d'onde normalisée
-        x = np.linspace(0, self.duration, len(y_display))
-        self.plot.plot(x, y_display, pen=pg.mkPen('w', width=1))
         self.plot.setXRange(0, self.duration, padding=0)
-        self.plot.setYRange(-1, 1, padding=0)
 
-        # 3) on ré-initialise le comportement de la molette
-        vb = self.plot.getViewBox()
-        vb.setMenuEnabled(False)
-        vb.wheelEvent = self._zoom_or_pan
-
-        # 4) on remet toujours la tête de lecture
-        # (même si elle a été supprimée par clear())
-        self.plot.addItem(self.read_head)
-        # et on la positionne où il faut
+        # repositionne la tête
         self.read_head.setPos(self.current_time)
 
     def _redraw_all(self):
@@ -864,7 +866,7 @@ class WaveformWidget(QWidget):
             samplerate=self.sample_rate,
             channels=1,
             dtype='float32',
-            blocksize=2048,     # réduit la fréquence des callbacks
+            blocksize=4096,     # réduit la fréquence des callbacks
             latency='low',
             callback=callback
         )
