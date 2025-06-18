@@ -115,9 +115,15 @@ class WaveformWidget(QWidget):
         self.history = HistoryStack()
         self._record_history = True
 
-        # gestion des marqueurs via un composant dédié
-        self.marker_manager = MarkerManager(self)
+        # construction de l'UI (définit notamment self.plot)
         self._build_ui()
+        # gestion des marqueurs via un composant dédié, APRES avoir défini self.plot
+        self.marker_manager = MarkerManager(self)
+        # affichage initial de la liste de marqueurs
+        if not self.marker_manager.markers:
+            self.marker_list.hide()
+        else:
+            self.marker_list.show()
         self._load_audio(audio_file_path)
 
     # --- accès simplifiés aux données du MarkerManager
@@ -231,14 +237,10 @@ class WaveformWidget(QWidget):
         self.stop_timer_signal.connect(self.timer.stop)
         self.timer.start(5)
 
-        # — Liste des marqueurs
+        # — Liste des marqueurs (on gère la visibilité PLUS TARD, après instanciation de marker_manager)
         self.marker_list = MarkerListWidget(self)
         self.marker_list.itemClicked.connect(self.on_marker_list_clicked)
         self.marker_list.itemDoubleClicked.connect(self.on_marker_list_double_clicked)
-        if not hasattr(self, "marker_manager") or not self.marker_manager.markers:
-            self.marker_list.hide()
-        else:
-            self.marker_list.show()
         self.layout.addWidget(self.marker_list)
 
 
@@ -324,7 +326,10 @@ class WaveformWidget(QWidget):
 # ——————————————————————————————————————————————————— Marqueurs —————————————————————————————————————————————————————
 
     def add_marker(self, t: float):
+        """Ajoute un marqueur et met à jour la liste."""
         self.marker_manager.add_marker(t)
+        # on rafraîchit et on affiche la liste si nécessaire
+        self._refresh_marker_list()
 
     def on_marker_moved(self, line: pg.InfiniteLine):
         self.marker_manager.on_marker_moved(line)
@@ -333,7 +338,10 @@ class WaveformWidget(QWidget):
         self.marker_manager.on_marker_move_finished(line)
 
     def remove_marker(self, t: float):
+        """Supprime un marqueur et met à jour la liste."""
         self.marker_manager.remove_marker(t)
+        # on rafraîchit et on masque la liste si nécessaire
+        self._refresh_marker_list()
 
     def on_marker_list_clicked(self, item: QListWidgetItem):
         payload = item.data(Qt.ItemDataRole.UserRole)
@@ -373,6 +381,11 @@ class WaveformWidget(QWidget):
 
     def _refresh_marker_list(self):
         self.marker_manager.refresh_marker_list()
+        # montrer/cacher automatiquement selon qu'il y a des marqueurs
+        if self.marker_manager.markers:
+            self.marker_list.show()
+        else:
+            self.marker_list.hide()
 
 # ——————————————————————————————————————— region et dash     ——————————————————————————————————————————————————————
 
