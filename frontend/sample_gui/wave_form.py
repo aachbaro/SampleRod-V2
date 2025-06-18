@@ -805,76 +805,69 @@ class WaveformWidget(QWidget):
            # on reprend la lecture
            self.play_audio(self.current_time)
 
-    def play_audio(self, start_time=0.0):
+    def play_audio(self, start_time: float = 0.0):
         if self.waveform_data is None:
             return
+
+        # position de départ en échantillons
         self.start_sample = int(start_time * self.sample_rate)
         self.current_time = start_time
         self.is_playing   = True
         self.timer.start(50)
 
         def callback(outdata, frames, time_info, status):
-            # Sorte de silence par défaut
-            buf = np.zeros((frames,), dtype='float32')
-            idx = 0
+            if status.output_underflow:
+                logger.warning("⚠️ Underflow audio détecté")
 
-            # — calcul des bornes en samples
+            # recalcul dynamiques des bornes
             if self.marker_mode and self.markers:
-                self.current_marker_idx = min(self.current_marker_idx, len(self.markers)-1)
-                ms = self.markers[self.current_marker_idx]
-                region_start = int(ms * self.sample_rate)
-                if self.current_marker_idx + 1 < len(self.markers):
-                    region_end = int(self.markers[self.current_marker_idx + 1] * self.sample_rate)
-                else:
-                    region_end = len(self.waveform_data)
+                idx = min(self.current_marker_idx, len(self.markers)-1)
+                region_start = int(self.markers[idx] * self.sample_rate)
+                region_end = int(self.markers[idx+1] * self.sample_rate) if idx+1 < len(self.markers) else len(self.waveform_data)
             else:
                 region_start = int(self.play_start * self.sample_rate)
-                region_end = int(self.play_end * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
+                region_end   = int(self.play_end   * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
 
-            # si la région est vide, on renvoie du silence et on stoppe
             if region_end <= region_start:
-                outdata[:, 0] = buf
+                outdata.fill(0)
                 self.is_playing = False
-                return
+                raise sd.CallbackStop()
 
-            # position de lecture actuelle
-            read_pos = self.start_sample
+            st = self.start_sample
 
-            # — playback + loop
-            while idx < frames:
-                # si on dépasse la fin de la région
-                if read_pos >= region_end:
-                    if not self.loop_enabled:
-                        self.is_playing = False
-                        break
-                    read_pos = region_start
+            if self.loop_enabled:
+                length = region_end - region_start
+                idxs = (np.arange(st, st + frames) - region_start) % length + region_start
+                chunk = self.waveform_data[idxs]
 
-                # combien d’échantillons restent dans la région
-                remaining = region_end - read_pos
-                # on ne lit jamais plus que frames-idx ni que remaining
-                to_read = min(frames - idx, remaining)
+                # wrap du pointeur de lecture
+                new_pos = st + frames
+                self.start_sample = region_start + ((new_pos - region_start) % length)
 
-                # extrait le chunk et en calcule la vraie longueur
-                chunk = self.waveform_data[read_pos:read_pos + to_read].astype('float32')
-                n = chunk.shape[0]
-                if n == 0:
-                    break  # plus rien à jouer
+            else:
+                end = st + frames
+                chunk = self.waveform_data[st:end]
+                if chunk.shape[0] < frames:
+                    chunk = np.pad(chunk, (0, frames - chunk.shape[0]), mode='constant')
+                self.start_sample = min(end, region_end)
 
-                # copie exactement n échantillons dans le buffer
-                buf[idx:idx + n] = chunk
-                idx += n
-                read_pos += n
-
-            # on met à jour la position de lecture
-            self.start_sample = read_pos
-
-            # on renvoie le buffer et on met à jour current_time
-            outdata[:, 0] = buf
+            outdata[:, 0] = chunk
             self.current_time = self.start_sample / self.sample_rate
 
-        self.stream = sd.OutputStream(samplerate=self.sample_rate,
-                                      channels=1,
-                                      callback=callback)
+            # arrêt propre hors loop
+            if not self.loop_enabled and self.start_sample >= region_end:
+                self.is_playing = False
+                raise sd.CallbackStop()
+
+        # instanciation du stream avec dtype, blocksize et latence adaptés
+        self.stream = sd.OutputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            dtype='float32',
+            blocksize=2048,     # réduit la fréquence des callbacks
+            latency='low',
+            callback=callback
+        )
         self.stream.start()
 
     def pause_audio(self):
