@@ -269,16 +269,28 @@ class WaveformWidget(QWidget):
         self.loader.start()
 
     def set_waveform_data(self, y, sr, dur):
-        # conversion float32 contigu
         self.waveform_data = y.astype('float32', order='C')
-        self.sample_rate = sr
-        self.duration    = dur
+        self.sample_rate  = sr
+        self.duration     = dur
 
-        # décimation pour l'affichage
+        # nombre de colonnes à afficher (taille de widget en pixels ou max_points)
         max_points = 10000
         step = max(1, len(y) // max_points)
-        self._display_data = self.waveform_data[::step]
-        self._display_x    = np.linspace(0, dur, len(self._display_data))
+
+        # pour chaque bloc de 'step' échantillons, on calcule min et max
+        data = self.waveform_data
+        n_blocks = len(data) // step
+        reshaped = data[: n_blocks * step].reshape(n_blocks, step)
+        mins = reshaped.min(axis=1)
+        maxs = reshaped.max(axis=1)
+
+        # abscisses : début de chaque bloc
+        x = np.linspace(0, dur, n_blocks)
+
+        # on stocke pour le draw
+        self._display_x   = x
+        self._display_min = mins
+        self._display_max = maxs
 
     # **Verrouille désormais les limites X/Y du ViewBox** sur la durée réelle
         vb = self.plot.getViewBox()
@@ -292,16 +304,20 @@ class WaveformWidget(QWidget):
         self._draw_waveform()
 
     def _draw_waveform(self):
-        if self.waveform_data is None or not self.waveform_data.size:
+        if not hasattr(self, '_display_min'):
             self.curve.setData([], [])
             return
 
-        # normalisation pour l'affichage
-        self.curve.setData(self._display_x, self._display_data)
+        # on construit un « zigzag » : [x0, x0, x1, x1, x2, x2…] avec [max, min, max, min…]
+        x = np.empty(2 * len(self._display_x))
+        y = np.empty(2 * len(self._display_x))
+        x[0::2] = self._display_x
+        x[1::2] = self._display_x
+        y[0::2] = self._display_max
+        y[1::2] = self._display_min
 
+        self.curve.setData(x, y)
         self.plot.setXRange(0, self.duration, padding=0)
-
-        # repositionne la tête
         self.read_head.setPos(self.current_time)
 
     def _redraw_all(self):
