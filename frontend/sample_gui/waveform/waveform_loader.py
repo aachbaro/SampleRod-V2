@@ -18,7 +18,8 @@ class WaveformLoaderThread(QThread):
             # Load the waveform without altering the original amplitude so
             # that playback and saving keep the exact same data as on disk.
             y, sr = librosa.load(self.path, sr=None)
-            dur = librosa.get_duration(y=y, sr=sr)
+            y = y.astype("float32", order="C")
+            dur = len(y) / sr
             self.waveformReady.emit(y, sr, dur)
         except Exception as e:
             logger.info(f"[WaveformLoaderThread] Erreur: {e}")
