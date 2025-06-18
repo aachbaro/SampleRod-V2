@@ -235,6 +235,10 @@ class WaveformWidget(QWidget):
         self.marker_list = MarkerListWidget(self)
         self.marker_list.itemClicked.connect(self.on_marker_list_clicked)
         self.marker_list.itemDoubleClicked.connect(self.on_marker_list_double_clicked)
+        if not self.marker_manager.markers:
+            self.marker_list.hide()
+        else:
+            self.marker_list.show()
         self.layout.addWidget(self.marker_list)
 
 
