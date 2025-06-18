@@ -200,6 +200,10 @@ class WaveformWidget(QWidget):
         self.curve.setClipToView(True)
         self.plot.addItem(self.curve)
 
+        # recalcule l'enveloppe lorsqu'on zoome ou qu'on pan
+        vb = self.plot.getViewBox()
+        vb.sigXRangeChanged.connect(self._on_view_range_changed)
+
         self.layout.addWidget(self.plot)
 
         # — Contrôles
@@ -273,25 +277,6 @@ class WaveformWidget(QWidget):
         self.sample_rate  = sr
         self.duration     = dur
 
-        # nombre de colonnes à afficher (taille de widget en pixels ou max_points)
-        max_points = 10000
-        step = max(1, len(y) // max_points)
-
-        # pour chaque bloc de 'step' échantillons, on calcule min et max
-        data = self.waveform_data
-        n_blocks = len(data) // step
-        reshaped = data[: n_blocks * step].reshape(n_blocks, step)
-        mins = reshaped.min(axis=1)
-        maxs = reshaped.max(axis=1)
-
-        # abscisses : début de chaque bloc
-        x = np.linspace(0, dur, n_blocks)
-
-        # on stocke pour le draw
-        self._display_x   = x
-        self._display_min = mins
-        self._display_max = maxs
-
     # **Verrouille désormais les limites X/Y du ViewBox** sur la durée réelle
         vb = self.plot.getViewBox()
         vb.setLimits(
@@ -301,23 +286,43 @@ class WaveformWidget(QWidget):
             maxXRange=self.duration
         )
 
+        # calcul initial de l'enveloppe sur toute la durée
+        self.plot.setXRange(0, self.duration, padding=0)
         self._draw_waveform()
 
     def _draw_waveform(self):
-        if not hasattr(self, '_display_min'):
+        """Recalcule l'enveloppe sur la portion actuellement visible."""
+        vb = self.plot.getViewBox()
+        x0, x1 = vb.viewRange()[0]
+        self._on_view_range_changed(vb, (x0, x1))
+
+    def _on_view_range_changed(self, view_box, range):
+        """Update the displayed envelope when the view range changes."""
+        if self.waveform_data is None or self.sample_rate is None:
+            return
+
+        x0, x1 = range
+        i0 = max(0, int(x0 * self.sample_rate))
+        i1 = min(len(self.waveform_data), int(x1 * self.sample_rate))
+
+        segment = self.waveform_data[i0:i1]
+        if len(segment) == 0:
             self.curve.setData([], [])
             return
 
-        # on construit un « zigzag » : [x0, x0, x1, x1, x2, x2…] avec [max, min, max, min…]
-        x = np.empty(2 * len(self._display_x))
-        y = np.empty(2 * len(self._display_x))
-        x[0::2] = self._display_x
-        x[1::2] = self._display_x
-        y[0::2] = self._display_max
-        y[1::2] = self._display_min
+        width = self.plot.width() or 800
+        step = max(1, len(segment) // width)
+        n_blocks = len(segment) // step
+        seg = segment[: n_blocks * step].reshape(n_blocks, step)
+        mins = seg.min(axis=1)
+        maxs = seg.max(axis=1)
 
-        self.curve.setData(x, y)
-        self.plot.setXRange(0, self.duration, padding=0)
+        xs = np.linspace(i0 / self.sample_rate, i1 / self.sample_rate, n_blocks)
+
+        X_poly = np.concatenate([xs, xs[::-1]])
+        Y_poly = np.concatenate([maxs, mins[::-1]])
+
+        self.curve.setData(X_poly, Y_poly)
         self.read_head.setPos(self.current_time)
 
     def _redraw_all(self):
