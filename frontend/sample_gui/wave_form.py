@@ -115,9 +115,9 @@ class WaveformWidget(QWidget):
         self.history = HistoryStack()
         self._record_history = True
 
-        self._build_ui()
         # gestion des marqueurs via un composant dédié
         self.marker_manager = MarkerManager(self)
+        self._build_ui()
         self._load_audio(audio_file_path)
 
     # --- accès simplifiés aux données du MarkerManager
@@ -235,7 +235,7 @@ class WaveformWidget(QWidget):
         self.marker_list = MarkerListWidget(self)
         self.marker_list.itemClicked.connect(self.on_marker_list_clicked)
         self.marker_list.itemDoubleClicked.connect(self.on_marker_list_double_clicked)
-        if not self.marker_manager.markers:
+        if not hasattr(self, "marker_manager") or not self.marker_manager.markers:
             self.marker_list.hide()
         else:
             self.marker_list.show()
