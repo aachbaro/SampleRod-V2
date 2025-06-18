@@ -279,6 +279,9 @@ class WaveformWidget(QWidget):
 
     # **Verrouille désormais les limites X/Y du ViewBox** sur la durée réelle
         vb = self.plot.getViewBox()
+        vb.setMenuEnabled(False)
+        vb.wheelEvent = self._zoom_or_pan
+        vb = self.plot.getViewBox()
         vb.setLimits(
             xMin=0, xMax=self.duration,
             yMin=-1, yMax=1,
@@ -867,15 +870,23 @@ class WaveformWidget(QWidget):
                 new_pos = st + frames
                 self.start_sample = region_start + ((new_pos - region_start) % length)
 
-            else:
-                end = st + frames
-                chunk = self.waveform_data[st:end]
-                if chunk.shape[0] < frames:
-                    chunk = np.pad(chunk, (0, frames - chunk.shape[0]), mode='constant')
-                self.start_sample = min(end, region_end)
+            # 3️⃣ Cas non-loop : on ne stoppe que si on a moins que `frames` échantillons restants
+            remaining = region_end - st
+            if remaining <= 0:
+                # déjà à la fin → arrêt direct
+                raise sd.CallbackStop()
 
-            outdata[:, 0] = chunk
+            # nombre à jouer ce callback
+            n = min(frames, remaining)
+            outdata[:n, 0] = self.waveform_data[st:st + n]
+
+            # mise à jour du pointeur
+            self.start_sample = st + n
             self.current_time = self.start_sample / self.sample_rate
+
+            if n < frames:
+                # on a joué le dernier fragment (< blocksize) → arrêt immédiat sans boucler
+                raise sd.CallbackStop()
 
             # arrêt propre hors loop
             if not self.loop_enabled and self.start_sample >= region_end:
@@ -887,7 +898,7 @@ class WaveformWidget(QWidget):
             samplerate=self.sample_rate,
             channels=1,
             dtype='float32',
-            blocksize=4096,     # réduit la fréquence des callbacks
+            blocksize=1024,
             latency='low',
             callback=callback
         )
