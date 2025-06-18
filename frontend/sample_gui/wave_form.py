@@ -1056,11 +1056,10 @@ class WaveformWidget(QWidget):
         pos = event.scenePos()
         x = float(np.clip(view_box.mapSceneToView(pos).x(), 0.0, self.duration))
 
-        # Cas où il n'y a aucun marqueur
+        # Cas où il n'y a aucun marqueur : aucune région n'est affichée
         if not self.markers:
-            t_left = 0.0
-            t_right = self.duration
-
+            logger.info("[WaveformWidget] Aucun marqueur, pas de region")
+            return
         else:
             # Recherche de l'indice du premier marqueur >= x
             idx = bisect.bisect_left(self.markers, x)
