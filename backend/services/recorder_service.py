@@ -4,7 +4,10 @@ import multiprocessing as mp
 from backend.models.recorder_worker import recorder_worker
 from backend.services.settings_service import SettingsService
 from backend.models.sample import Sample
+from backend.services.notification_service import NotificationType
 import logging
+import wave
+import os
 logger = logging.getLogger("recorder_service")
 
 class RecorderService(QObject):
@@ -13,9 +16,10 @@ class RecorderService(QObject):
     Maintenant hérite de QObject pour pouvoir recevoir les signaux Qt.
     """
 
-    def __init__(self, settingsService: SettingsService, sample_rate, block_size):
+    def __init__(self, app_context, sample_rate, block_size):
         super().__init__()
-        self.settingsService = settingsService
+        self.app_context = app_context
+        self.settingsService: SettingsService = app_context.settings
 
         # État initial récupéré depuis le SettingsService
         self.retro_enabled = self.settingsService.isRetroEnabled()
@@ -158,6 +162,35 @@ class RecorderService(QObject):
                 logger.info(f"RecorderService: retro_enabled -> {payload}")
                 self.retro_enabled = payload
             elif msg == 'done':
-                others.append(('done', payload))
+                path = payload
+                if self._is_wav_silent(path):
+                    # ▶ Sequence vide : notification et pas de sauvegarde
+                    self.app_context.notifications.notify(
+                        title="Enregistrement annulé",
+                        message="Aucun son détecté : aucun fichier n’a été créé.",
+                        type=NotificationType.WARNING,
+                    )
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+                else:
+                    self.app_context.sample_store.add(path)
+                    self.app_context.notifications.notify(
+                        title="Sample enregistré",
+                        message=f"Votre sample a bien été enregistré dans\n{path}",
+                        type=NotificationType.SUCCESS,
+                    )
+                    others.append(('done', path))
 
         return others
+
+    @staticmethod
+    def _is_wav_silent(path: str) -> bool:
+        """Return True if the WAV file contains only zeros."""
+        try:
+            with wave.open(path, 'rb') as wf:
+                frames = wf.readframes(wf.getnframes())
+            return all(b == 0 for b in frames)
+        except Exception:
+            return False
