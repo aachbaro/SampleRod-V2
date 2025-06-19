@@ -361,7 +361,7 @@ class SampleListWidget(QWidget):
         """Reconstruit la liste des cartes en fonction de la pagination."""
         # 1) tri décroissant par date de création
         ordered_samples = sorted(
-            self.samples, key=lambda s: s.created_at, reverse=True
+            self.samples, key=lambda s: s.id, reverse=True
         )
 
         total_samples = len(ordered_samples)
