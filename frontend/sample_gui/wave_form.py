@@ -390,8 +390,12 @@ class WaveformWidget(QWidget):
 
     def add_marker(self, t: float):
         """Ajoute un marqueur et met à jour la liste."""
+        # Sécurité : ne pas ajouter si un marker existe déjà ici
+        # (on compare avec une petite tolérance pour les floats)
+        tol = 1e-6
+        if any(abs(existing - t) < tol for existing in self.markers):
+            return
         self.marker_manager.add_marker(t)
-        # on rafraîchit et on affiche la liste si nécessaire
         self._refresh_marker_list()
 
     def on_marker_moved(self, line: pg.InfiniteLine):
@@ -484,6 +488,23 @@ class WaveformWidget(QWidget):
 
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
+
+        # --- 0) En mode marker, Ctrl+clic simple → sélection de la région ---
+        if self.marker_mode \
+           and event.type() == QEvent.GraphicsSceneMousePress \
+           and event.button() == Qt.MouseButton.LeftButton \
+           and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+
+            pos = event.scenePos()
+            # Si on a cliqué sur un marker existant, on laisse InfiniteLine gérer
+            for line in self.marker_lines.values():
+                if line.sceneBoundingRect().contains(pos):
+                    return False
+
+            # Sinon, on crée la région comme avec Ctrl+double-clic en mode non-marker
+            self._handle_ctrl_double_click(vb, event)
+            return True
+
 
         # 1) Ctrl + double-clic → délégation à la méthode dédiée
         if (event.type() == QEvent.GraphicsSceneMouseDoubleClick and
@@ -883,13 +904,13 @@ class WaveformWidget(QWidget):
                 logger.warning("⚠️ Underflow audio détecté")
 
             # recalcul dynamiques des bornes
-            if self.marker_mode and self.markers:
-                idx = min(self.current_marker_idx, len(self.markers)-1)
-                region_start = int(self.markers[idx] * self.sample_rate)
-                region_end = int(self.markers[idx+1] * self.sample_rate) if idx+1 < len(self.markers) else len(self.waveform_data)
-            else:
-                region_start = int(self.play_start * self.sample_rate)
-                region_end   = int(self.play_end   * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
+            # if self.marker_mode and self.markers:
+            #     idx = min(self.current_marker_idx, len(self.markers)-1)
+            #     region_start = int(self.markers[idx] * self.sample_rate)
+            #     region_end = int(self.markers[idx+1] * self.sample_rate) if idx+1 < len(self.markers) else len(self.waveform_data)
+            # else:
+            region_start = int(self.play_start * self.sample_rate)
+            region_end   = int(self.play_end   * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
 
             if region_end <= region_start:
                 outdata.fill(0)
