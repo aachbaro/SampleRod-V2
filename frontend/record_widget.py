@@ -5,7 +5,7 @@ logger = logging.getLogger("record_widget")
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu
+from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu, QMessageBox
 from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal
 from PyQt6.QtGui import QIcon, QWheelEvent, QCursor
 import qtawesome as qta
@@ -174,6 +174,18 @@ class RecordWidgetWindow(QMainWindow):
 
         if source == self.recordButton:
             if event.type() == QEvent.Type.MouseButtonPress  and event.button() == Qt.MouseButton.LeftButton:
+        # ─── Guard clause : s’assurer qu’une bibliothèque est sélectionnée ───
+                if not self.settings.libraries or \
+                self.library_selected < 0 or \
+                self.library_selected >= len(self.settings.libraries):
+                    # Notification discrète via ton service existant
+                    self.app_context.notifications.notify(
+                        title="Enregistrement impossible",
+                        message="Sélectionnez d’abord une bibliothèque avant d’enregistrer.",
+                        type=NotificationType.WARNING,
+                    )
+                    # On intercepte l’événement pour éviter l’erreur d’index
+                    return True
                 selected_library = self.settings.libraries[self.library_selected].path
                 self.app_context.recorder.record_button_clicked(selected_library, self.retro_time_selected)
                 self.updateRecordButtonDisplay()
