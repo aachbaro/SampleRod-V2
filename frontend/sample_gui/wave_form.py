@@ -26,6 +26,7 @@ from .marker_manager import MarkerManager, MarkerListWidget
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.history_stack import HistoryStack
+from frontend.animation import AnimationHelper
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
     def __init__(self, *args, **kwargs):
@@ -450,9 +451,9 @@ class WaveformWidget(QWidget):
         self.marker_manager.refresh_marker_list()
         # montrer/cacher automatiquement selon qu'il y a des marqueurs
         if self.marker_manager.markers:
-            self.marker_list.show()
+            AnimationHelper.fade_in(self.marker_list)
         else:
-            self.marker_list.hide()
+            AnimationHelper.fade_out(self.marker_list)
 
 # ——————————————————————————————————————— region et dash     ——————————————————————————————————————————————————————
 
