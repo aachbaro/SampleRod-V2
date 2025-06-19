@@ -15,9 +15,9 @@ class WaveformLoaderThread(QThread):
 
     def run(self):
         try:
-            # Load the waveform without altering the original amplitude so
-            # that playback and saving keep the exact same data as on disk.
-            y, sr = librosa.load(self.path, sr=None)
+            # Charger la waveform en stéréo (mono=False)
+            # y aura la forme (n_channels, n_samples) plutôt que (n_samples,)
+            y, sr = librosa.load(self.path, sr=None, mono=False)
             dur = librosa.get_duration(y=y, sr=sr)
             self.waveformReady.emit(y, sr, dur)
         except Exception as e:

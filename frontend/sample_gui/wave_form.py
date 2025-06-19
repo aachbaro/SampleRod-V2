@@ -111,6 +111,7 @@ class WaveformWidget(QWidget):
         self.waveform_data = None
         self.sample_rate = None
         self.duration = 0.0
+        self.is_stereo = False
 
         # historique des actions
         self.history = HistoryStack()
@@ -197,9 +198,14 @@ class WaveformWidget(QWidget):
         self.plot.hideAxis('left')
         self.plot.setMouseEnabled(x=True, y=False)
 
+        # Courbes pour chaque canal (gauche et droite)
+        self.curve_left  = pg.PlotDataItem(pen=pg.mkPen('w', width=1))
+        self.curve_right = pg.PlotDataItem(pen=pg.mkPen('y', width=1))
+        self.plot.addItem(self.curve_left)
+        self.plot.addItem(self.curve_right)
+
+        # Pour compatibilité mono, conserver self.curve
         self.curve = pg.PlotDataItem(pen=pg.mkPen('w', width=1))
-        self.curve.setDownsampling(auto=True, method='peak')
-        self.curve.setClipToView(True)
         self.plot.addItem(self.curve)
 
         # recalcule l'enveloppe lorsqu'on zoome ou qu'on pan
@@ -275,9 +281,17 @@ class WaveformWidget(QWidget):
         self.loader.start()
 
     def set_waveform_data(self, y, sr, dur):
+        # y.shape == (n_samples,) en mono ou (n_channels, n_samples) en stéréo
+        if y.ndim == 2:
+            # Transposer pour obtenir (n_samples, 2)
+            y = y.T
+            self.is_stereo = True
+        else:
+            self.is_stereo = False
+
         self.waveform_data = y.astype('float32', order='C')
-        self.sample_rate  = sr
-        self.duration     = dur
+        self.sample_rate   = sr
+        self.duration      = dur
 
     # **Verrouille désormais les limites X/Y du ViewBox** sur la durée réelle
         vb = self.plot.getViewBox()
@@ -310,24 +324,42 @@ class WaveformWidget(QWidget):
         i0 = max(0, int(x0 * self.sample_rate))
         i1 = min(len(self.waveform_data), int(x1 * self.sample_rate))
 
-        segment = self.waveform_data[i0:i1]
-        if len(segment) == 0:
-            self.curve.setData([], [])
-            return
+        if self.is_stereo:
+            # Pour chaque canal, on calcule min/max par bloc et on trace sur la courbe correspondante
+            for idx, curve in enumerate((self.curve_left, self.curve_right)):
+                segment = self.waveform_data[i0:i1, idx]
+                if len(segment) == 0:
+                    curve.setData([], [])
+                    continue
 
-        width = self.plot.width() or 800
-        step = max(1, len(segment) // width)
-        n_blocks = len(segment) // step
-        seg = segment[: n_blocks * step].reshape(n_blocks, step)
-        mins = seg.min(axis=1)
-        maxs = seg.max(axis=1)
+                width    = self.plot.width() or 800
+                step     = max(1, len(segment) // width)
+                n_blocks = len(segment) // step
+                seg      = segment[: n_blocks * step].reshape(n_blocks, step)
+                mins     = seg.min(axis=1)
+                maxs     = seg.max(axis=1)
+                xs       = np.linspace(i0 / self.sample_rate, i1 / self.sample_rate, n_blocks)
 
-        xs = np.linspace(i0 / self.sample_rate, i1 / self.sample_rate, n_blocks)
+                X_poly = np.concatenate([xs, xs[::-1]])
+                Y_poly = np.concatenate([maxs, mins[::-1]])
+                curve.setData(X_poly, Y_poly)
+        else:
+            segment = self.waveform_data[i0:i1]
+            if len(segment) == 0:
+                self.curve.setData([], [])
+                return
 
-        X_poly = np.concatenate([xs, xs[::-1]])
-        Y_poly = np.concatenate([maxs, mins[::-1]])
+            width    = self.plot.width() or 800
+            step     = max(1, len(segment) // width)
+            n_blocks = len(segment) // step
+            seg      = segment[: n_blocks * step].reshape(n_blocks, step)
+            mins     = seg.min(axis=1)
+            maxs     = seg.max(axis=1)
+            xs       = np.linspace(i0 / self.sample_rate, i1 / self.sample_rate, n_blocks)
 
-        self.curve.setData(X_poly, Y_poly)
+            X_poly = np.concatenate([xs, xs[::-1]])
+            Y_poly = np.concatenate([maxs, mins[::-1]])
+            self.curve.setData(X_poly, Y_poly)
         self.read_head.setPos(self.current_time)
 
     def _redraw_all(self):
