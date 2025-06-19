@@ -12,6 +12,20 @@ import logging
 logger = logging.getLogger("recorder_worker")
 
 
+def _generate_unique_filename(folder: str, base_name: str, extension: str) -> str:
+    """Return a filename that does not yet exist in *folder*.
+
+    If ``base_name`` already exists, append ``_1``, ``_2``… before the
+    extension until an unused name is found.
+    """
+    filename = f"{base_name}{extension}"
+    counter = 1
+    while os.path.exists(os.path.join(folder, filename)):
+        filename = f"{base_name}_{counter}{extension}"
+        counter += 1
+    return filename
+
+
 def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial_device_name=None):
     """
     Worker process pour la capture audio et le rétro-enregistrement.
@@ -157,9 +171,12 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                             # Concaténation des blocs rétro + live
                             combined = pre + live_buf
 
-                            # Génération d’un nom de fichier unique
+                            # Génération d'un nom de fichier unique
                             next_id = Sample.get_next_id()
-                            filename = f"SMPL_{next_id:04d}.wav"
+                            base = f"SMPL_{next_id:04d}"
+                            filename = _generate_unique_filename(
+                                output_folder, base, ".wav"
+                            )
                             path = os.path.join(output_folder, filename)
                             os.makedirs(output_folder, exist_ok=True)
 
