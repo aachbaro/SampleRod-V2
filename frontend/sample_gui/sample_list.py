@@ -280,23 +280,6 @@ class SampleListWidget(QWidget):
 
         self.updateSelectActions()
 
-    def import_sample(self, path: str):
-        """Importe un fichier audio en tenant compte des doublons globaux."""
-        if self.sample_store.exists_by_path(path):
-            answer = QMessageBox.question(
-                self,
-                "Sample déjà importé",
-                (
-                    "Ce fichier existe déjà dans la bibliothèque.\n"
-                    "Voulez-vous le retirer de la base puis le réimporter en tête ?"
-                ),
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if answer == QMessageBox.StandardButton.No:
-                return
-            self.sample_store.delete_record_by_path(path)
-        self.sample_store.add(path)
-
     @pyqtSlot()
     def onAddFiles(self):
         """
@@ -318,8 +301,19 @@ class SampleListWidget(QWidget):
 
         # Ajouter chaque sample au service (création FS + BD + normalisation auto si activée)
         for path in fichiers:
+            existing = next((s for s in self.sample_store.get_cached() if s.path == path), None)
+            if existing:
+                answer = QMessageBox.question(
+                    self,
+                    "Sample déjà importé",
+                    "Ce sample existe déjà.\nVoulez-vous le retirer de la bibliothèque puis le réimporter en tête ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if answer == QMessageBox.StandardButton.No:
+                    continue
+                self.sample_store.delete_record_by_path(path)
             try:
-                self.import_sample(path)
+                self.sample_store.add(path)
             except Exception as e:
                 # En cas d’erreur, on affiche un message et on continue
                 QMessageBox.warning(
@@ -647,7 +641,18 @@ class SampleListWidget(QWidget):
 
         # 3) Ajouter chaque fichier
         for p in paths:
-            self.import_sample(p)
+            existing = next((s for s in self.sample_store.get_cached() if s.path == p), None)
+            if existing:
+                answer = QMessageBox.question(
+                    self,
+                    "Sample déjà importé",
+                    "Ce sample existe déjà.\nVoulez-vous le retirer de la bibliothèque puis le réimporter en tête ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if answer == QMessageBox.StandardButton.No:
+                    continue
+                self.sample_store.delete_record_by_path(p)
+            self.sample_store.add(p)
 
         # 4) Déconnecter le hook
         self.sample_store.sampleAdded.disconnect(_on_added)
