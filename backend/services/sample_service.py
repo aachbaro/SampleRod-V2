@@ -186,6 +186,31 @@ class SampleService(QObject):
             )
             return False, str(e)
 
+    def delete_record_by_path(self, path: str) -> bool:
+        """
+        Supprime uniquement l'enregistrement en base pour un chemin donné sans
+        toucher au fichier sur disque. Retourne ``True`` si un enregistrement a
+        été supprimé.
+        """
+        session = SessionLocal()
+        try:
+            sample = session.query(Sample).filter_by(path=path).one_or_none()
+            if not sample:
+                return False
+            session.delete(sample)
+            session.commit()
+            # Mise à jour du cache local
+            self._samples = [s for s in self._samples if s.path != path]
+            # Rafraîchit l'UI
+            self.samplesChanged.emit(list(self._samples))
+            return True
+        except SQLAlchemyError as e:
+            session.rollback()
+            logger.info(f"[SampleService] delete_record_by_path error: {e}")
+            return False
+        finally:
+            session.close()
+
     def rename_by_path(self, file_path: str, new_name: str):
         """Renomme un fichier par son chemin et met à jour la BDD si besoin."""
         samp = next((s for s in self._samples if s.path == file_path), None)

@@ -301,6 +301,17 @@ class SampleListWidget(QWidget):
 
         # Ajouter chaque sample au service (création FS + BD + normalisation auto si activée)
         for path in fichiers:
+            existing = next((s for s in self.sample_store.get_cached() if s.path == path), None)
+            if existing:
+                answer = QMessageBox.question(
+                    self,
+                    "Sample déjà importé",
+                    "Ce sample existe déjà.\nVoulez-vous le retirer de la bibliothèque puis le réimporter en tête ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if answer == QMessageBox.StandardButton.No:
+                    continue
+                self.sample_store.delete_record_by_path(path)
             try:
                 self.sample_store.add(path)
             except Exception as e:
@@ -630,6 +641,17 @@ class SampleListWidget(QWidget):
 
         # 3) Ajouter chaque fichier
         for p in paths:
+            existing = next((s for s in self.sample_store.get_cached() if s.path == p), None)
+            if existing:
+                answer = QMessageBox.question(
+                    self,
+                    "Sample déjà importé",
+                    "Ce sample existe déjà.\nVoulez-vous le retirer de la bibliothèque puis le réimporter en tête ?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if answer == QMessageBox.StandardButton.No:
+                    continue
+                self.sample_store.delete_record_by_path(p)
             self.sample_store.add(p)
 
         # 4) Déconnecter le hook
