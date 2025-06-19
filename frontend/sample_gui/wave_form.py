@@ -462,10 +462,8 @@ class WaveformWidget(QWidget):
             self.plot.removeItem(self.region)
             self.region = None
 
-        # pose du marker
-        self.play_start = x
-        self._loop_start_sample = int(x * self.sample_rate)
-        logger.info(f"Région : début {self.play_start:.3f}s")
+        # pose du marker (visuel uniquement — ne modifie plus play_start/play_end)
+        logger.info(f"Marqueur placé à {x:.3f}s")
         if self.marker:
             self.plot.removeItem(self.marker)
         self.marker = pg.InfiniteLine(
@@ -495,6 +493,7 @@ class WaveformWidget(QWidget):
            and event.button() == Qt.MouseButton.LeftButton \
            and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
 
+            logger.info("Ctrl+clic simple en mode marker")
             pos = event.scenePos()
             # Si on a cliqué sur un marker existant, on laisse InfiniteLine gérer
             for line in self.marker_lines.values():
@@ -507,10 +506,12 @@ class WaveformWidget(QWidget):
 
 
         # 1) Ctrl + double-clic → délégation à la méthode dédiée
+
         if (event.type() == QEvent.GraphicsSceneMouseDoubleClick and
             event.button() == Qt.MouseButton.LeftButton and
             (event.modifiers() & Qt.KeyboardModifier.ControlModifier)):
 
+            logger.info("Ctrl+double-clic détecté")
             # Si on a cliqué sur un marqueur, on le laisse gérer (suppression)
             pos = event.scenePos()
             for line in self.marker_lines.values():
@@ -866,12 +867,8 @@ class WaveformWidget(QWidget):
 
     def play_from_start(self):
         self.stop_audio()
-        if self.marker_mode and self.markers:
-            # recale l’indice pour ne jamais sortir de bornes
-            self.current_marker_idx = min(self.current_marker_idx, len(self.markers)-1)
-            t = self.markers[self.current_marker_idx]
-        else:
-            t = self.play_start
+        # 1) Si une « vraie » sélection de région existe, on la respecte toujours
+        t = self.play_start
         self.play_audio(t)
 
     def pause_or_resume(self):
