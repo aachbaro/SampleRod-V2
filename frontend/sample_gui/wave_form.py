@@ -297,12 +297,15 @@ class WaveformWidget(QWidget):
         vb = self.plot.getViewBox()
         vb.setMenuEnabled(False)
         vb.wheelEvent = self._zoom_or_pan
-        vb = self.plot.getViewBox()
         vb.setLimits(
-            xMin=0, xMax=self.duration,
-            yMin=-1, yMax=1,
-            minXRange=0.01,
-            maxXRange=self.duration
+            xMin=0,          # plage horizontale
+            xMax=self.duration,
+            yMin=-1,         # amplitude fixe
+            yMax=1,
+            minXRange=0.01,  # zoom horizontal autorisé
+            maxXRange=self.duration,
+            minYRange=2,     # bloque la hauteur à (1 - -1) = 2
+            maxYRange=2
         )
 
         # calcul initial de l'enveloppe sur toute la durée
@@ -896,25 +899,24 @@ class WaveformWidget(QWidget):
             st = self.start_sample
 
             if self.loop_enabled:
+                # 🔁 lecture en boucle sur la région sélectionnée
                 length = region_end - region_start
-                idxs = (np.arange(st, st + frames) - region_start) % length + region_start
-                chunk = self.waveform_data[idxs]  # shape = (frames, n_channels?) ou (frames,)
-                # Si mono, chunk est 1D : on le repète pour chaque canal
+                idxs   = (np.arange(st, st + frames) - region_start) % length + region_start
+                chunk  = self.waveform_data[idxs]  # (frames,) ou (frames,2)
+
+                # — si mono, chunk est 1D → on le duplique pour chaque canal
                 if chunk.ndim == 1:
                     chunk = np.repeat(chunk[:, np.newaxis], outdata.shape[1], axis=1)
-                # Écriture dans outdata sur tous les canaux
+
+                # — écriture sur tous les canaux (1 ou 2)
                 outdata[:chunk.shape[0], :] = chunk
 
-                # 1) on écrit directement le buffer bouclé
-                outdata[:, 0] = chunk
-    
-                # 2) wrap du pointeur de lecture
-                new_pos = st + frames
-                self.start_sample = region_start + ((new_pos - region_start) % length)
-                self.current_time = self.start_sample / self.sample_rate
+                # — wrap du pointeur de lecture
+                self.start_sample = region_start + ((st + frames - region_start) % length)
+                self.current_time  = self.start_sample / self.sample_rate
                 self.positionUpdated.emit(self.current_time)
-    
-                # 3) on sort de la callback pour éviter d’exécuter la suite
+
+                # — on sort de la callback pour ne pas exécuter le reste
                 return
 
             # 3️⃣ Cas non-loop : on ne stoppe que si on a moins que `frames` échantillons restants
