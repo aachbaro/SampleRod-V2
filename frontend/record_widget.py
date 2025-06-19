@@ -15,8 +15,6 @@ import datetime
 from backend.services.settings_service import SettingsService
 from backend.models.AppContext import AppContext
 from backend.services.notification_service import NotificationType
-import soundfile as sf
-import numpy as np
 
 class RecordWidgetWindow(QMainWindow):
     newSampleRecorded = pyqtSignal(str)
@@ -362,24 +360,3 @@ class RecordWidgetWindow(QMainWindow):
             logger.info(f"record_widget: polling {msg} {payload}")
             if msg == 'done':
                 logger.info("record_widget: done received from service.")
-                path = payload
-                # Vérification du silence du fichier enregistré
-                try:
-                    data, _ = sf.read(path, dtype='float32')
-                    is_silent = not np.any(np.abs(data) > 1e-8)
-                except Exception as e:
-                    # En cas d'erreur de lecture, on considère le fichier comme non muet
-                    logger.info(f"record_widget: erreur lecture WAV {path}: {e}")
-                    is_silent = False
-
-                if is_silent:
-                    # Notification utilisateur en cas d'enregistrement vide
-                    self.app_context.notifications.notify(
-                        title="⚠️ Enregistrement vide",
-                        message=(
-                            "Le fichier WAV généré est entièrement muet. Vérifiez le périphérique d’enregistrement."
-                        ),
-                        type=NotificationType.WARNING,
-                    )
-                else:
-                    self.app_context.sample_store.add(path)

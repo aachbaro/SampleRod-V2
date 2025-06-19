@@ -30,7 +30,7 @@ class AppContext:
         self.settings = SettingsService(self)
 
         self.recorder = RecorderService(
-            self.settings,
+            self,
             sample_rate=44100,
             block_size=512
         )
