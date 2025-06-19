@@ -72,20 +72,6 @@ class SampleService(QObject):
     def get_cached(self):
         """Retourne la liste courante en mémoire."""
         return list(self._samples)
-
-    def exists_by_path(self, path: str) -> bool:
-        """
-        Retourne ``True`` si un enregistrement ``Sample.path == path`` existe
-        dans la base de données, ``False`` sinon. La requête est effectuée
-        directement en base sans passer par le cache local.
-        """
-        session = SessionLocal()
-        try:
-            return session.query(
-                session.query(Sample).filter_by(path=path).exists()
-            ).scalar()
-        finally:
-            session.close()
     
     def add(self, path: str):
         """
