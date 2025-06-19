@@ -176,11 +176,6 @@ class RecorderService(QObject):
                         pass
                 else:
                     self.app_context.sample_store.add(path)
-                    self.app_context.notifications.notify(
-                        title="Sample enregistré",
-                        message=f"Votre sample a bien été enregistré dans\n{path}",
-                        type=NotificationType.SUCCESS,
-                    )
                     others.append(('done', path))
 
         return others
