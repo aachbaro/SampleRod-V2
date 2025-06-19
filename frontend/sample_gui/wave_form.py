@@ -76,6 +76,7 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
     waveformSaved    = pyqtSignal(str)
+    positionUpdated = pyqtSignal(float)
 
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
 
@@ -125,6 +126,7 @@ class WaveformWidget(QWidget):
         else:
             self.marker_list.show()
         self._load_audio(audio_file_path)
+        self.positionUpdated.connect(lambda t: self.read_head.setPos(t))
 
     # --- accès simplifiés aux données du MarkerManager
     @property
@@ -866,9 +868,17 @@ class WaveformWidget(QWidget):
                 idxs = (np.arange(st, st + frames) - region_start) % length + region_start
                 chunk = self.waveform_data[idxs]
 
-                # wrap du pointeur de lecture
+                # 1) on écrit directement le buffer bouclé
+                outdata[:, 0] = chunk
+    
+                # 2) wrap du pointeur de lecture
                 new_pos = st + frames
                 self.start_sample = region_start + ((new_pos - region_start) % length)
+                self.current_time = self.start_sample / self.sample_rate
+                self.positionUpdated.emit(self.current_time)
+    
+                # 3) on sort de la callback pour éviter d’exécuter la suite
+                return
 
             # 3️⃣ Cas non-loop : on ne stoppe que si on a moins que `frames` échantillons restants
             remaining = region_end - st
@@ -883,6 +893,7 @@ class WaveformWidget(QWidget):
             # mise à jour du pointeur
             self.start_sample = st + n
             self.current_time = self.start_sample / self.sample_rate
+            self.positionUpdated.emit(self.current_time)
 
             if n < frames:
                 # on a joué le dernier fragment (< blocksize) → arrêt immédiat sans boucler
