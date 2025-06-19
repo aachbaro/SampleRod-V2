@@ -898,7 +898,12 @@ class WaveformWidget(QWidget):
             if self.loop_enabled:
                 length = region_end - region_start
                 idxs = (np.arange(st, st + frames) - region_start) % length + region_start
-                chunk = self.waveform_data[idxs]
+                chunk = self.waveform_data[idxs]  # shape = (frames, n_channels?) ou (frames,)
+                # Si mono, chunk est 1D : on le repète pour chaque canal
+                if chunk.ndim == 1:
+                    chunk = np.repeat(chunk[:, np.newaxis], outdata.shape[1], axis=1)
+                # Écriture dans outdata sur tous les canaux
+                outdata[:chunk.shape[0], :] = chunk
 
                 # 1) on écrit directement le buffer bouclé
                 outdata[:, 0] = chunk
@@ -919,8 +924,14 @@ class WaveformWidget(QWidget):
                 raise sd.CallbackStop()
 
             # nombre à jouer ce callback
+            # lecture normale (hors loop)
             n = min(frames, remaining)
-            outdata[:n, 0] = self.waveform_data[st:st + n]
+            segment = self.waveform_data[st:st + n]  # shape = (n,) ou (n,2)
+            # si mono 1D → on duplique dans chaque canal
+            if segment.ndim == 1:
+                segment = np.repeat(segment[:, np.newaxis], outdata.shape[1], axis=1)
+            # écriture sur tous les canaux disponibles
+            outdata[:n, :] = segment
 
             # mise à jour du pointeur
             self.start_sample = st + n
@@ -937,9 +948,10 @@ class WaveformWidget(QWidget):
                 raise sd.CallbackStop()
 
         # instanciation du stream avec dtype, blocksize et latence adaptés
+        n_channels = 2 if getattr(self, 'is_stereo', False) else 1
         self.stream = sd.OutputStream(
             samplerate=self.sample_rate,
-            channels=1,
+            channels=n_channels,
             dtype='float32',
             blocksize=1024,
             latency='low',
