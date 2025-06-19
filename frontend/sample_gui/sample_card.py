@@ -18,7 +18,6 @@ from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.wave_form import WaveformWidget
 from backend.services.settings_service import SettingsService
 from backend.models.AppContext import AppContext
-from frontend.animation import AnimationHelper
 
 
 
@@ -56,7 +55,6 @@ class SampleCard(QWidget):
 
         self.init_ui()
         self._build_shortcuts()
-        AnimationHelper.fade_in(self)
 
     def init_ui(self):
         """
@@ -415,10 +413,7 @@ class SampleCard(QWidget):
             # Ajouter le widget de forme d'onde
             self.wave_edition_widget = WaveformWidget(self.sample.path, self.app_context)
             self.wave_edition_widget.waveformSaved.connect(self.newSampleSaved)
-            self.wave_edition_widget.setMaximumHeight(0)
             self.waveform_layout.addWidget(self.wave_edition_widget)
-            target = self.wave_edition_widget.sizeHint().height()
-            AnimationHelper.animate_height(self.wave_edition_widget, 0, target)
 
         else:
             # Afficher les widgets de lecture
@@ -440,17 +435,10 @@ class SampleCard(QWidget):
                 except Exception:
                     pass
 
-                # 3) anime la fermeture puis supprime le widget
-                anim = AnimationHelper.animate_height(
-                    self.wave_edition_widget,
-                    self.wave_edition_widget.height(),
-                    0,
-                )
-                def _cleanup():
-                    self.waveform_layout.removeWidget(self.wave_edition_widget)
-                    self.wave_edition_widget.deleteLater()
-                    self.wave_edition_widget = None
-                anim.finished.connect(_cleanup)
+                # 3) enfin retirer et détruire le widget
+                self.waveform_layout.removeWidget(self.wave_edition_widget)
+                self.wave_edition_widget.deleteLater()
+                self.wave_edition_widget = None         
 
     def confirmDelete(self):
         """
