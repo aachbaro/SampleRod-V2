@@ -200,9 +200,9 @@ class WaveformWidget(QWidget):
 
         # Courbes pour chaque canal (gauche et droite)
         self.curve_left  = pg.PlotDataItem(pen=pg.mkPen('w', width=1))
-        self.curve_right = pg.PlotDataItem(pen=pg.mkPen('y', width=1))
-        self.plot.addItem(self.curve_left)
+        self.curve_right = pg.PlotDataItem(pen=pg.mkPen('#DAA520', width=1))
         self.plot.addItem(self.curve_right)
+        self.plot.addItem(self.curve_left)
 
         # Pour compatibilité mono, conserver self.curve
         self.curve = pg.PlotDataItem(pen=pg.mkPen('w', width=1))
