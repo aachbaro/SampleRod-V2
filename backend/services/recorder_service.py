@@ -1,15 +1,43 @@
 # backend/services/recorder_service.py
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Service d'orchestration de l'enregistrement audio cote backend.
+# - Intermediaire entre:
+#   1) L'UI/les settings (PyQt6, signaux/slots)
+#   2) Le worker d'enregistrement (processus separé via multiprocessing)
+#   3) Le stockage/notification (SampleService + NotificationService)
+#
+# RESPONSABILITES PRINCIPALES
+# - Ecouter les changements de configuration (retro, pre_seconds, device, sample_rate).
+# - Envoyer des commandes au worker (start/stop/enable_retro/etc.).
+# - Recevoir les reponses du worker (poll), mettre a jour l'etat,
+#   et gerer la post-production (verifier silence, notifier, ajouter au store).
+#
+# FLUX GLOBAL
+# UI -> RecorderService (signal/slot) -> cmd_queue -> recorder_worker (process)
+# recorder_worker -> resp_queue -> RecorderService.poll -> UI/Stockage/Notifications
+# -----------------------------------------------------------------------------
+# PyQt6: QObject + decorateurs de slots pour recevoir les signaux
 from PyQt6.QtCore import QObject, pyqtSlot
+# multiprocessing: worker d'enregistrement dans un process isole
 import multiprocessing as mp
+# Fonction worker qui effectue la capture audio
 from backend.models.recorder_worker import recorder_worker
+# Service des settings (source de verite des preferences)
 from backend.services.settings_service import SettingsService
+# Modele Sample (pas utilise ici directement, mais lie au flux de sauvegarde)
 from backend.models.sample import Sample
+# Typage des notifications pour l'UI
 from backend.services.notification_service import NotificationType
 import logging
+# wave: lecture de WAV pour detecter un enregistrement silencieux
 import wave
+# os: suppression du fichier si enregistrement vide
 import os
+# Logger specifique au service d'enregistrement
 logger = logging.getLogger("recorder_service")
 
+# Service principal d'enregistrement, pilote le worker audio.
 class RecorderService(QObject):
     """
     Service class to manage the recorder worker process.
@@ -18,23 +46,27 @@ class RecorderService(QObject):
 
     def __init__(self, app_context, sample_rate, block_size):
         super().__init__()
+        # Reference vers le contexte applicatif pour acceder aux autres services
         self.app_context = app_context
+        # Raccourci vers le SettingsService (source de config)
         self.settingsService: SettingsService = app_context.settings
 
         # État initial récupéré depuis le SettingsService
+        # Etat initial recupere depuis le SettingsService
         self.retro_enabled = self.settingsService.isRetroEnabled()
         self.pre_seconds   = self.settingsService.getPreSeconds()
 
-        # nom du device loopback initial
+        # Nom du device loopback initial (peut etre None)
         self.loopback_name = self.settingsService.loopback_device.name if self.settingsService.loopback_device else None
 
-        # On s'abonne aux signaux
+        # Abonnement aux signaux de changement de config
         self.settingsService.retroToggled.connect(self.onRetroToggled)
         self.settingsService.preSecondsChanged.connect(self.onPreSecondsChanged)
         self.settingsService.loopbackDeviceChanged.connect(self.onLoopbackDeviceChanged)
         self.settingsService.sampleRateChanged.connect(self.onSampleRateChanged)
 
         # Prépare le worker
+        # Preparation du worker (processus isole) et de ses files de messages
         self.cmd_queue  = mp.Queue()
         self.resp_queue = mp.Queue()
         self.worker = mp.Process(
@@ -49,15 +81,20 @@ class RecorderService(QObject):
             ),
             daemon=True
         )
+        # Etat local: enregistrement actif ou non
         self.is_recording = False
+        # Demarrage du processus worker
         self.worker.start()
+        # Si retro actif au demarrage, on l'active cote worker
         if self.retro_enabled:
             logger.info("RecorderService: rétro-enregistrement activé au démarrage")
+            # Remettre le worker en mode retro
             self.cmd_queue.put(('enable_retro',))
 
     @pyqtSlot(bool)
     def onRetroToggled(self, enabled: bool):
         """Slot appelé à chaque fois qu’on active/désactive le rétro."""
+        # Met a jour l'etat local et transmet l'ordre au worker
         logger.info("RecorderService: onRetroToggled called with signal: ", enabled)
         self.retro_enabled = enabled
         if enabled:
@@ -70,6 +107,7 @@ class RecorderService(QObject):
     @pyqtSlot(int)
     def onPreSecondsChanged(self, secs: int):
         """Slot appelé à chaque fois qu’on change la durée du buffer retro."""
+        # Met a jour la valeur locale et notifie le worker
         self.pre_seconds = secs
         logger.info(f"RecorderService: retro buffer -> {secs}s")
         # si le worker supporte la modification à chaud :
@@ -78,10 +116,12 @@ class RecorderService(QObject):
     @pyqtSlot(object)
     def onLoopbackDeviceChanged(self, device):
         """Slot appelé quand on change le device loopback dans les settings."""
+        # Met a jour le device actif cote service
         name = device.name if device else None
         self.loopback_name = name
         logger.info(f"RecorderService: changement de loopback → {name}")
         # on prévient le worker et on ré-active le rétro s’il l’était déjà
+        # On previent le worker et on re-active le retro si besoin
         self.cmd_queue.put(('set_device', name))
         if self.retro_enabled:
             # remettre le worker en mode rétro
@@ -103,7 +143,9 @@ class RecorderService(QObject):
         Handle record button click.
         Si on donne retro_time None, on utilise self.pre_seconds.
         """
+        # Choisit le temps retro effectif (argument ou valeur par defaut)
         rt = retro_time if retro_time is not None else self.pre_seconds
+        # Toggle: stop si enregistrement en cours, sinon start
         if self.is_recording:
             self.stop()
         else:
@@ -111,11 +153,13 @@ class RecorderService(QObject):
 
     def enable_retro(self):
         """Enable background retro recording."""
+        # Active le mode retro dans le worker
         logger.info("RecorderService: enable_retro called")
         self.cmd_queue.put(('enable_retro',))
 
     def disable_retro(self):
         """Disable background retro recording."""
+        # Desactive le mode retro dans le worker
         logger.info("RecorderService: disable_retro called")
         self.cmd_queue.put(('disable_retro',))
 
@@ -134,11 +178,13 @@ class RecorderService(QObject):
     def shutdown(self, timeout=2):
         """Arrêt propre du worker."""
         logger.info("RecorderService: shutdown")
+        # Demande l'arret du worker et attend un ACK
         self.cmd_queue.put(('shutdown',))
         try:
             msg, _ = self.resp_queue.get(timeout=timeout)
         except Exception:
             msg = None
+        # Join avec timeout pour eviter un blocage indefini
         self.worker.join(timeout)
         return msg == 'shutdown_ack'
 
@@ -147,6 +193,7 @@ class RecorderService(QObject):
         Poll non-bloquant des réponses du worker.
         Met à jour self.is_recording et self.retro_enabled.
         """
+        # Accumule les messages "done" a renvoyer au caller
         others = []
         while True:
             try:
@@ -154,14 +201,18 @@ class RecorderService(QObject):
             except Exception:
                 break
 
+            # Lecture d'un message de statut
             if msg == 'started':
+                # Le worker confirme le demarrage
                 self.is_recording = True
             elif msg == 'stopped':
+                # Le worker confirme l'arret
                 self.is_recording = False
             elif msg == 'retro_enabled':
                 logger.info(f"RecorderService: retro_enabled -> {payload}")
                 self.retro_enabled = payload
             elif msg == 'done':
+                # Un enregistrement vient d'etre finalise
                 path = payload
                 if self._is_wav_silent(path):
                     # ▶ Sequence vide : notification et pas de sauvegarde
@@ -171,10 +222,12 @@ class RecorderService(QObject):
                         type=NotificationType.WARNING,
                     )
                     try:
+                        # Supprime le fichier vide
                         os.remove(path)
                     except Exception:
                         pass
                 else:
+                    # Ajoute le sample au store applicatif
                     self.app_context.sample_store.add(path)
                     others.append(('done', path))
 
@@ -184,8 +237,11 @@ class RecorderService(QObject):
     def _is_wav_silent(path: str) -> bool:
         """Return True if the WAV file contains only zeros."""
         try:
+            # Lecture brute du contenu audio
             with wave.open(path, 'rb') as wf:
                 frames = wf.readframes(wf.getnframes())
+            # Si tous les octets sont a zero, on considere l'audio silencieux
             return all(b == 0 for b in frames)
         except Exception:
+            # En cas d'erreur, on prefere ne pas bloquer l'usage
             return False

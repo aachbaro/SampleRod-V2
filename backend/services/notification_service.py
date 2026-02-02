@@ -1,13 +1,43 @@
-# backend/services/notifications_service.py
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Service centralise de creation et diffusion des notifications UI.
+# - Utilise par les services (settings, samples, recorder, etc.) pour informer
+#   l'utilisateur sans coupler le code metier aux widgets.
+#
+# CE QUI EST DEJA EN PLACE
+# - Enum NotificationType (INFO/SUCCESS/WARNING/ERROR).
+# - Dataclass Notification (id, titre, message, timestamp, type, duree).
+# - Service Qt avec signal `notificationAdded` pour pousser aux widgets.
+# - Compteur interne pour garantir des IDs uniques.
+#
+# CE QUI RESTE A IMPLEMENTER (IDEES)
+# - Niveaux de priorite + affichage en file (queue).
+# - Suppression/expiration automatique (timer global).
+# - Persistance (historique en base) pour audit/debug.
+# - Groupement/dedup des notifications similaires.
+# - Actions (boutons: "Ouvrir", "Annuler", "Reessayer").
+# - Localisation i18n des messages.
+#
+# NOTES
+# - Le service ne depend que de QtCore (pas de widgets).
+# - Les widgets doivent s'abonner a `notificationAdded`.
+# -----------------------------------------------------------------------------
+# backend/services/notification_service.py
 
 """
-Service centralisé d'envoi et de diffusion des notifications
+Service centralise d'envoi et de diffusion des notifications
 """
+# Qt: QObject + signaux
 from PyQt6.QtCore import QObject, pyqtSignal
+# Dataclass pour le modele Notification
 from dataclasses import dataclass
+# Enum pour les types de notification
 from enum import Enum, auto
+# Timestamp d'emission
 from datetime import datetime
+# Logging
 import logging
+# Logger specifique au service
 logger = logging.getLogger("notification_service")
 
 
@@ -33,12 +63,12 @@ class Notification:
 class NotificationService(QObject):
     """Service Qt pour gérer la création et la diffusion des notifications"""
 
-    # Signal émis lors de l'ajout d'une notification (envoie l'objet Notification)
+    # Signal emis lors de l'ajout d'une notification (envoie l'objet Notification)
     notificationAdded = pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
-        # Compteur interne pour générer des IDs uniques
+        # Compteur interne pour generer des IDs uniques
         self._next_id = 1
 
     def notify(self,
@@ -64,5 +94,5 @@ class NotificationService(QObject):
             duration=duration
         )
         self._next_id += 1
-        # Émission du signal vers les widgets abonnés
+        # Emission du signal vers les widgets abonnes
         self.notificationAdded.emit(notif)

@@ -1,14 +1,49 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Service central de configuration (QSettings) pour l'app audio.
+# - Source de verite des parametres UI/Audio/Librairies/Normalisation.
+# - Emet des signaux Qt pour synchroniser les autres services (Recorder, UI...).
+#
+# CE QUI EST DEJA EN PLACE
+# - Retro-recording: enable/disable + preSeconds.
+# - Audio: sample rate + loopback device (soundcard).
+# - Libraries: ajout/suppression/reorder.
+# - Normalization: auto-normalize + niveau LUFS.
+# - Display: pagination des samples.
+#
+# CE QUI RESTE A IMPLEMENTER (IDEES)
+# - Latence/buffer: taille de buffer, taille de bloc, device input/output.
+# - Monitoring: volume monitor, mute, solo, pan, output device.
+# - Formats: WAV/FLAC/AIFF, bitrate, dither, export profiles.
+# - Metadonnees: tags, BPM, key, gain, colors, favoris.
+# - Workflow: auto-nommage, templates, dossiers par projet, hotkeys.
+# - Qualite: limiter/soft-clip, normalize peak vs LUFS, true-peak.
+# - UI: theme, densite d'info, auto-scroll, zoom waveform.
+#
+# NOTES
+# - Toute nouvelle option doit etre persistee dans QSettings et emitter un signal.
+# - Garder les defaults coherents avec le recorder_worker.
+# -----------------------------------------------------------------------------
 # settings_service.py
+# Qt: QObject + signaux
 from PyQt6.QtCore import QObject, pyqtSignal
+# QSettings: persistance des preferences
 from PyQt6.QtCore import QSettings
+# SampleBank: gestion des librairies
 from backend.models.SampleLibrary import SampleBank
+# DB session (utilisee par SampleBank)
 from backend.db import SessionLocal
+# soundcard: detection des devices audio (loopback)
 import soundcard as sc
+# Notifications UI
 from backend.services.notification_service import NotificationType
+# Logging
 import logging
+# Logger specifique au service
 logger = logging.getLogger("settings_service")
 
 class SettingsService(QObject):
+    # Signaux emis pour synchroniser UI et services
     retroToggled      = pyqtSignal(bool)
     preSecondsChanged = pyqtSignal(int)
     librariesChanged  = pyqtSignal(list)
@@ -20,28 +55,36 @@ class SettingsService(QObject):
 
     def __init__(self, app_context):
         super().__init__()
+        # Store persistent des settings (cle/valeur)
         self._qs = QSettings("SampleRod", "Main")
 
+        # Acces aux autres services via le contexte
         self.app_context = app_context
         
+        # Chargement initial des librairies
         self.libraries = SampleBank.get_all_libraries()
 
+        # Audio: device loopback + sample rate
         self.loopback_device = None
         self.sample_rate = 44100  # valeur récupérée du QSettings
         self._sample_rate = self.sample_rate
 
+        # Display: pagination des samples
         self.samples_per_page = self._qs.value(
             "display/samples_per_page", 20, type=int
         )
         self.samplesPerPageChanged.emit(self.samples_per_page)
 
+        # Normalization: auto + niveau LUFS
         auto_norm = self._qs.value("autoNormalizeEnabled", False, type=bool)
         self.normalization_level = self._qs.value("normalizationLevel", -14, type=int)  # ex : -14 LUFS
         self.autoNormalizeToggled.emit(auto_norm)
         self.normalizationLevelChanged.emit(self.normalization_level)
 
+        # Emission initiale pour l'UI
         self.librariesChanged.emit(self.libraries)
 
+        # Initialise les parametres audio (sample rate + loopback)
         self._init_audio_settings()
 
 
@@ -53,6 +96,7 @@ class SettingsService(QObject):
 
     # ——— Retro Recording —————————————————————————————
 
+    # ------------------------------------------------------------------ Retro Recording
     def toggleRetro(self):
         """Inverse le flag et le persiste dans QSettings."""
         logger.info("setting service: Basculement de l'état du rétro-enregistrement")
@@ -77,6 +121,7 @@ class SettingsService(QObject):
 
 # ————————————————————————————— Sample Libraries Settings —————————————————————————————
 
+    # ------------------------------------------------------------------ Sample Libraries
     def addSampleLibrary(self, path: str):
         """Ajoute une nouvelle librairie de samples à la base de données."""
         logger.info(f"[SettingsService] Ajout de la librairie de samples : {path}")
@@ -104,25 +149,32 @@ class SettingsService(QObject):
 
     # ———————————————————————————————— Audio Settings —————————————————————————————
 
+    # ------------------------------------------------------------------ Audio Settings
     def _init_audio_settings(self):
         # → Sample rate
+        # Charge/emet le sample rate sauvegarde
         rate = self._qs.value("sampleRate", 44100, type=int)
         self.sample_rate = rate
         self.sampleRateChanged.emit(rate)
         self._qs.setValue("sampleRate", rate)
 
         # → Loopback device
+        # Liste des devices loopback disponibles
         mics = sc.all_microphones(include_loopback=True)
+        # Nom sauvegarde du device loopback
         saved_name = self._qs.value("loopbackDeviceName", "", type=str)
 
         # Si on a déjà un choix, on cherche l’objet qui correspond
+        # Retrouver le device par nom
         device = next((m for m in mics if m.name == saved_name), None)
 
         # Sinon fallback sur la même logique que dans recorder_worker
+        # Fallback: prendre le device qui correspond au speaker par defaut
         if device is None and mics:
             speaker = sc.default_speaker()
             device = next((m for m in mics if speaker.name in m.name), mics[0])
 
+        # Memoriser le device et reemettre vers l'UI
         self.loopback_device = device
         if device:
             # on persiste son nom pour la prochaine ouverture
@@ -155,6 +207,7 @@ class SettingsService(QObject):
 
     #   ——————————————————————— Normalization Settings —————————————————————————————
 
+    # ------------------------------------------------------------------ Normalization Settings
     def toggleAutoNormalize(self):
         """Inverse l'état de l'auto-normalisation et le persiste dans QSettings."""
         logger.info("[SettingsService] Basculement de l'état de l'auto-normalisation")

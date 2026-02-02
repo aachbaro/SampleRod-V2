@@ -1,12 +1,36 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Service de gestion des samples (CRUD + cache memoire).
+# - Pont entre la base (SQLAlchemy), le systeme de fichiers et l'UI (Qt).
+#
+# RESPONSABILITES PRINCIPALES
+# - Maintenir un cache en memoire des Sample.
+# - Emettre des signaux Qt pour synchroniser l'UI.
+# - Orchestrer les operations fichier + base (add/delete/rename/move).
+# - Lancer la normalisation audio et verifier la coherence des donnees.
+#
+# FLUX GLOBAL
+# UI -> SampleService -> (FS + DB) -> signaux Qt -> UI
+# -----------------------------------------------------------------------------
+# Qt: base QObject + signaux pour notifier l'UI
 from PyQt6.QtCore import QObject, pyqtSignal
+# SQLAlchemy: gestion des erreurs DB
 from sqlalchemy.exc import SQLAlchemyError
+# Acces a la session DB
 from backend.db import SessionLocal
+# Modele Sample (logique fichier + DB)
 from backend.models.sample import Sample
+# Worker de normalisation audio
 from backend.models.normalize_worker import NormalizeWorker
+# Types de notifications UI
 from backend.services.notification_service import NotificationType
+# OS: operations sur fichiers (rename/delete/etc.)
 import os
+# wave: lecture d'en-tetes WAV pour la duree
 import wave
+# Logging pour tracer les operations
 import logging
+# Logger specifique au service
 logger = logging.getLogger("sample_service")
 
 class SampleService(QObject):
@@ -18,6 +42,7 @@ class SampleService(QObject):
     - move(id, folder) : déplace un sample (fichier + BD)
     Émet des signaux pour permettre à l’UI de se mettre à jour.
     """
+    # Signaux emis pour que l'UI se mette a jour sans recharger tout le cache
     sampleAdded = pyqtSignal(int)            # émet l’ID du sample ajouté
     samplesChanged = pyqtSignal(list)        # émet la liste complète des Sample
     sampleDeleted  = pyqtSignal(int)         # émet l’ID supprimé
@@ -34,28 +59,30 @@ class SampleService(QObject):
 
     def __init__(self, app_context):
         super().__init__()
+        # Initialisation du service et du cache
         logger.info("[SampleService] Initialisation du service")
-        # cache local de tous les échantillons
+        # Cache local des samples charges depuis la DB
         self._samples = []
+        # References vers les workers de normalisation (evite GC)
         self._normalize_threads = {}
+        # Acces aux autres services (notifications, settings, audio player, etc.)
         self.app_context = app_context
 
-        # chargement initial
+        # Chargement initial depuis la DB
         self._initialize_cache()
 
-        # ─── Lancement du worker de cohérence ───
-        # supprime automatiquement de la base les samples dont le fichier est manquant
+        # Lancement du worker de coherence (verif DB/FS)
+        # Worker de coherence: verifie fichiers manquants et durees incoherentes
         self._integrity_worker = IntegrityCheckWorker(self.app_context)
-        # branchement : quand le worker détecte un fichier manquant, 
-        # on retire directement l’entrée en base (sans toucher au fichier)
         self._integrity_worker.fileMissing.connect(self.removeFromHistory)
-        # (optionnel) gérer les durations incohérentes
+        # Si la duree est incoherente, on corrige en base
         self._integrity_worker.durationMismatch.connect(self._onDurationMismatch)
         self._integrity_worker.start()
 
     def _initialize_cache(self):
         """Charge les samples depuis la BDD et émet samplesChanged."""
         
+        # Lecture DB dans un contexte session gere
         try:
             with SessionLocal() as session:
                 self._samples = session.query(Sample).order_by(Sample.id).all()
@@ -71,6 +98,7 @@ class SampleService(QObject):
 
     def get_cached(self):
         """Retourne la liste courante en mémoire."""
+        # Retourne une copie pour eviter les modifications externes
         return list(self._samples)
     
     def add(self, path: str):
@@ -101,6 +129,7 @@ class SampleService(QObject):
             # 4) Émission du signal d'ajout
             self.sampleAdded.emit(new_sample.id)
 
+            # Normalisation auto si activee dans les settings
             if self.app_context.settings.isAutoNormalizeEnabled():
                 mode      = "lufs"
                 target_db = self.app_context.settings.getNormalizationLevel()
@@ -118,7 +147,6 @@ class SampleService(QObject):
                 # on conserve la référence pour éviter que le thread ne soit détruit
                 self._normalize_threads[new_sample.id] = worker
 
-
         except Exception as e:
             logger.info(f"[SampleService] add error: {e}")
         finally:
@@ -134,6 +162,7 @@ class SampleService(QObject):
         if not samp:
             return
         try:
+            # Suppression fichier + DB via le modele
             samp.delete()
             # 2) Mise à jour du cache : on enlève l'objet supprimé
             self._samples = [
@@ -161,6 +190,7 @@ class SampleService(QObject):
 
     def delete_by_path(self, file_path: str):
         """Supprime un fichier par son chemin et nettoie la BDD si nécessaire."""
+        # Cas 1: si le sample est deja en cache, on passe par delete()
         samp = next((s for s in self._samples if s.path == file_path), None)
         if samp:
             self.delete(samp.id)
@@ -192,6 +222,7 @@ class SampleService(QObject):
         toucher au fichier sur disque. Retourne ``True`` si un enregistrement a
         été supprimé.
         """
+        # Supprime seulement l'entree DB sans toucher au fichier
         session = SessionLocal()
         try:
             sample = session.query(Sample).filter_by(path=path).one_or_none()
@@ -266,11 +297,13 @@ class SampleService(QObject):
         """
         Renomme le sample (FS + BD), met à jour le cache, et émet sampleRenamed + samplesChanged.
         """
+        # Renommage par ID: utilise le cache
         samp = next((s for s in self._samples if s.id == sample_id), None)
         if not samp:
             return
         old_name = samp.name
         old_path = samp.path
+        # Securite: arreter la lecture si le sample est en cours
         player = self.app_context.audio_player
         if hasattr(player, "is_playing_sample") and player.is_playing_sample(sample_id):
             try:
@@ -365,10 +398,12 @@ class SampleService(QObject):
 
     def _get(self, sample_id: int):
         """Retourne l’instance en cache ou None."""
+        # Helper: recherche en cache
         return next((s for s in self._samples if s.id == sample_id), None)
 
     def _onNormalizationFailed(self, sample_id: int, message: str):
         # Réémet le signal vers l’UI
+        # Reemet le signal vers l'UI
         self.sampleNormalizationFailed.emit(sample_id, message)
 
     def _onDurationMismatch(self, sample_id: int, new_duration: float):
@@ -423,7 +458,7 @@ class SampleService(QObject):
         import os
         from backend.db import SessionLocal
 
-        # 1) Stopper la lecture si l’un des samples est en cours
+        # Stoppe la lecture si un des samples est en cours
         current = self.app_context.audio_player.current_sample_id
         if current in sample_ids:
             try:
@@ -459,9 +494,9 @@ class SampleService(QObject):
             # 6) N’émettre qu’UN SEUL samplesChanged à la fin
             self.samplesChanged.emit(list(self._samples))
 
-
-
-
+# -----------------------------------------------------------------------------
+# Worker de coherence DB/FS (thread Qt)
+# -----------------------------------------------------------------------------
 from PyQt6.QtCore import QThread, pyqtSignal
 import os, wave
 
