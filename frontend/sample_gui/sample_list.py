@@ -69,11 +69,101 @@ class SampleListWidget(QWidget):
         (boutons Supprimer, Déplacer, Normaliser la sélection),
         puis la zone scrollable des cartes.
         """
+        self.setObjectName("SampleListRoot")
+        self.setStyleSheet("""
+            QWidget#SampleListRoot {
+                background-color: #121212;
+            }
+            QToolBar#SampleToolbar {
+                background-color: #181818;
+                border: 1px solid #262626;
+                border-radius: 8px;
+                spacing: 6px;
+                padding: 6px;
+            }
+            QToolBar#SampleToolbar QToolButton {
+                color: #eaeaea;
+                background: #202020;
+                border: 1px solid #2f2f2f;
+                border-radius: 6px;
+                padding: 4px 8px;
+            }
+            QToolBar#SampleToolbar QToolButton:hover {
+                background: #2a2a2a;
+            }
+            QToolBar#SampleToolbar QToolButton:disabled {
+                color: #777777;
+                background: #1a1a1a;
+                border-color: #262626;
+            }
+            QToolBar#SampleToolbar::separator {
+                background: #2a2a2a;
+                width: 1px;
+                margin: 0 6px;
+            }
+            QScrollArea#SampleScroll {
+                background: #141414;
+                border: 1px solid #222222;
+                border-radius: 10px;
+            }
+            QWidget#SampleListContent {
+                background: #141414;
+            }
+            QLabel#PaginationLabel {
+                color: #cfcfcf;
+            }
+            QPushButton[role="pagination"] {
+                background: #202020;
+                color: #eaeaea;
+                border: 1px solid #2f2f2f;
+                border-radius: 6px;
+                padding: 4px 10px;
+            }
+            QPushButton[role="pagination"]:hover {
+                background: #2a2a2a;
+            }
+            QPushButton[role="pagination"]:disabled {
+                color: #777777;
+                background: #1a1a1a;
+                border-color: #262626;
+            }
+            QMenu {
+                background: #1b1b1b;
+                color: #eaeaea;
+                border: 1px solid #2a2a2a;
+            }
+            QMenu::item:selected {
+                background: #2a2a2a;
+            }
+            QScrollBar:vertical {
+                background: #141414;
+                width: 10px;
+                margin: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #2b2b2b;
+                border-radius: 4px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #3a3a3a;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
+
         main_layout = QVBoxLayout(self)
 
         # ─── Zone 'Bulk Actions' ───
 
         self.toolbar = QToolBar("Bulk Actions")
+        self.toolbar.setObjectName("SampleToolbar")
         self.toolbar.setIconSize(QSize(24, 24))
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         main_layout.addWidget(self.toolbar)
@@ -129,8 +219,10 @@ class SampleListWidget(QWidget):
 
         # ─── Zone scrollable des SampleCard ───
         self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("SampleScroll")
         self.scroll_area.setWidgetResizable(True)
         self.content_widget = QWidget()
+        self.content_widget.setObjectName("SampleListContent")
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setSpacing(10)
         self.content_layout.setContentsMargins(10, 10, 10, 10)
@@ -142,10 +234,13 @@ class SampleListWidget(QWidget):
         self.pagination_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.pagination_label = QLabel("0 - 0 / 0")
+        self.pagination_label.setObjectName("PaginationLabel")
         self.pagination_layout.addWidget(self.pagination_label)
 
         self.prev_button = QPushButton("Précédent")
+        self.prev_button.setProperty("role", "pagination")
         self.next_button = QPushButton("Suivant")
+        self.next_button.setProperty("role", "pagination")
         self.prev_button.clicked.connect(self._prev_page)
         self.next_button.clicked.connect(self._next_page)
 

@@ -8,6 +8,8 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
+    QGroupBox,
+    QScrollArea,
 )
 from PyQt6.QtCore import Qt, QSettings
 import os
@@ -84,19 +86,72 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.addTab(samples_tab, "Liste des Samples")
 
-        # --- Onglet 'Paramètres'
+        # --- Onglet 'Parametres'
         settings_tab = QWidget()
         settings_layout = QVBoxLayout(settings_tab)
+
+        # Scroll area pour garder une UI lisible sur petites fenetres
+        settings_scroll = QScrollArea()
+        settings_scroll.setWidgetResizable(True)
+        settings_layout.addWidget(settings_scroll)
+
+        settings_container = QWidget()
+        settings_scroll.setWidget(settings_container)
+        container_layout = QVBoxLayout(settings_container)
+        container_layout.setContentsMargins(12, 12, 12, 12)
+        container_layout.setSpacing(12)
+
+        # Widgets settings
         self.settings_libraries_list = SettingsLibrariesList(self.app_context)
         self.settings_retro_widget = RetroRecordingWidget(self.settings)
         self.audio_settings_widget = AudioSettingsWidget(self.app_context)
         self.display_settings_widget = DisplaySettingsWidget(self.settings)
-        settings_layout.addWidget(self.settings_libraries_list)
-        settings_layout.addWidget(self.settings_retro_widget)
-        settings_layout.addWidget(self.audio_settings_widget)
-        settings_layout.addWidget(self.display_settings_widget)
-        
-        settings_layout.addStretch()
+
+        # Section: bibliotheques (pleine largeur)
+        libraries_group = self._make_settings_group(
+            "Bibliotheques",
+            "Gestion des bibliotheques de samples (ajout, suppression, ordre).",
+            self.settings_libraries_list
+        )
+        container_layout.addWidget(libraries_group)
+
+        # Section: colonnes pour clarifier l'organisation
+        columns = QHBoxLayout()
+        columns.setSpacing(12)
+
+        left_col = QVBoxLayout()
+        left_col.setSpacing(12)
+        right_col = QVBoxLayout()
+        right_col.setSpacing(12)
+
+        retro_group = self._make_settings_group(
+            "Enregistrement retro",
+            "Active le pre-enregistrement et ajuste la duree du buffer.",
+            self.settings_retro_widget
+        )
+        display_group = self._make_settings_group(
+            "Affichage",
+            "Configuration de la pagination et de la densite des listes.",
+            self.display_settings_widget
+        )
+        audio_group = self._make_settings_group(
+            "Audio",
+            "Sample rate, loopback et normalisation.",
+            self.audio_settings_widget
+        )
+
+        left_col.addWidget(retro_group)
+        left_col.addWidget(display_group)
+        left_col.addStretch()
+
+        right_col.addWidget(audio_group)
+        right_col.addStretch()
+
+        columns.addLayout(left_col, 1)
+        columns.addLayout(right_col, 1)
+        container_layout.addLayout(columns)
+        container_layout.addStretch()
+
         self.tab_widget.addTab(settings_tab, "Paramètres")
 
         # bouton 🛎 placé dans le coin supérieur droit des onglets
@@ -171,6 +226,23 @@ class MainWindow(QMainWindow):
         """Remet le compteur à zéro et masque le badge."""
         self._unread_count = 0
         self._notif_badge.hide()
+
+
+    # ------------------------------------------------------------------ Helpers UI
+    def _make_settings_group(self, title: str, description: str, widget: QWidget) -> QGroupBox:
+        group = QGroupBox(title)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        if description:
+            desc_label = QLabel(description)
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet("color: #6b6b6b;")
+            layout.addWidget(desc_label)
+
+        layout.addWidget(widget)
+        return group
 
     def _restore_directories(self):
         """Reopen directories stored in settings if they still exist."""
