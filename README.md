@@ -29,10 +29,14 @@ Application audio desktop avec:
 
 ## Documentation liee
 - Remote Control: [README_REMOTE_CONTROL.md](README_REMOTE_CONTROL.md)
+- Waveform Editor: [README_WAVEFORM_EDITOR.md](README_WAVEFORM_EDITOR.md)
 
 ## Trucs a faire (backlog)
 - Refonte UI du Waveform Editor (ergonomie + outils visibles).
 - Refonte UI du Directory Widget (lisibilite + actions rapides).
+- Refactor `sample_card.py` et `sample_list.py` (alleger + organiser comme Waveform).
+- Refactor `record_widget.py` (separer UI / logique comme les autres).
+- Revoir l'arborescence `frontend/` (regrouper widgets / views / controllers).
 - Refactor les fichiers trop gros
 - Concateneur de samples
 - Modifier l'ui pour le record widget
