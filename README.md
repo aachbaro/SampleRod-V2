@@ -37,6 +37,9 @@ Application audio desktop avec:
 - Concateneur de samples
 - Modifier l'ui pour le record widget
 - ajouter la capture d'ecran
+- ajouter le ctrl R pour renommer un sample
+- ajouter echape pour annuler le renaming dans le directory widget
+- faire un loader pour la fermeture de l'application
 
 ## Faits
 - Clic droit sur la waveform pour lancer la lecture a cet endroit.

@@ -1,3 +1,45 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Widget principal d'edition/lecture de waveform pour un sample.
+# - Concentre l'interaction utilisateur (selection, markers, playback, export).
+# - Sert de "mini DAW" pour couper, marquer, lire et exporter des segments.
+#
+# CE QUI EST DEJA EN PLACE
+# - Chargement async de la waveform (WaveformLoaderThread).
+# - Affichage waveform + tete de lecture (read head).
+# - Selection par region (LinearRegionItem) + markers (add/remove/move).
+# - Mode marker (toggle) et gestion de la liste de markers.
+# - Playback audio avec loop, pause, stop, play from start.
+# - Export d'une region en nouveau WAV + ajout au SampleService.
+# - Historique d'actions (undo/redo) via HistoryStack.
+# - Drag & drop de segments (slice drag).
+#
+# GESTES / INTERACTIONS IMPORTANTES
+# - Clic gauche: creer/ajuster une region.
+# - Maj + glisse: deplacer la region.
+# - Ctrl + double-clic: creer region rapide.
+# - Mode marker: clic gauche -> poser un marker.
+# - Clic molette: placer la tete + jouer depuis ce point.
+# - Raccourcis: play/pause/stop, undo/redo, export, etc.
+#
+# RESPONSABILITES TECHNIQUES
+# - Maintenir play_start / play_end et la selection courante.
+# - Synchroniser l'etat de lecture (timer + stream).
+# - Traduire les actions UI en modifications de waveform_data.
+# - Assurer la coherence entre visuel (plot) et donnees.
+#
+# CE QUI RESTE A FAIRE (IDEES)
+# - Refonte UI (barre d'outils, densite, meilleure hierarchie).
+# - Clic molette / gestures coherents avec le reste de l'app.
+# - Edition non destructive / versions.
+# - Metriques (RMS, peak, LUFS) et overlays.
+#
+# NOTES
+# - Ce fichier est long car il centralise: UI + logique audio + interactions.
+# - Si besoin, on peut le separer (controller/renderer/commands).
+# -----------------------------------------------------------------------------
+# frontend/sample_gui/wave_form.py
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QListWidgetItem, QMenu, QMessageBox
@@ -12,6 +54,7 @@ import numpy as np
 import sounddevice as sd
 import qtawesome as qta
 import librosa
+
 import os
 import soundfile as sf
 from backend.models.sample import Sample as DBSample
