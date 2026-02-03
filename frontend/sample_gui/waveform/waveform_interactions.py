@@ -58,8 +58,8 @@ class WaveformInteractionsController:
                 return False
             pos = event.scenePos()
             t = float(np.clip(vb.mapSceneToView(pos).x(), 0, w.duration))
-            # Visuel: poser un marqueur unique
-            w._set_marker(t)
+            # Visuel: poser un curseur unique (depart)
+            w._set_play_start_cursor(t)
             # Selection logique + tete de lecture
             w.play_start = t
             w.play_end = t
@@ -211,10 +211,10 @@ class WaveformInteractionsController:
                 w._dragging = False
                 w._creating = False
 
-                # et on supprime aussi le marker (au cas où)
-            if w.marker:
-                w.plot.removeItem(w.marker)
-                w.marker = None
+            # et on supprime aussi le curseur de depart (au cas ou)
+            if w.play_start_cursor:
+                w.plot.removeItem(w.play_start_cursor)
+                w.play_start_cursor = None
 
             # À partir d'ici, on sait qu'il n'y a plus de région → on crée une nouvelle
             w._dragging = True
@@ -256,13 +256,13 @@ class WaveformInteractionsController:
             w._creating = False
             w.on_region_changed()
 
-            # si c’était un clic « sans drag »: on détruit la mini-région et pose un marker
+            # si c'etait un clic "sans drag": on detruit la mini-region et pose un curseur
             if abs(release_x - w._press_x) < 1e-3:
                 w.plot.removeItem(w.region)
                 w.region = None
                 w._dragging = False
                 w._creating = False
-                w._set_marker(release_x)
+                w._set_play_start_cursor(release_x)
             # sinon on garde la région telle quelle (handles actifs)
             return True
 

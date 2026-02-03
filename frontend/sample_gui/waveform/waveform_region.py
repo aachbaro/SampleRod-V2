@@ -11,6 +11,7 @@
 # - Undo d'un cut via HistoryStack (delegue par le widget).
 # - Export d'une region en nouveau WAV + ajout au SampleService.
 # - Creation de region via Ctrl+double-clic entre markers.
+# - Curseur visuel de depart (ligne bleue) quand il n'y a pas de region.
 #
 # RESPONSABILITES TECHNIQUES
 # - Manipuler waveform_data (slicing / concat).
@@ -40,6 +41,7 @@ import bisect
 import numpy as np
 import pyqtgraph as pg
 import soundfile as sf
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QMessageBox
 
 from backend.models.sample import Sample as DBSample
@@ -268,3 +270,21 @@ class WaveformRegionController:
         w.play_start, w.play_end = t_left, t_right
         w.read_head.setPos(t_left)
         logger.info(f"Region creee par Ctrl+double-clic : {t_left:.3f}s -> {t_right:.3f}s")
+
+    def _set_play_start_cursor(self, x: float):
+        """Place un curseur visuel de depart (annule la region si besoin)."""
+        w = self.widget
+        # on detruit la region si elle existait
+        if w.region:
+            w.plot.removeItem(w.region)
+            w.region = None
+
+        logger.info(f"Curseur de depart place a {x:.3f}s")
+        if w.play_start_cursor:
+            w.plot.removeItem(w.play_start_cursor)
+        w.play_start_cursor = pg.InfiniteLine(
+            pos=x,
+            angle=90,
+            pen=pg.mkPen("b", width=1, style=Qt.PenStyle.DashLine),
+        )
+        w.plot.addItem(w.play_start_cursor)

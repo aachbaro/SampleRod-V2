@@ -9,7 +9,6 @@
 # - Rafraichissement de la liste de markers.
 # - Interaction avec la liste (clic / double-clic).
 # - Mode marker (toggle + icon).
-# - Marqueur visuel ponctuel (_set_marker).
 # - Creation de line sans historique (undo cut).
 #
 # RESPONSABILITES TECHNIQUES
@@ -121,24 +120,6 @@ class WaveformMarkersController:
             w.marker_list.show()
         else:
             w.marker_list.hide()
-
-    def _set_marker(self, x: float):
-        w = self.widget
-        # on detruit la region si elle existait
-        if w.region:
-            w.plot.removeItem(w.region)
-            w.region = None
-
-        # pose du marker (visuel uniquement)
-        logger.info(f"Marqueur place a {x:.3f}s")
-        if w.marker:
-            w.plot.removeItem(w.marker)
-        w.marker = pg.InfiniteLine(
-            pos=x,
-            angle=90,
-            pen=pg.mkPen("b", width=1, style=Qt.PenStyle.DashLine),
-        )
-        w.plot.addItem(w.marker)
 
     def _create_marker_line(self, t: float):
         """Cree la ligne d'un marker sans toucher a l'historique."""

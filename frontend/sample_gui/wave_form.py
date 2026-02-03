@@ -10,13 +10,15 @@
 # - Affichage waveform + tete de lecture (read head).
 # - Selection par region (LinearRegionItem) + markers (add/remove/move).
 # - Mode marker (toggle) et gestion de la liste de markers.
+# - Curseur de depart (ligne bleue) distinct des markers, visible sans region.
 # - Playback audio avec loop, pause, stop, play from start.
-# - Playback/gestes/region/markers/renderer extraits en controllers:
+# - Playback/gestes/region/markers/renderer/ui extraits en controllers:
 #   - WaveformPlaybackController (audio)
 #   - WaveformInteractionsController (events)
 #   - WaveformRegionController (selection, cut, export)
 #   - WaveformMarkersController (markers + liste)
 #   - WaveformRenderer (rendu waveform)
+#   - WaveformUIBuilder (construction UI)
 # - Export d'une region en nouveau WAV + ajout au SampleService.
 # - Historique d'actions (undo/redo) via HistoryStack.
 # - Drag & drop de segments (slice drag).
@@ -51,14 +53,14 @@
 # frontend/sample_gui/wave_form.py
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QWidget,
     QMenu, QMessageBox
 )
 import logging
 logger = logging.getLogger("wave_form")
 
-from PyQt6.QtGui import QCursor, QMouseEvent, QDrag
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QMimeData
+from PyQt6.QtGui import QCursor, QDrag
+from PyQt6.QtCore import Qt, pyqtSignal, QMimeData
 import pyqtgraph as pg
 import qtawesome as qta
 
@@ -69,7 +71,7 @@ from backend.models.AppContext import AppContext
 from backend.services.notification_service import NotificationType
 import pickle
 
-from .marker_manager import MarkerManager, MarkerListWidget
+from .marker_manager import MarkerManager
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.history_stack import HistoryStack
 from .waveform.waveform_interactions import WaveformInteractionsController
@@ -77,6 +79,7 @@ from .waveform.waveform_playback import WaveformPlaybackController
 from .waveform.waveform_region import WaveformRegionController
 from .waveform.waveform_markers import WaveformMarkersController
 from .waveform.waveform_renderer import WaveformRenderer
+from .waveform.waveform_ui import WaveformUIBuilder
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
     def __init__(self, *args, **kwargs):
@@ -147,7 +150,8 @@ class WaveformWidget(QWidget):
         self.play_start = 0.0
         self.play_end   = 0.0 
         self.region = None
-        self.marker = None
+        # curseur visuel de depart (ligne bleue) distinct des "markers"
+        self.play_start_cursor = None
         self._dragging = False
         self._creating = False
         self._press_x  = 0.0
@@ -168,9 +172,12 @@ class WaveformWidget(QWidget):
         self.history = HistoryStack()
         self._record_history = True
 
+        # renderer instancié tôt (les callbacks peuvent se déclencher pendant l'UI build)
+        self.renderer = WaveformRenderer(self)
+        # UI builder dédié
+        self.ui_builder = WaveformUIBuilder(self, NoLeftDragViewBox)
         # construction de l'UI (définit notamment self.plot)
         self._build_ui()
-        self.renderer = WaveformRenderer(self)
         self.region_controller = WaveformRegionController(self, ContextMenuLinearRegionItem)
         self.playback = WaveformPlaybackController(self)
         self.interactions = WaveformInteractionsController(self, ContextMenuLinearRegionItem)
@@ -213,123 +220,7 @@ class WaveformWidget(QWidget):
 
 
     def _build_ui(self):
-        self.layout = QVBoxLayout(self)
-
-        # — Save (enregistre l'état actuel de waveform_data)
-        save_layout = QHBoxLayout()
-        save_layout.addStretch()
-        self.save_button = QPushButton()
-        self.save_button.setIcon(qta.icon('fa5s.save', color='lightgray'))
-        self.save_button.setToolTip("Save waveform - ctrl + s")
-        self.save_button.setFixedSize(30,30)
-        self.save_button.clicked.connect(self.onSaveClicked)
-        save_layout.addWidget(self.save_button)
-        self.layout.addLayout(save_layout)
-
-        # — Undo / Redo au-dessus de la waveform
-        h_hist = QHBoxLayout()
-        # Undo
-        self.undo_button = QPushButton()
-        self.undo_button.setFixedSize(30, 30)
-        self.undo_button.setIcon(qta.icon('fa5s.undo', color='lightgray'))
-        self.undo_button.setToolTip("Undo - ctrl + z")
-        self.undo_button.clicked.connect(self.undo)
-        h_hist.addWidget(self.undo_button)
-        # Redo
-        self.redo_button = QPushButton()
-        self.redo_button.setFixedSize(30, 30)
-        self.redo_button.setIcon(qta.icon('fa5s.redo', color='lightgray'))
-        self.redo_button.setToolTip("Redo - ctrl + shift + z")
-        self.redo_button.clicked.connect(self.redo)
-        h_hist.addWidget(self.redo_button)
-
-        # on ajoute la barre d'historique avant la waveform
-        self.layout.addLayout(h_hist)
-
-        # — Waveform plot
-        self.plot = pg.PlotWidget(viewBox=NoLeftDragViewBox())
-        self.plot.setFixedHeight(150)
-        self.plot.showGrid(x=True, y=True, alpha=0.3)
-        self.plot.setBackground('#222')
-        self.plot.hideAxis('left')
-        self.plot.setMouseEnabled(x=True, y=False)
-
-        # Courbes pour chaque canal (gauche et droite)
-        self.curve_left  = pg.PlotDataItem(pen=pg.mkPen('w', width=1))
-        self.curve_right = pg.PlotDataItem(pen=pg.mkPen('#DAA520', width=1))
-        self.plot.addItem(self.curve_right)
-        self.plot.addItem(self.curve_left)
-
-        # Pour compatibilité mono, conserver self.curve
-        self.curve = pg.PlotDataItem(pen=pg.mkPen('w', width=1))
-        self.plot.addItem(self.curve)
-
-        # recalcule l'enveloppe lorsqu'on zoome ou qu'on pan
-        vb = self.plot.getViewBox()
-        vb.sigXRangeChanged.connect(self._on_view_range_changed)
-
-        self.layout.addWidget(self.plot)
-
-        # — Contrôles
-        h = QHBoxLayout()
-        for ico, cb, tip in [
-            ('fa5s.play',  self.play_from_start, "Play - ctrl + space"),
-            ('fa5s.pause', self.pause_or_resume, "Pause / Resume - space"),
-            ('fa5s.stop',  self.stop_and_reset,  "Stop and Reset - alt + space"),
-        ]:
-            b = QPushButton()
-            b.setFixedSize(30,30)
-            b.setIcon(qta.icon(ico, color='lightgray'))
-            b.clicked.connect(cb)
-            b.setToolTip(tip)                # ← on ajoute le tooltip ici
-            h.addWidget(b)
-
-        # Loop
-        self.loop_button = QPushButton(); self.loop_button.setCheckable(True)
-        self.loop_button.setFixedSize(30,30)
-        self.loop_button.setIcon(qta.icon('fa5s.sync', color='lightgray'))
-        self.loop_button.toggled.connect(self.toggle_loop)
-        self.loop_button.setToolTip("Loop ON/OF - ctrl + l")
-        h.addWidget(self.loop_button)
-        self.loop_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-
-        # Marker Mode
-        self.marker_mode_button = QPushButton(); self.marker_mode_button.setCheckable(True)
-        self.marker_mode_button.setFixedSize(30,30)
-        self.marker_mode_button.setIcon(qta.icon('fa5s.map-marker-alt', color='lightgray'))
-        self.marker_mode_button.setToolTip("Marker Mode ON/OFF - ctrl + g")
-        self.marker_mode_button.toggled.connect(self.toggle_marker_mode)
-        h.addWidget(self.marker_mode_button)
-
-        self.layout.addLayout(h)
-
-        # — Read head + timer
-        self.read_head = pg.InfiniteLine(angle=90, pen=pg.mkPen('r', width=2))
-        self.plot.addItem(self.read_head)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_read_head)
-        self.stop_timer_signal.connect(self.timer.stop)
-        self.timer.start(5)
-
-        # — Liste des marqueurs (on gère la visibilité PLUS TARD, après instanciation de marker_manager)
-        self.marker_list = MarkerListWidget(self)
-        self.marker_list.itemClicked.connect(self.on_marker_list_clicked)
-        self.marker_list.itemDoubleClicked.connect(self.on_marker_list_double_clicked)
-        self.layout.addWidget(self.marker_list)
-
-
-        # — Install filter une seule fois
-        self.plot.getViewBox().scene().installEventFilter(self)
-
-        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.setStyleSheet("""
-            WaveformWidget[focused="true"] {
-                border: 2px solid #2979ff;
-            }
-            WaveformWidget[focused="false"] {
-                border: 1px solid #ccc;
-            }
-        """)
+        self.ui_builder.build()
 
     def _load_audio(self, path):
         self.loader = WaveformLoaderThread(path)
@@ -415,8 +306,8 @@ class WaveformWidget(QWidget):
 
 # ——————————————————————————————————————— region et dash     ——————————————————————————————————————————————————————
 
-    def _set_marker(self, x):
-        self.marker_controller._set_marker(x)
+    def _set_play_start_cursor(self, x):
+        self.region_controller._set_play_start_cursor(x)
 
     def on_region_changed(self):
         self.region_controller.on_region_changed()
