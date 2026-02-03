@@ -33,5 +33,9 @@ Application audio desktop avec:
 ## Trucs a faire (backlog)
 - Refonte UI du Waveform Editor (ergonomie + outils visibles).
 - Refonte UI du Directory Widget (lisibilite + actions rapides).
+- Refactor les fichiers trop gros
+- Concateneur de samples
+- 
+
+## Faits
 - Clic droit sur la waveform pour lancer la lecture a cet endroit.
-- Ajouter d'autres items ici au fur et a mesure.

@@ -487,6 +487,24 @@ class WaveformWidget(QWidget):
     def eventFilter(self, source, event):
         vb = self.plot.getViewBox()
 
+        # --- 0) Clic molette: place la selection + lance la lecture
+        if event.type() == QEvent.GraphicsSceneMousePress \
+        and event.button() == Qt.MouseButton.MiddleButton:
+            if self.waveform_data is None or self.duration is None:
+                return False
+            pos = event.scenePos()
+            t = float(np.clip(vb.mapSceneToView(pos).x(), 0, self.duration))
+            # Visuel: poser un marqueur unique
+            self._set_marker(t)
+            # Selection logique + tete de lecture
+            self.play_start = t
+            self.play_end = t
+            self.current_time = t
+            self.read_head.setPos(t)
+            # Lecture immediatement (comme clic gauche + ctrl+space)
+            self.play_from_start()
+            return True
+
         # --- 0) En mode marker, Ctrl+clic simple → sélection de la région ---
         if self.marker_mode \
            and event.type() == QEvent.GraphicsSceneMousePress \
