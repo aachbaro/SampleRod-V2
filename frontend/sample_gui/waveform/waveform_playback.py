@@ -1,7 +1,36 @@
-"""
-Playback controller for WaveformWidget.
-Extracted from wave_form.py to keep playback logic isolated.
-"""
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Controleur audio pour la lecture de la waveform.
+# - Isole la gestion du stream sounddevice et le suivi de la tete de lecture.
+# - Est instancie par WaveformWidget pour separer UI et playback.
+#
+# CE QUI EST COUVERT
+# - Play / pause / resume / stop / reset.
+# - Lecture d'une selection (play_start / play_end).
+# - Boucle (loop) sur la region selectionnee.
+# - Mise a jour de la tete de lecture via timer + callback audio.
+#
+# RESPONSABILITES TECHNIQUES
+# - Creer et piloter un OutputStream sounddevice.
+# - Copier les buffers audio (mono/stereo) vers la sortie.
+# - Gerer la fin de lecture et l'etat is_playing.
+# - Emmettre positionUpdated pour synchroniser le visuel.
+#
+# NON-OBJECTIFS
+# - Aucune logique d'interactions souris/clavier.
+# - Pas de rendu graphique (delegue au widget).
+#
+# DEPENDANCES
+# - sounddevice (stream audio)
+# - numpy (buffering, slicing)
+# - qtawesome (mise a jour de l'icone loop)
+#
+# IDEES / TODO
+# - Fade in/out pour eviter les clicks en debut/fin.
+# - Crossfade propre en mode loop.
+# - Choix du device audio / gestion d'erreurs robuste.
+# - Monitoring du niveau (VU / peak) pendant lecture.
+# -----------------------------------------------------------------------------
 
 from __future__ import annotations
 

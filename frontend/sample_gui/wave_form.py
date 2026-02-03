@@ -3,6 +3,7 @@
 # - Widget principal d'edition/lecture de waveform pour un sample.
 # - Concentre l'interaction utilisateur (selection, markers, playback, export).
 # - Sert de "mini DAW" pour couper, marquer, lire et exporter des segments.
+# - Orchestration generale: instancie les controllers playback/interactions.
 #
 # CE QUI EST DEJA EN PLACE
 # - Chargement async de la waveform (WaveformLoaderThread).
@@ -10,6 +11,9 @@
 # - Selection par region (LinearRegionItem) + markers (add/remove/move).
 # - Mode marker (toggle) et gestion de la liste de markers.
 # - Playback audio avec loop, pause, stop, play from start.
+# - Playback/gestes extraits en controllers:
+#   - WaveformPlaybackController (audio)
+#   - WaveformInteractionsController (events)
 # - Export d'une region en nouveau WAV + ajout au SampleService.
 # - Historique d'actions (undo/redo) via HistoryStack.
 # - Drag & drop de segments (slice drag).
@@ -27,16 +31,19 @@
 # - Synchroniser l'etat de lecture (timer + stream).
 # - Traduire les actions UI en modifications de waveform_data.
 # - Assurer la coherence entre visuel (plot) et donnees.
+# - Brancher les controllers (playback / interactions) au widget.
 #
 # CE QUI RESTE A FAIRE (IDEES)
 # - Refonte UI (barre d'outils, densite, meilleure hierarchie).
 # - Clic molette / gestures coherents avec le reste de l'app.
 # - Edition non destructive / versions.
 # - Metriques (RMS, peak, LUFS) et overlays.
+# - Continuer la decoupe (renderer/commands) pour alleger ce fichier.
 #
 # NOTES
 # - Ce fichier est long car il centralise: UI + logique audio + interactions.
-# - Si besoin, on peut le separer (controller/renderer/commands).
+# - La logique audio et interactions a ete extraite, mais le coeur reste dense.
+# - Si besoin, on peut pousser la separation (controller/renderer/commands).
 # -----------------------------------------------------------------------------
 # frontend/sample_gui/wave_form.py
 
@@ -68,6 +75,7 @@ from .marker_manager import MarkerManager, MarkerListWidget
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.history_stack import HistoryStack
+from .waveform.waveform_interactions import WaveformInteractionsController
 from .waveform.waveform_playback import WaveformPlaybackController
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
@@ -163,6 +171,7 @@ class WaveformWidget(QWidget):
         # construction de l'UI (définit notamment self.plot)
         self._build_ui()
         self.playback = WaveformPlaybackController(self)
+        self.interactions = WaveformInteractionsController(self, ContextMenuLinearRegionItem)
         # gestion des marqueurs via un composant dédié, APRES avoir défini self.plot
         self.marker_manager = MarkerManager(self)
         # affichage initial de la liste de marqueurs
@@ -529,227 +538,8 @@ class WaveformWidget(QWidget):
         # logger.info(f"Région : début {start:.3f}s — fin {end:.3f}s")
 
     def eventFilter(self, source, event):
-        vb = self.plot.getViewBox()
+        return self.interactions.eventFilter(source, event)
 
-        # --- 0) Clic molette: place la selection + lance la lecture
-        if event.type() == QEvent.GraphicsSceneMousePress \
-        and event.button() == Qt.MouseButton.MiddleButton:
-            if self.waveform_data is None or self.duration is None:
-                return False
-            pos = event.scenePos()
-            t = float(np.clip(vb.mapSceneToView(pos).x(), 0, self.duration))
-            # Visuel: poser un marqueur unique
-            self._set_marker(t)
-            # Selection logique + tete de lecture
-            self.play_start = t
-            self.play_end = t
-            self.current_time = t
-            self.read_head.setPos(t)
-            # Lecture immediatement (comme clic gauche + ctrl+space)
-            self.play_from_start()
-            return True
-
-        # --- 0) En mode marker, Ctrl+clic simple → sélection de la région ---
-        if self.marker_mode \
-           and event.type() == QEvent.GraphicsSceneMousePress \
-           and event.button() == Qt.MouseButton.LeftButton \
-           and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
-
-            logger.info("Ctrl+clic simple en mode marker")
-            pos = event.scenePos()
-            # Si on a cliqué sur un marker existant, on laisse InfiniteLine gérer
-            for line in self.marker_lines.values():
-                if line.sceneBoundingRect().contains(pos):
-                    return False
-
-            # Sinon, on crée la région comme avec Ctrl+double-clic en mode non-marker
-            self._handle_ctrl_double_click(vb, event)
-            return True
-
-
-        # 1) Ctrl + double-clic → délégation à la méthode dédiée
-
-        if (event.type() == QEvent.GraphicsSceneMouseDoubleClick and
-            event.button() == Qt.MouseButton.LeftButton and
-            (event.modifiers() & Qt.KeyboardModifier.ControlModifier)):
-
-            logger.info("Ctrl+double-clic détecté")
-            # Si on a cliqué sur un marqueur, on le laisse gérer (suppression)
-            pos = event.scenePos()
-            for line in self.marker_lines.values():
-                if line.sceneBoundingRect().contains(pos):
-                    return False
-
-            # Sinon, on appelle la nouvelle méthode
-            self._handle_ctrl_double_click(vb, event)
-            return True
-
-        # 0) Maj + clic gauche DANS le corps (pas sur les handles) → début du déplacement
-        if event.type() == QEvent.GraphicsSceneMousePress \
-        and event.button() == Qt.MouseButton.LeftButton \
-        and event.modifiers() & Qt.KeyboardModifier.ShiftModifier \
-        and self.region:
-
-            pos = event.scenePos()
-            # handles
-            line0, line1 = self.region.lines
-            scene_h0 = line0.mapToScene(line0.boundingRect()).boundingRect().center().x()
-            scene_h1 = line1.mapToScene(line1.boundingRect()).boundingRect().center().x()
-            tol = 5
-            if abs(pos.x() - scene_h0) < tol or abs(pos.x() - scene_h1) < tol:
-                # on est sur un handle → pas notre cas
-                return False
-
-            # on est bien dans le corps de la région
-            self._shifting = True
-            # coordonnée de départ (en secondes)
-            self._shift_press_x = float(vb.mapSceneToView(pos).x())
-            # bornes d’origine
-            self._orig_region = tuple(self.region.getRegion())
-            return True
-
-        # 1) déplacement pendant Maj+glissé
-        if event.type() == QEvent.GraphicsSceneMouseMove \
-        and self._shifting:
-
-            pos = event.scenePos()
-            x = float(vb.mapSceneToView(pos).x())
-            dx = x - self._shift_press_x
-
-            start0, end0 = self._orig_region
-            length = end0 - start0
-            # clamp pour rester dans [0, duration]
-            new_start = max(0.0, min(start0 + dx, self.duration - length))
-            new_end   = new_start + length
-
-            self.region.setRegion([new_start, new_end])
-            # mets à jour play_start/play_end sans déclencher création
-            self.play_start, self.play_end = new_start, new_end
-            return True
-
-        # 2) fin du déplacement
-        if event.type() == QEvent.GraphicsSceneMouseRelease \
-        and event.button() == Qt.MouseButton.LeftButton \
-        and self._shifting:
-
-            self._shifting = False
-            # ici, tu peux pousser dans l'historique si tu veux
-            # self._push_history({...})
-            return True
-
-        if event.type() in (QEvent.GraphicsSceneMousePress,
-                            QEvent.GraphicsSceneMouseMove,
-                            QEvent.GraphicsSceneMouseRelease):
-            pos = event.scenePos()
-            # si on clique ou drag sur un marker, on ne filtre pas l'événement
-            for line in self.marker_lines.values():
-                if line.sceneBoundingRect().contains(pos):
-                    return False
-
-        # 1) En mode marker, on intercepte seulement les clics hors des lignes existantes
-        if self.marker_mode:
-            if event.type() == QEvent.GraphicsSceneMousePress \
-               and event.button() == Qt.MouseButton.LeftButton:
-                pos = event.scenePos()
-                # si on a cliqué SUR un marker existant, on laisse InfiniteLine gérer le drag
-                for line in self.marker_lines.values():
-                    if line.sceneBoundingRect().contains(pos):
-                        return False
-                # sinon, on créé un nouveau marker
-                t = float(np.clip(vb.mapSceneToView(pos).x(), 0, self.duration))
-                self.add_marker(t)
-                return True
-            return False
-
-        # 2) Sinon, on est en mode region : clic-drag → création/redimensionnement
-        if event.type() == QEvent.GraphicsSceneMousePress \
-        and event.button() == Qt.MouseButton.LeftButton:
-
-            pos_scene = event.scenePos()
-            vb = self.plot.getViewBox()
-            data_x = vb.mapSceneToView(pos_scene).x()
-            press_x = float(np.clip(data_x, 0, self.duration))
-
-            # Si on a déjà une région...
-            if self.region:
-                r0, r1 = self.region.getRegion()
-
-                # On calcule la position en pixels des deux handles
-                line0, line1 = self.region.lines
-                # boundingRect en coords locales, puis centre, puis en scene
-                scene_handle0 = line0.mapToScene(line0.boundingRect()).boundingRect().center().x()
-                scene_handle1 = line1.mapToScene(line1.boundingRect()).boundingRect().center().x()
-                tol = 5  # tolérance en pixels
-
-                # Si clic SUR un handle (gauche OU droit), on laisse LinearRegionItem gérer le resize
-                if abs(pos_scene.x() - scene_handle0) < tol or abs(pos_scene.x() - scene_handle1) < tol:
-                    return False
-
-                # Sinon (clic dans le body), on SUPPRIME l'ancienne région
-                self.plot.removeItem(self.region)
-                self.region = None
-                self._dragging = False
-                self._creating = False
-
-                # et on supprime aussi le marker (au cas où)
-            if self.marker:
-                self.plot.removeItem(self.marker)
-                self.marker = None
-
-            # À partir d'ici, on sait qu'il n'y a plus de région → on crée une nouvelle
-            self._dragging = True
-            self._creating = True
-            self._press_x = press_x
-
-            self.region = ContextMenuLinearRegionItem([press_x, press_x],
-                                            brush=pg.mkBrush(255,255,255,40),
-                                            pen=pg.mkPen('c', width=1))
-            self.region.setBounds([0, self.duration])
-            self.region.sigRegionChanged.connect(self.on_region_changed)
-            self.region.sigRegionChangeFinished.connect(self.on_region_changed)
-            # self.region.sigContextMenuRequested.connect(self._on_region_context_menu)
-            self.region._parent = self
-            self.plot.addItem(self.region)
-            return True
-
-        # 2) Redimensionnement **durant** le drag de création
-        elif event.type() == QEvent.GraphicsSceneMouseMove \
-            and self._dragging and self._creating \
-            and self.region is not None:
-
-            pos = self.plot.getViewBox().mapSceneToView(event.scenePos())
-            x   = float(np.clip(pos.x(), 0, self.duration))
-            self.region.setRegion([min(self._press_x, x),
-                                max(self._press_x, x)])
-            return True
-
-        # 3) Fin du drag (Release) → région validée ou simple clic
-        elif event.type() == QEvent.GraphicsSceneMouseRelease \
-             and event.button() == Qt.MouseButton.LeftButton \
-             and self._creating:
-
-            logger.info("Fin du drag")
-
-            pos       = self.plot.getViewBox().mapSceneToView(event.scenePos())
-            release_x = float(np.clip(pos.x(), 0, self.duration))
-            self._dragging = False
-            self._creating = False
-            self.on_region_changed()
-
-            # si c’était un clic « sans drag »: on détruit la mini-région et pose un marker
-            if abs(release_x - self._press_x) < 1e-3:
-                self.plot.removeItem(self.region)
-                self.region = None
-                self._dragging = False
-                self._creating = False
-                self._set_marker(release_x)
-            # sinon on garde la région telle quelle (handles actifs)
-            return True
-
-        # 4) tout le reste passe à la moulinette par défaut
-        return False
-
-    # —————————————————————————————————— menu contextuel region ——————————————————————————————————
 
     def _cut_region(self, start, end):
         removed, removed_markers, shift = self._do_cut(start, end)
