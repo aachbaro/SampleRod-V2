@@ -31,6 +31,7 @@ export default function App() {
   const [playingId, setPlayingId] = useState(null);
   const [audioState, setAudioState] = useState({});
   const audioRefs = useRef({});
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const applyStatus = (data) => {
     setStatus(data);
@@ -152,6 +153,14 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const onChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
   const toggleRecording = async () => {
     setLoading(true);
     setError("");
@@ -252,6 +261,18 @@ export default function App() {
     }
   };
 
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      setError(err.message || "Fullscreen not supported");
+    }
+  };
+
   return (
     <div className="page">
       <div className="card">
@@ -260,6 +281,21 @@ export default function App() {
             <h1>Remote Control</h1>
             <p className="subtitle">Control from your phone.</p>
           </div>
+          <button
+            className={`icon-btn ghost fullscreen ${isFullscreen ? "active" : ""}`}
+            onClick={toggleFullscreen}
+            aria-label="Toggle fullscreen"
+          >
+            {isFullscreen ? (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 3H3v5h2V5h3V3zm13 0h-5v2h3v3h2V3zM5 16H3v5h5v-2H5v-3zm16 0h-2v3h-3v2h5v-5z" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 3h8v2H5v6H3V3zm18 0v8h-2V5h-6V3h8zM5 13v6h6v2H3v-8h2zm14 0h2v8h-8v-2h6v-6z" />
+              </svg>
+            )}
+          </button>
           <div className={`pill ${status.is_recording ? "on" : "off"}`}>
             {status.is_recording ? "Recording" : "Idle"}
           </div>

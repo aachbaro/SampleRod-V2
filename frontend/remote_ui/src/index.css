@@ -37,6 +37,15 @@ body {
   margin-bottom: 18px;
 }
 
+.header > .icon-btn.fullscreen {
+  margin-left: auto;
+}
+
+.icon-btn.fullscreen.active {
+  background: #111827;
+  color: #ffffff;
+}
+
 h1 {
   margin: 0;
   font-size: 22px;
