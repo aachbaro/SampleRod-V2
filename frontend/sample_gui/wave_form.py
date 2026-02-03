@@ -1,27 +1,29 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
 # - Widget principal d'edition/lecture de waveform pour un sample.
-# - Concentre l'interaction utilisateur (selection, markers, playback, export).
 # - Sert de "mini DAW" pour couper, marquer, lire et exporter des segments.
-# - Orchestration generale: instancie les controllers playback/interactions.
+# - Fait l'orchestration: instancie les controllers UI/lecture/edition.
 #
-# CE QUI EST DEJA EN PLACE
-# - Chargement async de la waveform (WaveformLoaderThread).
-# - Affichage waveform + tete de lecture (read head).
-# - Selection par region (LinearRegionItem) + markers (add/remove/move).
-# - Mode marker (toggle) et gestion de la liste de markers.
-# - Curseur de depart (ligne bleue) distinct des markers, visible sans region.
-# - Playback audio avec loop, pause, stop, play from start.
-# - Playback/gestes/region/markers/renderer/ui extraits en controllers:
-#   - WaveformPlaybackController (audio)
-#   - WaveformInteractionsController (events)
-#   - WaveformRegionController (selection, cut, export)
-#   - WaveformMarkersController (markers + liste)
-#   - WaveformRenderer (rendu waveform)
-#   - WaveformUIBuilder (construction UI)
-# - Export d'une region en nouveau WAV + ajout au SampleService.
-# - Historique d'actions (undo/redo) via HistoryStack.
-# - Drag & drop de segments (slice drag).
+# CE QUI EST EN PLACE
+# - Chargement async de la waveform + rendu du read head.
+# - Selection par region + gestion des markers.
+# - Curseur de depart (ligne bleue) distinct des markers.
+# - Playback (loop, pause, stop, play from start).
+# - Drag & drop de segments.
+# - Historique undo/redo.
+#
+# ARCHITECTURE DES CONTROLLERS
+# - Playback: waveform_playback.py
+# - Interactions: waveform_interactions.py
+# - Region/selection: waveform_region.py
+# - Markers: waveform_markers.py
+# - Rendu: waveform_renderer.py
+# - UI builder: waveform_ui.py
+# - History: waveform_history.py
+# - Save/export: waveform_save.py
+# - Shortcuts: waveform_shortcuts.py
+# - Navigation/zoom: waveform_navigation.py
+# - Helpers plot: waveform_plot_helpers.py
 #
 # GESTES / INTERACTIONS IMPORTANTES
 # - Clic gauche: creer/ajuster une region.
@@ -31,45 +33,24 @@
 # - Clic molette: placer la tete + jouer depuis ce point.
 # - Raccourcis: play/pause/stop, undo/redo, export, etc.
 #
-# RESPONSABILITES TECHNIQUES
-# - Maintenir play_start / play_end et la selection courante.
-# - Synchroniser l'etat de lecture (timer + stream).
-# - Traduire les actions UI en modifications de waveform_data.
-# - Assurer la coherence entre visuel (plot) et donnees.
-# - Brancher les controllers (playback / interactions) au widget.
-#
 # CE QUI RESTE A FAIRE (IDEES)
 # - Refonte UI (barre d'outils, densite, meilleure hierarchie).
-# - Clic molette / gestures coherents avec le reste de l'app.
+# - Gestes coherents avec le reste de l'app.
 # - Edition non destructive / versions.
 # - Metriques (RMS, peak, LUFS) et overlays.
-# - Continuer la decoupe (commands/toolbar) pour alleger ce fichier.
-#
-# NOTES
-# - Ce fichier est long car il centralise: UI + logique audio + interactions.
-# - La logique audio et interactions a ete extraite, mais le coeur reste dense.
-# - Si besoin, on peut pousser la separation (controller/renderer/commands).
 # -----------------------------------------------------------------------------
 # frontend/sample_gui/wave_form.py
 
-from PyQt6.QtWidgets import (
-    QWidget,
-    QMenu, QMessageBox
-)
-import logging
-logger = logging.getLogger("wave_form")
+import os
+import pickle
 
-from PyQt6.QtGui import QCursor, QDrag
+from PyQt6.QtWidgets import QWidget
+from PyQt6.QtGui import QDrag
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData
 import pyqtgraph as pg
 import qtawesome as qta
 
-import os
-
-from frontend.custom_widgets import SaveWaveformDialog
 from backend.models.AppContext import AppContext
-from backend.services.notification_service import NotificationType
-import pickle
 
 from .marker_manager import MarkerManager
 from .waveform.waveform_loader import WaveformLoaderThread
@@ -80,58 +61,18 @@ from .waveform.waveform_region import WaveformRegionController
 from .waveform.waveform_markers import WaveformMarkersController
 from .waveform.waveform_renderer import WaveformRenderer
 from .waveform.waveform_ui import WaveformUIBuilder
-
-class ContextMenuLinearRegionItem(pg.LinearRegionItem):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setAcceptedMouseButtons(
-            Qt.MouseButton.LeftButton | Qt.MouseButton.RightButton
-        )
-
-    def contextMenuEvent(self, ev):
-
-        start, end = self.getRegion()
-
-        menu = QMenu()
-
-        cut = menu.                 addAction("Cut                      Ctrl + X")
-        export = menu.              addAction("Export Selection         Ctrl + E")
-        drag_act = menu.            addAction("Drag Selection")
-        add_markers_action = menu.  addAction("Add markers at edges     Ctrl + Shift + G")
-
-        # place ici tes autres actions...
-
-
-        # récupère la position globale du curseur
-        global_pos = QCursor.pos()
-        action = menu.exec(global_pos)
-
-        if action is cut:
-            # on appelle la méthode _cut_region sur le parent
-            self._parent._cut_region(start, end)
-
-        elif action is export:
-            # on appelle la méthode _export_region sur le parent (n’écrase pas la waveform en mémoire)
-            self._parent._export_region(start, end)
-        elif action is drag_act:
-            self._parent.start_slice_drag(start, end)
-        elif action is add_markers_action:
-            # on ajoute des marqueurs aux bords de la région
-            if end > start:
-                self._parent.add_marker(start)
-                self._parent.add_marker(end)
-            else:
-                # si la région est quasiment nulle, on place un seul marker
-                self._parent.add_marker(start)
-        
-
-        ev.accept()
+from .waveform.waveform_history import WaveformHistoryController
+from .waveform.waveform_save import WaveformSaveController
+from .waveform.waveform_shortcuts import WaveformShortcutsController
+from .waveform.waveform_navigation import WaveformNavigationController
+from .waveform.waveform_plot_helpers import ContextMenuLinearRegionItem, NoLeftDragViewBox
 
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
     waveformSaved    = pyqtSignal(str)
     positionUpdated = pyqtSignal(float)
 
+# -- Construction & état (core)
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
 
     def __init__(self, audio_file_path, app_context: AppContext):
@@ -176,6 +117,14 @@ class WaveformWidget(QWidget):
         self.renderer = WaveformRenderer(self)
         # UI builder dédié
         self.ui_builder = WaveformUIBuilder(self, NoLeftDragViewBox)
+        # historique (undo/redo)
+        self.history_controller = WaveformHistoryController(self)
+        # save / export
+        self.save_controller = WaveformSaveController(self)
+        # shortcuts
+        self.shortcuts_controller = WaveformShortcutsController(self)
+        # navigation / zoom
+        self.navigation_controller = WaveformNavigationController(self)
         # construction de l'UI (définit notamment self.plot)
         self._build_ui()
         self.region_controller = WaveformRegionController(self, ContextMenuLinearRegionItem)
@@ -192,7 +141,7 @@ class WaveformWidget(QWidget):
         self._load_audio(audio_file_path)
         self.positionUpdated.connect(lambda t: self.read_head.setPos(t))
 
-    # --- accès simplifiés aux données du MarkerManager
+    # -- Proxies MarkerManager (marker_manager.py)
     @property
     def markers(self):
         return self.marker_manager.markers
@@ -217,16 +166,17 @@ class WaveformWidget(QWidget):
     def current_marker_idx(self, value):
         self.marker_manager.current_marker_idx = value
 
-
-
+    # -- UI (waveform_ui.py)
     def _build_ui(self):
         self.ui_builder.build()
 
+    # -- Loader (waveform_loader.py)
     def _load_audio(self, path):
         self.loader = WaveformLoaderThread(path)
         self.loader.waveformReady.connect(self.set_waveform_data)
         self.loader.start()
 
+    # -- Données + limites (waveform_navigation.py)
     def set_waveform_data(self, y, sr, dur):
         # y.shape == (n_samples,) en mono ou (n_channels, n_samples) en stéréo
         if y.ndim == 2:
@@ -241,24 +191,13 @@ class WaveformWidget(QWidget):
         self.duration      = dur
 
     # **Verrouille désormais les limites X/Y du ViewBox** sur la durée réelle
-        vb = self.plot.getViewBox()
-        vb.setMenuEnabled(False)
-        vb.wheelEvent = self._zoom_or_pan
-        vb.setLimits(
-            xMin=0,          # plage horizontale
-            xMax=self.duration,
-            yMin=-1,         # amplitude fixe
-            yMax=1,
-            minXRange=0.01,  # zoom horizontal autorisé
-            maxXRange=self.duration,
-            minYRange=2,     # bloque la hauteur à (1 - -1) = 2
-            maxYRange=2
-        )
+        self.navigation_controller.configure_viewbox()
 
         # calcul initial de l'enveloppe sur toute la durée
         self.plot.setXRange(0, self.duration, padding=0)
         self._draw_waveform()
 
+    # -- Rendu (waveform_renderer.py)
     def _draw_waveform(self):
         self.renderer.draw_waveform()
 
@@ -268,23 +207,18 @@ class WaveformWidget(QWidget):
     def _redraw_all(self):
         self.renderer.redraw_all()
 
-# ———————————————————————————————————————————————————— Navigation   -————————————————————————————————————————————————————
+    # -- Navigation / zoom (waveform_navigation.py)
 
     def _zoom_or_pan(self, ev, **_):
-        vb = self.plot.getViewBox()
-        if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            dx = -0.1 if ev.delta()>0 else 0.1
-            vb.translateBy(x=dx*self.duration, y=0)
-        else:
-            pg.ViewBox.wheelEvent(vb, ev)
+        self.navigation_controller.zoom_or_pan(ev, **_)
 
-    def toggle_marker_mode(self, checked: bool):
-        self.marker_controller.toggle_marker_mode(checked)
-
-# ——————————————————————————————————————————————————— Marqueurs —————————————————————————————————————————————————————
+    # -- Markers (waveform_markers.py)
 
     def add_marker(self, t: float):
         self.marker_controller.add_marker(t)
+
+    def toggle_marker_mode(self, checked: bool):
+        self.marker_controller.toggle_marker_mode(checked)
 
     def on_marker_moved(self, line: pg.InfiniteLine):
         self.marker_controller.on_marker_moved(line)
@@ -304,7 +238,12 @@ class WaveformWidget(QWidget):
     def _refresh_marker_list(self):
         self.marker_controller._refresh_marker_list()
 
-# ——————————————————————————————————————— region et dash     ——————————————————————————————————————————————————————
+    # -- Interactions (waveform_interactions.py)
+
+    def eventFilter(self, source, event):
+        return self.interactions.eventFilter(source, event)
+
+    # -- Region / selection (waveform_region.py)
 
     def _set_play_start_cursor(self, x):
         self.region_controller._set_play_start_cursor(x)
@@ -312,8 +251,8 @@ class WaveformWidget(QWidget):
     def on_region_changed(self):
         self.region_controller.on_region_changed()
 
-    def eventFilter(self, source, event):
-        return self.interactions.eventFilter(source, event)
+    def _handle_ctrl_double_click(self, view_box, event):
+        self.region_controller._handle_ctrl_double_click(view_box, event)
 
 
     def _cut_region(self, start, end):
@@ -331,6 +270,7 @@ class WaveformWidget(QWidget):
     def _export_region(self, start, end):
         self.region_controller._export_region(start, end)
 
+    # -- Drag & drop (local)
     def start_slice_drag(self, start: float, end: float):
         """Initie un glisser-déposer pour la portion [start,end]."""
         s0 = int(start * self.sample_rate)
@@ -353,9 +293,7 @@ class WaveformWidget(QWidget):
         drag.setMimeData(mime)
         drag.exec(Qt.DropAction.CopyAction)
 
-# —————————————————————————————————————————————————————— Playback ——————————————————————————————————————————————————————
-
-    # ------------------------------------------------------------------ Playback (delegue au controller)
+    # -- Playback (waveform_playback.py)
     def play_from_start(self):
         self.playback.play_from_start()
 
@@ -380,152 +318,33 @@ class WaveformWidget(QWidget):
     def toggle_loop(self, checked: bool):
         self.playback.toggle_loop(checked)
 
+    # -- History (waveform_history.py)
     def _push_history(self, cmd: dict):
-        """Record a command for undo/redo."""
-        if not self._record_history:
-            return
-        self.history.push(cmd)
-        self._debug_history()
+        self.history_controller.push_history(cmd)
 
     def undo(self):
-        cmd = self.history.undo()
-        if cmd is None:
-            return
-        self._record_history = False
-
-        if cmd['action'] == 'add_marker':
-            self.remove_marker(cmd['time'])
-
-        elif cmd["action"]=="cut":
-            self._undo_cut(cmd)
-
-        elif cmd['action'] == 'remove_marker':
-            self.add_marker(cmd['time'])
-
-        elif cmd['action'] == 'move_marker':
-            line = self.marker_lines[cmd['new']]
-            line.setValue(cmd['old'])
-            self.on_marker_moved(line)
-
-        self._record_history = True
-        self._debug_history()
+        self.history_controller.undo()
 
     def redo(self):
-        cmd = self.history.redo()
-        if cmd is None:
-            return
-        self._record_history = False
-
-        if cmd['action'] == 'add_marker':
-            self.add_marker(cmd['time'])
-
-        elif cmd["action"]=="cut":
-            # on refait exactement le même cut
-            self._do_cut(cmd["start"], cmd["start"]+cmd["shift"])
-
-        elif cmd['action'] == 'remove_marker':
-            self.remove_marker(cmd['time'])
-
-        elif cmd['action'] == 'move_marker':
-            line = self.marker_lines[cmd['old']]
-            line.setValue(cmd['new'])
-            self.on_marker_moved(line)
-
-        self._record_history = True
-        self._debug_history()
+        self.history_controller.redo()
 
     def _debug_history(self):
-        logger.info("=== Historique des commandes ===")
-        logger.info(self.history)
-        logger.info("================================")
+        self.history_controller._debug_history()
 
-# —————————————————————————————————————————————— Save / export ——————————————————————————————————————————————
+    # -- Save / export (waveform_save.py)
 
     def onSaveClicked(self):
-        """
-        Ouvre un dialog Overwrite / Save as copy, écrit le WAV
-        et met à jour la base si overwrite, ou crée un nouveau sample si copy.
-        """
-        from PyQt6.QtWidgets import QMessageBox, QInputDialog
-        import os, soundfile as sf
-        from backend.models.sample import Sample as DBSample
-        import librosa
+        self.save_controller.on_save_clicked()
 
-        # 1) Choix Overwrite vs Copy
-        orig = self.audio_file_path
-        folder = os.path.dirname(orig)
-        ext    = os.path.splitext(orig)[1]
-        default_name = f"SMPL_{DBSample.get_next_id():04d}"
-
-        dlg = SaveWaveformDialog(self, default_name)
-        overwrite, new_name = dlg.choice()
-        if overwrite is None:
-            return  # utilisateur a annulé
-
-        if overwrite:
-            target = orig
-        else:
-            target = os.path.join(folder, new_name + ext)
-
-        try:
-            sf.write(target, self.waveform_data, self.sample_rate)
-        except Exception as e:
-            QMessageBox.critical(self, "Erreur", str(e))
-            return
-
-        svc = self.app_context.sample_store
-
-        if overwrite:
-            # recalculer la durée et mettre à jour le service uniquement pour ce fichier
-            svc.updateDurationFromFile(target)
-            # Notification when the file is saved over the original
-            self.app_context.notifications.notify(
-                title="✅ Fichier sauvegardé",
-                message=os.path.basename(target),
-                type=NotificationType.SUCCESS,
-            )
-        else:
-            # création d’un nouveau sample (FS+BD) via SampleService.add()
-            svc.add(target)
-
-# ——————————————————————————————————————— Keycontrol ——————————————————————————————————————————————
+    # -- Shortcuts (waveform_shortcuts.py)
 
     def _on_cut_shortcut(self):
-        """Callback du raccourci : coupe la région sélectionnée si elle existe."""
-        if hasattr(self, 'region') and self.region is not None:
-            start, end = self.region.getRegion()
-            self._cut_region(start, end)
+        self.shortcuts_controller.on_cut_shortcut()
 
     def _on_export_shortcut(self):
-        """Callback du raccourci : exporte la région sélectionnée si elle existe."""
-        if hasattr(self, 'region') and self.region is not None:
-            start, end = self.region.getRegion()
-            self._export_region(start, end)
+        self.shortcuts_controller.on_export_shortcut()
 
     def add_markers_to_region(self):
-        """
-        Place deux marqueurs aux bords de la sélection (LinearRegionItem).
-        Si la sélection est vide (end == start), ne place qu'un seul marqueur à start.
-        """
-        if not hasattr(self, "region") or self.region is None:
-            return
-
-        start, end = self.region.getRegion()
-        # Si la largeur est positive, on place deux marqueurs :
-        if end > start:
-            self.add_marker(start)
-            self.add_marker(end)
-        else:
-            # Sélection nulle → un seul marqueur
-            self.add_marker(start)
-
-    def _handle_ctrl_double_click(self, view_box, event):
-        self.region_controller._handle_ctrl_double_click(view_box, event)
+        self.shortcuts_controller.add_markers_to_region()
 
 
-class NoLeftDragViewBox(pg.ViewBox):
-    def mouseDragEvent(self, ev, axis=None):
-        if ev.button() == Qt.MouseButton.LeftButton:
-            ev.ignore()
-        else:
-            super().mouseDragEvent(ev, axis)
