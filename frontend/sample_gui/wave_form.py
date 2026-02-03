@@ -51,7 +51,6 @@ from PyQt6.QtGui import QCursor, QMouseEvent, QDrag
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QMimeData
 import pyqtgraph as pg
 import numpy as np
-import sounddevice as sd
 import qtawesome as qta
 import librosa
 
@@ -69,6 +68,7 @@ from .marker_manager import MarkerManager, MarkerListWidget
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.history_stack import HistoryStack
+from .waveform.waveform_playback import WaveformPlaybackController
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
     def __init__(self, *args, **kwargs):
@@ -162,6 +162,7 @@ class WaveformWidget(QWidget):
 
         # construction de l'UI (définit notamment self.plot)
         self._build_ui()
+        self.playback = WaveformPlaybackController(self)
         # gestion des marqueurs via un composant dédié, APRES avoir défini self.plot
         self.marker_manager = MarkerManager(self)
         # affichage initial de la liste de marqueurs
@@ -926,167 +927,31 @@ class WaveformWidget(QWidget):
 
 # —————————————————————————————————————————————————————— Playback ——————————————————————————————————————————————————————
 
+    # ------------------------------------------------------------------ Playback (delegue au controller)
     def play_from_start(self):
-        self.stop_audio()
-        # 1) Si une « vraie » sélection de région existe, on la respecte toujours
-        t = self.play_start
-        self.play_audio(t)
+        self.playback.play_from_start()
 
     def pause_or_resume(self):
-        """Toggle pause/reprise."""
-        if self.is_playing:
-            if self.stream:
-                self.stream.stop()
-            self.timer.stop()
-            self.is_playing = False
-        else:
-           # si on est déjà à la fin, on repart de play_start
-           end_pos = self.play_end if self.play_end > self.play_start else self.duration
-           if self.current_time >= end_pos:
-               self.current_time = self.play_start
-           # on reprend la lecture
-           self.play_audio(self.current_time)
+        self.playback.pause_or_resume()
 
     def play_audio(self, start_time: float = 0.0):
-        if self.waveform_data is None:
-            return
-
-        # position de départ en échantillons
-        self.start_sample = int(start_time * self.sample_rate)
-        self.current_time = start_time
-        self.is_playing   = True
-        self.timer.start(50)
-
-        def callback(outdata, frames, time_info, status):
-            if status.output_underflow:
-                logger.warning("⚠️ Underflow audio détecté")
-
-            # recalcul dynamiques des bornes
-            # if self.marker_mode and self.markers:
-            #     idx = min(self.current_marker_idx, len(self.markers)-1)
-            #     region_start = int(self.markers[idx] * self.sample_rate)
-            #     region_end = int(self.markers[idx+1] * self.sample_rate) if idx+1 < len(self.markers) else len(self.waveform_data)
-            # else:
-            region_start = int(self.play_start * self.sample_rate)
-            region_end   = int(self.play_end   * self.sample_rate) if self.play_end > self.play_start else len(self.waveform_data)
-
-            if region_end <= region_start:
-                outdata.fill(0)
-                self.is_playing = False
-                raise sd.CallbackStop()
-
-            st = self.start_sample
-
-            if self.loop_enabled:
-                # 🔁 lecture en boucle sur la région sélectionnée
-                length = region_end - region_start
-                idxs   = (np.arange(st, st + frames) - region_start) % length + region_start
-                chunk  = self.waveform_data[idxs]  # (frames,) ou (frames,2)
-
-                # — si mono, chunk est 1D → on le duplique pour chaque canal
-                if chunk.ndim == 1:
-                    chunk = np.repeat(chunk[:, np.newaxis], outdata.shape[1], axis=1)
-
-                # — écriture sur tous les canaux (1 ou 2)
-                outdata[:chunk.shape[0], :] = chunk
-
-                # — wrap du pointeur de lecture
-                self.start_sample = region_start + ((st + frames - region_start) % length)
-                self.current_time  = self.start_sample / self.sample_rate
-                self.positionUpdated.emit(self.current_time)
-
-                # — on sort de la callback pour ne pas exécuter le reste
-                return
-
-            # 3️⃣ Cas non-loop : on ne stoppe que si on a moins que `frames` échantillons restants
-            remaining = region_end - st
-            if remaining <= 0:
-                # déjà à la fin → arrêt direct
-                raise sd.CallbackStop()
-
-            # nombre à jouer ce callback
-            # lecture normale (hors loop)
-            n = min(frames, remaining)
-            segment = self.waveform_data[st:st + n]  # shape = (n,) ou (n,2)
-            # si mono 1D → on duplique dans chaque canal
-            if segment.ndim == 1:
-                segment = np.repeat(segment[:, np.newaxis], outdata.shape[1], axis=1)
-            # écriture sur tous les canaux disponibles
-            outdata[:n, :] = segment
-
-            # mise à jour du pointeur
-            self.start_sample = st + n
-            self.current_time = self.start_sample / self.sample_rate
-            self.positionUpdated.emit(self.current_time)
-
-            if n < frames:
-                # on a joué le dernier fragment (< blocksize) → arrêt immédiat sans boucler
-                raise sd.CallbackStop()
-
-            # arrêt propre hors loop
-            if not self.loop_enabled and self.start_sample >= region_end:
-                self.is_playing = False
-                raise sd.CallbackStop()
-
-        # instanciation du stream avec dtype, blocksize et latence adaptés
-        n_channels = 2 if getattr(self, 'is_stereo', False) else 1
-        self.stream = sd.OutputStream(
-            samplerate=self.sample_rate,
-            channels=n_channels,
-            dtype='float32',
-            blocksize=1024,
-            latency='low',
-            callback=callback
-        )
-        self.stream.start()
+        self.playback.play_audio(start_time)
 
     def pause_audio(self):
-        if self.stream and self.is_playing:
-            self.stream.stop()
-            self.timer.stop()
-            self.is_playing = False
-        elif not self.is_playing:
-            self.play_audio(self.current_time)
+        self.playback.pause_audio()
 
     def stop_and_reset(self):
-        self.stop_audio()
-        self.current_time = self.play_start
-        self.read_head.setPos(self.play_start)
+        self.playback.stop_and_reset()
 
     def stop_audio(self):
-        if self.stream:
-            try:
-                if getattr(self.stream, 'active', False):
-                    self.stream.stop()
-            except Exception as e:
-                logger.info(f"[WaveformWidget] Erreur stop: {e}")
-            try:
-                self.stream.close()
-            except Exception as e:
-                logger.info(f"[WaveformWidget] Erreur close: {e}")
-            finally:
-                self.stream = None
-        self.is_playing = False
-        self.stop_timer_signal.emit()
+        self.playback.stop_audio()
 
     def update_read_head(self):
-       if self.is_playing:
-           # on déplace la tête de lecture
-           self.read_head.setPos(self.current_time)
-       else:
-           # lorsque la lecture se termine, on coupe le stream...
-           self.stop_audio()
-           # ...et on repositionne tout au début de la sélection
-           self.current_time = self.play_start
-           self.read_head.setPos(self.play_start)
+        self.playback.update_read_head()
 
     def toggle_loop(self, checked: bool):
-        """Active/désactive le mode boucle."""
-        self.loop_enabled = checked
-        color = 'lightgreen' if checked else 'lightgray'
-        self.loop_button.setIcon(qta.icon('fa5s.sync', color=color))
-    
-# —————————————————————————————————————————————————————— HISTORY ——————————————————————————————————————————————————————
+        self.playback.toggle_loop(checked)
+
     def _push_history(self, cmd: dict):
         """Record a command for undo/redo."""
         if not self._record_history:
