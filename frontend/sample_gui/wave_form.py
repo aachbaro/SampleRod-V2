@@ -11,9 +11,10 @@
 # - Selection par region (LinearRegionItem) + markers (add/remove/move).
 # - Mode marker (toggle) et gestion de la liste de markers.
 # - Playback audio avec loop, pause, stop, play from start.
-# - Playback/gestes extraits en controllers:
+# - Playback/gestes/region extraits en controllers:
 #   - WaveformPlaybackController (audio)
 #   - WaveformInteractionsController (events)
+#   - WaveformRegionController (selection, cut, export)
 # - Export d'une region en nouveau WAV + ajout au SampleService.
 # - Historique d'actions (undo/redo) via HistoryStack.
 # - Drag & drop de segments (slice drag).
@@ -59,24 +60,20 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QMimeData
 import pyqtgraph as pg
 import numpy as np
 import qtawesome as qta
-import librosa
 
 import os
-import soundfile as sf
-from backend.models.sample import Sample as DBSample
 
 from frontend.custom_widgets import SaveWaveformDialog
 from backend.models.AppContext import AppContext
 from backend.services.notification_service import NotificationType
-import bisect
 import pickle
 
 from .marker_manager import MarkerManager, MarkerListWidget
 from .waveform.waveform_loader import WaveformLoaderThread
-from .waveform.waveform_loader import WaveformLoaderThread
 from .waveform.history_stack import HistoryStack
 from .waveform.waveform_interactions import WaveformInteractionsController
 from .waveform.waveform_playback import WaveformPlaybackController
+from .waveform.waveform_region import WaveformRegionController
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
     def __init__(self, *args, **kwargs):
@@ -170,6 +167,7 @@ class WaveformWidget(QWidget):
 
         # construction de l'UI (définit notamment self.plot)
         self._build_ui()
+        self.region_controller = WaveformRegionController(self, ContextMenuLinearRegionItem)
         self.playback = WaveformPlaybackController(self)
         self.interactions = WaveformInteractionsController(self, ContextMenuLinearRegionItem)
         # gestion des marqueurs via un composant dédié, APRES avoir défini self.plot
@@ -526,124 +524,20 @@ class WaveformWidget(QWidget):
         self.plot.addItem(self.marker)
 
     def on_region_changed(self):
-        if not self.region:
-            return
-        start, end = self.region.getRegion()
-        # CLAMP des deux bornes
-        start = max(0.0, min(start, self.duration))
-        end   = max(start, min(end,   self.duration))
-        # remet à jour la région côté visuel
-        self.region.setRegion([start, end])
-        self.play_start, self.play_end = start, end
-        # logger.info(f"Région : début {start:.3f}s — fin {end:.3f}s")
+        self.region_controller.on_region_changed()
 
     def eventFilter(self, source, event):
         return self.interactions.eventFilter(source, event)
 
 
     def _cut_region(self, start, end):
-        removed, removed_markers, shift = self._do_cut(start, end)
-        # on enregistre l’action pour undo/redo
-        self._push_history({
-            "action":"cut",
-            "start":start,
-            "removed_samples":removed,
-            "removed_markers":removed_markers,
-            "shift":shift
-        })
+        self.region_controller._cut_region(start, end)
 
     def _do_cut(self, start, end):
-        """Coupe la zone [start,end], supprime les markers dedans et décale les suivants."""
-        s0, s1 = int(start*self.sample_rate), int(end*self.sample_rate)
-        shift = end - start
-
-        # 1) découpe samples
-        removed = self.waveform_data[s0:s1].copy()
-        self.waveform_data = np.concatenate([
-            self.waveform_data[:s0],
-            self.waveform_data[s1:]
-        ])
-        self.duration = len(self.waveform_data)/self.sample_rate
-        vb = self.plot.getViewBox()
-        vb.setLimits(xMin=0, xMax=self.duration, yMin=-1, yMax=1)
-        self.plot.setXRange(0, self.duration, padding=0)
-
-        # 2) supprime visuel et interne les markers dans [start,end]
-        to_remove = [t for t in self.markers if start <= t <= end]
-        for t in to_remove:
-            line = self.marker_lines.pop(t)
-            self.plot.removeItem(line)
-            self.markers.remove(t)
-
-        # 3) décale tous les markers > start
-        new_markers, new_lines = [], {}
-        for t, line in list(self.marker_lines.items()):
-            if t > start:
-                nt = t - shift
-                line.setPos(nt)
-                new_markers.append(nt)
-                new_lines[nt] = line
-            else:
-                new_markers.append(t)
-                new_lines[t] = line
-        self.markers = sorted(new_markers)
-        self.marker_lines = new_lines
-
-        if self.current_marker_idx >= len(self.markers):
-            # si plus aucun marker, on remet à 0
-            self.current_marker_idx = max(0, len(self.markers) - 1)
-
-        self._refresh_marker_list()
-
-        # 4) redraw complet
-        self._redraw_all()
-        self.read_head.setPos(0.0)
-
-        self.current_time = 0.0
-        self.play_start  = 0.0
-        self.play_end    = self.duration
-        return removed, to_remove, shift
+        return self.region_controller._do_cut(start, end)
 
     def _undo_cut(self, cmd):
-        """Restaure un cut précédemment effectué."""
-        start = cmd["start"]
-        s0 = int(start*self.sample_rate)
-        removed, removed_markers, shift = cmd["removed_samples"], cmd["removed_markers"], cmd["shift"]
-
-        # 1) recolle les samples
-        self.waveform_data = np.concatenate([
-            self.waveform_data[:s0],
-            removed,
-            self.waveform_data[s0:]
-        ])
-        self.duration = len(self.waveform_data)/self.sample_rate
-        vb = self.plot.getViewBox()
-        vb.setLimits(xMin=0, xMax=self.duration, yMin=-1, yMax=1)
-        self.plot.setXRange(0, self.duration, padding=0)
-
-        # 2) décale en arrière tous les markers > start
-        new_markers, new_lines = [], {}
-        for t, line in list(self.marker_lines.items()):
-            if t > start:
-                rt = t + shift
-                line.setPos(rt)
-                new_markers.append(rt)
-                new_lines[rt] = line
-            else:
-                new_markers.append(t)
-                new_lines[t] = line
-        self.markers = sorted(new_markers)
-        self.marker_lines = new_lines
-
-        # 3) recrée **sans history** les markers qu’on avait supprimés
-        for t in removed_markers:
-            self._create_marker_line(t)
-
-        self._refresh_marker_list()
-
-        # 4) redraw
-        self._redraw_all()
-        self.read_head.setPos(start)
+        self.region_controller._undo_cut(cmd)
 
     def _create_marker_line(self, t):
         """Créer la ligne d’un marker sans touch­er à l’historique."""
@@ -657,41 +551,7 @@ class WaveformWidget(QWidget):
         self.marker_lines[t] = line
 
     def _export_region(self, start, end):
-        """
-        Exporte la portion [start, end] dans un nouveau fichier WAV
-        et l’ajoute à la base via SampleService.
-        Ne modifie pas la waveform en mémoire.
-        """
-        # 1) Calcul des indices d’échantillons
-        s0 = int(start * self.sample_rate)
-        s1 = int(end   * self.sample_rate)
-        if s1 <= s0:
-            QMessageBox.warning(self, "Export impossible", "La sélection est vide.")
-            return
-
-        # 2) Extraction du segment
-        segment = self.waveform_data[s0:s1].astype('float32')
-
-        # 3) Génération d’un nom de fichier unique
-        #    => on place le nouveau fichier dans le même dossier que l’original
-        orig_path = self.audio_file_path
-        folder    = os.path.dirname(orig_path)
-        next_id   = DBSample.get_next_id()
-        ext       = os.path.splitext(orig_path)[1] or ".wav"
-        new_name  = f"SMPL_{next_id:04d}{ext}"
-        target    = os.path.join(folder, new_name)
-
-        try:
-            # 4) Écriture du WAV
-            sf.write(target, segment, self.sample_rate)
-        except Exception as e:
-            QMessageBox.critical(self, "Erreur Export", f"Impossible d’écrire '{target}':\n{e}")
-            return
-
-        # 5) On prévient SampleService pour qu’il crée l’entrée DB et émette le signal
-        self.app_context.sample_store.add(target)
-
-        QMessageBox.information(self, "Export réussi", f"Segment exporté dans :\n{target}")
+        self.region_controller._export_region(start, end)
 
     def start_slice_drag(self, start: float, end: float):
         """Initie un glisser-déposer pour la portion [start,end]."""
@@ -882,68 +742,7 @@ class WaveformWidget(QWidget):
             self.add_marker(start)
 
     def _handle_ctrl_double_click(self, view_box, event):
-        """
-        Crée une région entre le marqueur immédiatement à gauche et
-        celui immédiatement à droite du point cliqué.
-        Si aucun marqueur à gauche : start=0.0
-        Si aucun marqueur à droite : end=self.duration
-        """
-        pos = event.scenePos()
-        x = float(np.clip(view_box.mapSceneToView(pos).x(), 0.0, self.duration))
-
-        # Cas où il n'y a aucun marqueur
-        if not self.markers:
-            t_left = 0.0
-            t_right = self.duration
-
-        else:
-            # Recherche de l'indice du premier marqueur >= x
-            idx = bisect.bisect_left(self.markers, x)
-
-            # Détermine le marqueur de gauche ou 0.0 si aucun
-            if idx > 0:
-                t_left = self.markers[idx - 1]
-            else:
-                t_left = 0.0
-
-            # Détermine le marqueur de droite ou duration si aucun
-            if idx < len(self.markers):
-                t_right = self.markers[idx]
-            else:
-                t_right = self.duration
-
-            # Si x tombe exactement sur un marqueur, on peut
-            # choisir de créer la région entre ce marqueur et le suivant,
-            # ou simplement ignorer. Ici, on fait entre le marqueur et le suivant.
-            if idx < len(self.markers) and abs(x - self.markers[idx]) < 1e-6:
-                # idx est le marqueur « droite » = x
-                # on décale t_left pour que ce ne soit pas x→x
-                if idx > 0:
-                    t_left = self.markers[idx - 1]
-                else:
-                    t_left = 0.0
-                # t_right reste self.markers[idx] (= x)
-            # Si x est au-delà du dernier marqueur, on tombe dans la logique « else » ci-dessus
-
-        # Supprime l’ancienne région si elle existe
-        if self.region:
-            self.plot.removeItem(self.region)
-            self.region = None
-
-        # Crée la nouvelle région
-        self.region = ContextMenuLinearRegionItem([t_left, t_right],
-                                                  brush=pg.mkBrush(255,255,255,40),
-                                                  pen=pg.mkPen('c', width=1))
-        self.region.setZValue(1)
-        self.region.setBounds([0, self.duration])
-        self.region.sigRegionChangeFinished.connect(self.on_region_changed)
-        self.region._parent = self
-        self.plot.addItem(self.region)
-
-        # Met à jour play_start/play_end et positionne la tête
-        self.play_start, self.play_end = t_left, t_right
-        self.read_head.setPos(t_left)
-        logger.info(f"Région créée par Ctrl+double-clic : {t_left:.3f}s → {t_right:.3f}s")
+        self.region_controller._handle_ctrl_double_click(view_box, event)
 
 
 class NoLeftDragViewBox(pg.ViewBox):

@@ -40,7 +40,7 @@ Application audio desktop avec:
 - ajouter le ctrl R pour renommer un sample
 - ajouter echape pour annuler le renaming dans le directory widget
 - faire un loader pour la fermeture de l'application
-- Problème: Lorsque je click gauche sur la waveform pendant le playback apres la barre de lecture, ça deplace la tete de lecture apres le marqueur de selection, comme si ça faisait playstart + temps de lecture en cours 
+- Problème: Lorsque je click gauche sur la waveform pendant le playback apres la barre de lecture en mode loop enabled, ça deplace la tete de lecture apres le marqueur de selection, comme si ça faisait playstart + temps de lecture en cours
 
 ## Faits
 - Clic droit sur la waveform pour lancer la lecture a cet endroit.
