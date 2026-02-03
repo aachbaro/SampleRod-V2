@@ -98,7 +98,7 @@ export default function App() {
         <header className="header">
           <div>
             <h1>Remote Control</h1>
-            <p className="subtitle">Control the recorder from your phone.</p>
+            <p className="subtitle">Control from your phone.</p>
           </div>
           <div className={`pill ${status.is_recording ? "on" : "off"}`}>
             {status.is_recording ? "Recording" : "Idle"}

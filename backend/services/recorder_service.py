@@ -18,7 +18,7 @@
 # recorder_worker -> resp_queue -> RecorderService.poll -> UI/Stockage/Notifications
 # -----------------------------------------------------------------------------
 # PyQt6: QObject + decorateurs de slots pour recevoir les signaux
-from PyQt6.QtCore import QObject, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal
 # multiprocessing: worker d'enregistrement dans un process isole
 import multiprocessing as mp
 # Fonction worker qui effectue la capture audio
@@ -43,6 +43,8 @@ class RecorderService(QObject):
     Service class to manage the recorder worker process.
     Maintenant hérite de QObject pour pouvoir recevoir les signaux Qt.
     """
+    # Emis quand l'etat d'enregistrement change (True/False)
+    recordingStateChanged = pyqtSignal(bool)
 
     def __init__(self, app_context, sample_rate, block_size):
         super().__init__()
@@ -166,13 +168,13 @@ class RecorderService(QObject):
     def start(self, output_folder, retro_time):
         """Démarre l’enregistrement live."""
         logger.info(f"RecorderService: démarrage vers {output_folder} (retro={retro_time}s)")
-        self.is_recording = True
+        self._set_recording_state(True)
         self.cmd_queue.put(('start', output_folder, retro_time))
 
     def stop(self):
         """Arrête l’enregistrement."""
         logger.info("RecorderService: arrêt")
-        self.is_recording = False
+        self._set_recording_state(False)
         self.cmd_queue.put(('stop',))
 
     def shutdown(self, timeout=2):
@@ -204,10 +206,10 @@ class RecorderService(QObject):
             # Lecture d'un message de statut
             if msg == 'started':
                 # Le worker confirme le demarrage
-                self.is_recording = True
+                self._set_recording_state(True)
             elif msg == 'stopped':
                 # Le worker confirme l'arret
-                self.is_recording = False
+                self._set_recording_state(False)
             elif msg == 'retro_enabled':
                 logger.info(f"RecorderService: retro_enabled -> {payload}")
                 self.retro_enabled = payload
@@ -232,6 +234,12 @@ class RecorderService(QObject):
                     others.append(('done', path))
 
         return others
+
+    def _set_recording_state(self, value: bool):
+        """Met a jour l'etat local et emet le signal si changement."""
+        if self.is_recording != value:
+            self.is_recording = value
+            self.recordingStateChanged.emit(value)
 
     @staticmethod
     def _is_wav_silent(path: str) -> bool:

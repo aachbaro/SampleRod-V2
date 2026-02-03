@@ -56,6 +56,9 @@ class RecordWidgetWindow(QMainWindow):
         self.settings.librariesChanged.connect(self.updateLibraryCount)
         self.settings.retroToggled.connect(self.updateRetroRecording)
         self.settings.preSecondsChanged.connect(self.updateRetroRecording)
+        self.app_context.recorder.recordingStateChanged.connect(
+            self._on_recording_state_changed
+        )
 
 
 
@@ -246,6 +249,10 @@ class RecordWidgetWindow(QMainWindow):
                 "border: 1px solid white; "
                 "border-radius: 4px;"
             )
+
+    def _on_recording_state_changed(self, _is_recording: bool):
+        """Reagit au changement d'etat d'enregistrement (local ou remote)."""
+        self.updateRecordButtonDisplay()
 
 
 # ------------------------------------------------------------------------ Position de la fenetre
