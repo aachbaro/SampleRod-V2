@@ -51,6 +51,7 @@ import os
 import subprocess
 import threading
 import time
+import queue
 
 logger = logging.getLogger("remote_control_service")
 
@@ -94,6 +95,13 @@ class RemoteControlService:
         self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
+        # SSE clients (queues)
+        self._sse_clients: list[queue.Queue] = []
+        self._sse_lock = threading.Lock()
+        # Historique local des samples (session)
+        self._sample_history: list[Dict[str, Any]] = []
+        self._sample_history_max = 50
+        self._history_lock = threading.Lock()
 
     # ------------------------------------------------------------------ Lifecycle
     def start(self) -> None:
@@ -123,6 +131,7 @@ class RemoteControlService:
         if not self._running or self._server is None:
             return
         logger.info("[RemoteControl] Server stopping...")
+        self._close_sse_clients()
         self._server.shutdown()
         self._server.server_close()
         self._server = None
@@ -218,9 +227,17 @@ class RemoteControlService:
         service = self
 
         class _Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
             # Raccourci pour eviter du bruit dans la console
             def log_message(self, fmt: str, *args: Any) -> None:
                 logger.info("[RemoteControl] " + fmt, *args)
+
+            def handle(self) -> None:
+                try:
+                    super().handle()
+                except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+                    # Le client a ferme la connexion (normal avec SSE/reload)
+                    return
 
             def do_OPTIONS(self) -> None:
                 service._handle_options(self)
@@ -260,6 +277,16 @@ class RemoteControlService:
             self._send_json(handler, 200, self._build_status_payload())
             return
 
+        if method == "GET" and path == "/events":
+            self._handle_sse(handler)
+            return
+
+        if method == "GET" and path == "/samples/history":
+            with self._history_lock:
+                samples = list(self._sample_history)
+            self._send_json(handler, 200, {"samples": samples})
+            return
+
         if method == "GET" and path == "/libraries":
             self._send_json(handler, 200, self._build_libraries_payload())
             return
@@ -276,6 +303,11 @@ class RemoteControlService:
             response = self._handle_stop()
             self._send_json(handler, response["code"], response["body"])
             return
+
+        if path.startswith("/samples/"):
+            handled = self._handle_samples_route(handler, method, path)
+            if handled:
+                return
 
         # Endpoint inconnu
         self._send_json(handler, 404, {"error": "not_found", "path": path})
@@ -301,6 +333,30 @@ class RemoteControlService:
             else:
                 libraries.append({"id": getattr(lib, "id", None), "path": getattr(lib, "path", "")})
         return {"libraries": libraries}
+
+    def _get_sample_by_id(self, sample_id: int):
+        samples = self.app_context.sample_store.get_cached()
+        return next((s for s in samples if s.id == sample_id), None)
+
+    def _sample_to_dict(self, sample) -> Dict[str, Any]:
+        created_at = getattr(sample, "created_at", None)
+        created_iso = created_at.isoformat() if created_at else None
+        return {
+            "id": sample.id,
+            "name": sample.name,
+            "path": sample.path,
+            "duration": float(getattr(sample, "duration", 0)),
+            "created_at": created_iso,
+        }
+
+    def _add_to_history(self, sample_dict: Dict[str, Any]) -> None:
+        with self._history_lock:
+            self._sample_history = [
+                s for s in self._sample_history if s.get("id") != sample_dict.get("id")
+            ]
+            self._sample_history.insert(0, sample_dict)
+            if len(self._sample_history) > self._sample_history_max:
+                self._sample_history = self._sample_history[: self._sample_history_max]
 
     # ------------------------------------------------------------------ Commands
     def _handle_start(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -333,6 +389,76 @@ class RemoteControlService:
         """Arrete l'enregistrement en cours."""
         self._execute(self.app_context.recorder.stop)
         return {"code": 202, "body": {"status": "accepted", "action": "stop"}}
+
+    def _handle_samples_route(self, handler: BaseHTTPRequestHandler, method: str, path: str) -> bool:
+        parts = path.strip("/").split("/")
+        if len(parts) < 2 or parts[0] != "samples":
+            return False
+
+        # /samples/{id}/audio
+        if len(parts) == 3 and parts[2] == "audio" and method == "GET":
+            sample_id = self._parse_sample_id(parts[1])
+            if sample_id is None:
+                self._send_json(handler, 400, {"error": "invalid_sample_id"})
+                return True
+            sample = self._get_sample_by_id(sample_id)
+            if not sample or not os.path.isfile(sample.path):
+                self._send_json(handler, 404, {"error": "sample_not_found"})
+                return True
+            self._send_file(handler, Path(sample.path))
+            return True
+
+        # /samples/{id}/rename
+        if len(parts) == 3 and parts[2] == "rename" and method == "POST":
+            sample_id = self._parse_sample_id(parts[1])
+            if sample_id is None:
+                self._send_json(handler, 400, {"error": "invalid_sample_id"})
+                return True
+            payload = self._read_json(handler)
+            if payload is None:
+                return True
+            new_name = str(payload.get("name", "")).strip()
+            if not new_name:
+                self._send_json(handler, 400, {"error": "missing_name"})
+                return True
+            sample = self._get_sample_by_id(sample_id)
+            if not sample:
+                self._send_json(handler, 404, {"error": "sample_not_found"})
+                return True
+
+            # Renommage via SampleService
+            self.app_context.sample_store.rename(sample_id, new_name)
+            updated = self._get_sample_by_id(sample_id)
+            if not updated or updated.name != new_name:
+                self._send_json(handler, 500, {"error": "rename_failed"})
+                return True
+
+            sample_dict = self._sample_to_dict(updated)
+            self._add_to_history(sample_dict)
+            self._broadcast_event("sample_renamed", sample_dict)
+            self._send_json(handler, 200, {"status": "ok", "sample": sample_dict})
+            return True
+
+        # /samples/{id}/delete
+        if len(parts) == 3 and parts[2] == "delete" and method == "POST":
+            sample_id = self._parse_sample_id(parts[1])
+            if sample_id is None:
+                self._send_json(handler, 400, {"error": "invalid_sample_id"})
+                return True
+            sample = self._get_sample_by_id(sample_id)
+            if not sample:
+                self._send_json(handler, 404, {"error": "sample_not_found"})
+                return True
+            self.app_context.sample_store.delete(sample_id)
+            with self._history_lock:
+                self._sample_history = [
+                    s for s in self._sample_history if s.get("id") != sample_id
+                ]
+            self._broadcast_event("sample_deleted", {"id": sample_id})
+            self._send_json(handler, 200, {"status": "ok"})
+            return True
+
+        return False
 
     # ------------------------------------------------------------------ Helpers
     def _execute(self, func: Callable[..., None], *args: Any) -> None:
@@ -370,6 +496,12 @@ class RemoteControlService:
                 return first.path
 
         return None
+
+    def _parse_sample_id(self, raw: str) -> Optional[int]:
+        try:
+            return int(raw)
+        except Exception:
+            return None
 
     def _read_json(self, handler: BaseHTTPRequestHandler) -> Optional[Dict[str, Any]]:
         """Lit le body JSON. Retourne None si invalide (reponse 400)."""
@@ -425,15 +557,128 @@ class RemoteControlService:
         handler.end_headers()
         handler.wfile.write(body)
 
+    # ------------------------------------------------------------------ SSE (Server-Sent Events)
+    def push_status(self) -> None:
+        """Envoie un event SSE 'status' aux clients connectes."""
+        self._broadcast_event("status", self._build_status_payload())
+
+    def push_sample_added(self, sample_id: int) -> None:
+        """Envoie un event SSE 'sample_added' et ajoute a l'historique."""
+        sample = self._get_sample_by_id(sample_id)
+        if not sample:
+            return
+        sample_dict = self._sample_to_dict(sample)
+        self._add_to_history(sample_dict)
+        self._broadcast_event("sample_added", sample_dict)
+
+    def push_sample_deleted(self, sample_id: int) -> None:
+        """Envoie un event SSE 'sample_deleted'."""
+        with self._history_lock:
+            self._sample_history = [s for s in self._sample_history if s.get("id") != sample_id]
+        self._broadcast_event("sample_deleted", {"id": sample_id})
+
+    def push_sample_renamed(self, sample_id: int, _old_path: str = "", _new_path: str = "") -> None:
+        """Envoie un event SSE 'sample_renamed'."""
+        sample = self._get_sample_by_id(sample_id)
+        if not sample:
+            return
+        sample_dict = self._sample_to_dict(sample)
+        self._add_to_history(sample_dict)
+        self._broadcast_event("sample_renamed", sample_dict)
+
+    def _register_sse_client(self) -> queue.Queue:
+        q: queue.Queue = queue.Queue()
+        with self._sse_lock:
+            self._sse_clients.append(q)
+        return q
+
+    def _unregister_sse_client(self, q: queue.Queue) -> None:
+        with self._sse_lock:
+            try:
+                self._sse_clients.remove(q)
+            except ValueError:
+                pass
+
+    def _close_sse_clients(self) -> None:
+        with self._sse_lock:
+            for q in self._sse_clients:
+                try:
+                    q.put_nowait(None)
+                except Exception:
+                    pass
+            self._sse_clients.clear()
+
+    def _broadcast_event(self, event: str, payload: Dict[str, Any]) -> None:
+        with self._sse_lock:
+            clients = list(self._sse_clients)
+        for q in clients:
+            try:
+                q.put_nowait((event, payload))
+            except Exception:
+                pass
+
+    def _handle_sse(self, handler: BaseHTTPRequestHandler) -> None:
+        """Ouvre un flux SSE et pousse les evenements."""
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        handler.send_header("Cache-Control", "no-cache")
+        handler.send_header("Connection", "keep-alive")
+        self._send_cors_headers(handler)
+        handler.end_headers()
+        try:
+            handler.wfile.flush()
+        except Exception:
+            return
+
+        q = self._register_sse_client()
+
+        # Envoi d'un snapshot initial
+        self._write_sse(handler, "status", self._build_status_payload())
+
+        try:
+            while True:
+                try:
+                    item = q.get(timeout=15)
+                except queue.Empty:
+                    # keepalive
+                    try:
+                        handler.wfile.write(b": keepalive\n\n")
+                        handler.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+                    continue
+
+                if item is None:
+                    break
+                event, payload = item
+                try:
+                    self._write_sse(handler, event, payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+        except Exception:
+            pass
+        finally:
+            self._unregister_sse_client(q)
+
+    def _write_sse(self, handler: BaseHTTPRequestHandler, event: str, payload: Dict[str, Any]) -> None:
+        data = json.dumps(payload)
+        msg = f"event: {event}\ndata: {data}\n\n"
+        handler.wfile.write(msg.encode("utf-8"))
+        handler.wfile.flush()
+
     # ------------------------------------------------------------------ Static files
     def _is_api_path(self, path: str) -> bool:
         """Retourne True si le path correspond a une route API connue."""
+        if path.startswith("/samples/"):
+            return True
         return path in (
             "/health",
+            "/events",
             "/record/status",
             "/record/start",
             "/record/stop",
             "/libraries",
+            "/samples/history",
         )
 
     def _try_serve_static(self, handler: BaseHTTPRequestHandler, path: str) -> bool:

@@ -158,6 +158,29 @@ class RemoteControlSettingsWidget(QWidget):
                 auto_build_ui=True,
             )
             self.app_context.remote_control = svc
+            try:
+                if not getattr(svc, "_signals_hooked", False):
+                    self.app_context.recorder.recordingStateChanged.connect(
+                        svc.push_status
+                    )
+                    self.app_context.sample_store.sampleAdded.connect(
+                        svc.push_sample_added
+                    )
+                    self.app_context.sample_store.sampleDeleted.connect(
+                        svc.push_sample_deleted
+                    )
+                    self.app_context.sample_store.sampleRenamed.connect(
+                        svc.push_sample_renamed
+                    )
+                    self.app_context.settings.retroToggled.connect(
+                        svc.push_status
+                    )
+                    self.app_context.settings.preSecondsChanged.connect(
+                        svc.push_status
+                    )
+                    svc._signals_hooked = True
+            except Exception:
+                pass
 
         if svc.is_running:
             return True

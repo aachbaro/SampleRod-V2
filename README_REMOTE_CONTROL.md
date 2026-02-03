@@ -10,7 +10,7 @@ depuis un telephone sur le meme reseau.
 - Avoir un demarrage automatique avec l'app.
 
 **Resume rapide**
-- Serveur unique (API + fichiers statiques) dans `backend/services/remote_control_service.py`
+- Serveur unique (API + fichiers statiques + SSE) dans `backend/services/remote_control_service.py`
 - UI React dans `frontend/remote_ui/` (build auto si `dist/` absent ou vieux)
 - Toggle et statut dans l'onglet **Parametres > Controle distant**
 - QR code pour ouvrir l'URL LAN directement sur le telephone
@@ -20,7 +20,8 @@ depuis un telephone sur le meme reseau.
 **Architecture**
 - `AppContext` demarre le serveur HTTP au lancement et l'arrete au shutdown.
 - `RemoteControlService` gere:
-  - API JSON (start/stop/status/libraries)
+  - API JSON (start/stop/status/libraries/samples)
+  - SSE `/events` pour l'etat et l'historique
   - fichiers statiques React (SPA)
   - build automatique si necessaire
 - `RemoteControlSettingsWidget` affiche l'etat, l'URL LAN et un QR code.
@@ -44,10 +45,21 @@ depuis un telephone sur le meme reseau.
 - `GET /health` -> etat du service
 - `GET /record/status` -> `{ is_recording, retro_enabled, pre_seconds }`
 - `GET /libraries` -> `{ libraries: [ {id, path, position} ] }`
+- `GET /samples/history` -> `{ samples: [...] }` (historique session)
+- `GET /samples/{id}/audio` -> flux audio (lecture)
+- `POST /samples/{id}/rename` -> `{ name }`
+- `POST /samples/{id}/delete`
 - `POST /record/start` -> body JSON:
   - `library_id` (obligatoire si pas de path)
   - `retro_time` (secondes, optionnel)
 - `POST /record/stop`
+
+**SSE**
+- `GET /events`
+  - `event: status` -> status recorder
+  - `event: sample_added` -> nouveau sample
+  - `event: sample_renamed`
+  - `event: sample_deleted`
 
 ---
 
@@ -58,7 +70,11 @@ depuis un telephone sur le meme reseau.
   - etat recording
   - retro selection
   - buffer max (pre_seconds du serveur)
-- Le polling `GET /record/status` est fait toutes les 1s.
+- Historique:
+  - lecture audio
+  - rename
+  - delete
+- Le polling `GET /record/status` est remplace par SSE.
 - La selection retro dans React est locale et ne modifie pas celle du RecordWidget.
 
 ---

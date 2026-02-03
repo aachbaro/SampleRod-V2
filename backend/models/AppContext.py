@@ -93,6 +93,30 @@ class AppContext:
             )
             try:
                 self.remote_control.start()
+                # Pousse les changements d'etat du recorder via SSE
+                try:
+                    if not getattr(self.remote_control, "_signals_hooked", False):
+                        self.recorder.recordingStateChanged.connect(
+                            self.remote_control.push_status
+                        )
+                        self.sample_store.sampleAdded.connect(
+                            self.remote_control.push_sample_added
+                        )
+                        self.sample_store.sampleDeleted.connect(
+                            self.remote_control.push_sample_deleted
+                        )
+                        self.sample_store.sampleRenamed.connect(
+                            self.remote_control.push_sample_renamed
+                        )
+                        self.settings.retroToggled.connect(
+                            self.remote_control.push_status
+                        )
+                        self.settings.preSecondsChanged.connect(
+                            self.remote_control.push_status
+                        )
+                        self.remote_control._signals_hooked = True
+                except Exception:
+                    pass
             except Exception:
                 logger.exception("[AppContext] RemoteControlService: demarrage impossible")
 

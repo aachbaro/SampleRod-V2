@@ -24,23 +24,22 @@ export default function App() {
   const retroTouchedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [history, setHistory] = useState([]);
+  const [renameId, setRenameId] = useState(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [busyId, setBusyId] = useState(null);
 
-  const loadStatus = async () => {
-    try {
-      const data = await fetchJson("/record/status");
-      setStatus(data);
-      if (
-        !retroInitializedRef.current &&
-        !retroTouchedRef.current &&
-        typeof data.pre_seconds === "number"
-      ) {
-        setRetroTime(data.pre_seconds);
-        retroInitializedRef.current = true;
-      } else if (!retroInitializedRef.current) {
-        retroInitializedRef.current = true;
-      }
-    } catch (err) {
-      setError(err.message);
+  const applyStatus = (data) => {
+    setStatus(data);
+    if (
+      !retroInitializedRef.current &&
+      !retroTouchedRef.current &&
+      typeof data.pre_seconds === "number"
+    ) {
+      setRetroTime(data.pre_seconds);
+      retroInitializedRef.current = true;
+    } else if (!retroInitializedRef.current) {
+      retroInitializedRef.current = true;
     }
   };
 
@@ -57,11 +56,77 @@ export default function App() {
     }
   };
 
+  const loadHistory = async () => {
+    try {
+      const data = await fetchJson("/samples/history");
+      const items = data.samples || [];
+      setHistory(items);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const formatDate = (value) => {
+    if (!value) return "";
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return value;
+    }
+  };
+
+  const formatDuration = (value) => {
+    if (value === null || value === undefined) return "";
+    return `${Number(value).toFixed(1)}s`;
+  };
+
   useEffect(() => {
-    loadStatus();
     loadLibraries();
-    const timer = setInterval(loadStatus, 1000);
-    return () => clearInterval(timer);
+    loadHistory();
+
+    const es = new EventSource("/events");
+    const onStatus = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        applyStatus(data);
+      } catch (err) {
+        setError(err.message);
+      }
+    };
+    es.addEventListener("status", onStatus);
+    es.addEventListener("sample_added", (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        setHistory((prev) => [data, ...prev.filter((s) => s.id !== data.id)]);
+      } catch (err) {
+        setError(err.message);
+      }
+    });
+    es.addEventListener("sample_renamed", (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        setHistory((prev) =>
+          prev.map((s) => (s.id === data.id ? data : s))
+        );
+      } catch (err) {
+        setError(err.message);
+      }
+    });
+    es.addEventListener("sample_deleted", (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        setHistory((prev) => prev.filter((s) => s.id !== data.id));
+      } catch (err) {
+        setError(err.message);
+      }
+    });
+    es.onerror = () => {
+      setError("SSE connection lost");
+    };
+    return () => {
+      es.removeEventListener("status", onStatus);
+      es.close();
+    };
   }, []);
 
   const toggleRecording = async () => {
@@ -84,11 +149,57 @@ export default function App() {
           }),
         });
       }
-      await loadStatus();
+      // status mis a jour via SSE
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const startRename = (sample) => {
+    setRenameId(sample.id);
+    setRenameValue(sample.name || "");
+  };
+
+  const cancelRename = () => {
+    setRenameId(null);
+    setRenameValue("");
+  };
+
+  const saveRename = async (sampleId) => {
+    if (!renameValue.trim()) return;
+    setBusyId(sampleId);
+    setError("");
+    try {
+      const res = await fetchJson(`/samples/${sampleId}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: renameValue.trim() }),
+      });
+      if (res.sample) {
+        setHistory((prev) =>
+          prev.map((s) => (s.id === sampleId ? res.sample : s))
+        );
+      }
+      cancelRename();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const deleteSample = async (sampleId) => {
+    setBusyId(sampleId);
+    setError("");
+    try {
+      await fetchJson(`/samples/${sampleId}/delete`, { method: "POST" });
+      setHistory((prev) => prev.filter((s) => s.id !== sampleId));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -163,6 +274,86 @@ export default function App() {
             <span>Buffer max</span>
             <strong>{status.pre_seconds}s</strong>
           </div>
+        </section>
+
+        <section className="section history">
+          <div className="history-header">
+            <h2>History</h2>
+            <span className="history-count">{history.length}</span>
+          </div>
+          {history.length === 0 && (
+            <div className="history-empty">No samples yet.</div>
+          )}
+          {history.map((samp) => (
+            <div className="history-item" key={samp.id}>
+              <div className="history-main">
+                {renameId === samp.id ? (
+                  <div className="history-inline-rename">
+                    <input
+                      className="rename-input"
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          saveRename(samp.id);
+                        } else if (e.key === "Escape") {
+                          cancelRename();
+                        }
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                ) : (
+                  <div
+                    className="history-title"
+                    onDoubleClick={() => startRename(samp)}
+                    title="Double click to rename"
+                  >
+                    {samp.name}
+                  </div>
+                )}
+                <div className="history-meta">
+                  {formatDuration(samp.duration)} · {formatDate(samp.created_at)}
+                </div>
+              </div>
+              <audio
+                className="history-audio"
+                controls
+                preload="none"
+                src={`/samples/${samp.id}/audio`}
+              />
+              {renameId === samp.id ? (
+                <div className="history-rename">
+                  <button
+                    className="btn small"
+                    onClick={() => saveRename(samp.id)}
+                    disabled={busyId === samp.id}
+                  >
+                    Save
+                  </button>
+                  <button className="btn small ghost" onClick={cancelRename}>
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <div className="history-actions">
+                  <button
+                    className="btn small ghost"
+                    onClick={() => startRename(samp)}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    className="btn small danger"
+                    onClick={() => deleteSample(samp.id)}
+                    disabled={busyId === samp.id}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
         </section>
 
         {error && <div className="error">Error: {error}</div>}

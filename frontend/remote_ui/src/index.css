@@ -118,6 +118,23 @@ h1 {
   cursor: not-allowed;
 }
 
+.btn.small {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.btn.small.ghost {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.btn.small.danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .chips {
   display: flex;
   gap: 8px;
@@ -137,6 +154,88 @@ h1 {
   background: #111827;
   color: #ffffff;
   border-color: #111827;
+}
+
+.history {
+  margin-top: 18px;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.history-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.history-count {
+  background: #eef2ff;
+  color: #4338ca;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.history-empty {
+  font-size: 13px;
+  color: #6b7280;
+  padding: 8px 0;
+}
+
+.history-item {
+  border: 1px solid #e6e9ef;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: #fafbfe;
+}
+
+.history-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-title {
+  font-weight: 600;
+  font-size: 14px;
+  cursor: text;
+  user-select: none;
+}
+
+.history-meta {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.history-audio {
+  width: 100%;
+  margin: 8px 0;
+}
+
+.history-actions,
+.history-rename {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.history-inline-rename {
+  width: 100%;
+}
+
+.rename-input {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #d7dbe2;
+  background: #ffffff;
 }
 
 .status {
