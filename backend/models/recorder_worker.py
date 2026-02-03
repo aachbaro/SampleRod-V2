@@ -1,4 +1,39 @@
-# backend/recorder_worker.py
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Worker d'enregistrement audio execute dans un processus separe.
+# - Capture l'audio (loopback) et gere le buffer retro (pre-record).
+# - Recoit des commandes via une queue et renvoie des events via une autre.
+#
+# ENTREE / SORTIE
+# - cmd_q (Queue): commandes entrantes depuis RecorderService
+#   ('start', 'stop', 'enable_retro', 'disable_retro',
+#    'set_retro_time', 'set_device', 'set_sample_rate', 'shutdown')
+# - resp_q (Queue): reponses sortantes vers RecorderService
+#   ('started', 'stopped', 'done', 'retro_enabled', 'shutdown_ack')
+#
+# FLUX GLOBAL
+# RecorderService -> cmd_q -> recorder_worker (process) -> resp_q -> RecorderService
+# Le worker tourne en boucle:
+# - capture bloc par bloc
+# - alimente un buffer retro (deque)
+# - stocke le live dans un buffer temporaire pendant l'enregistrement
+#
+# RESPONSABILITES PRINCIPALES
+# - Ouvrir le device audio (loopback) et reinitialiser si besoin.
+# - Gerer la taille du buffer retro (pre_seconds + sample_rate + block_size).
+# - Assembler "retro + live" au moment du stop puis ecrire le fichier WAV.
+#
+# NOTES
+# - Le retro_time (selection courante) doit rester <= pre_seconds (taille max).
+# - En cas de changement de sample_rate, on recalcule la taille du buffer.
+# - Le worker ne touche pas a l'UI; il renvoie uniquement des events.
+#
+# IDEES / TODO
+# - Ajouter une gestion d'erreurs plus fine (reconnexion device).
+# - Supporter plusieurs canaux et selection canal.
+# - Ajouter des niveaux (VU meter) pour monitoring temps reel.
+# -----------------------------------------------------------------------------
+# backend/models/recorder_worker.py
 
 import soundcard as sc
 import soundfile as sf

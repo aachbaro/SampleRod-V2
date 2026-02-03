@@ -12,6 +12,11 @@ import soundcard as sc
 import logging
 logger = logging.getLogger("audio_settings")
 
+class NoWheelSpinBox(QSpinBox):
+    """SpinBox qui ignore la molette pour eviter les changements involontaires."""
+    def wheelEvent(self, event):
+        event.ignore()
+
 class AudioSettingsWidget(QWidget):
     """
     Un widget de paramètres audio : sample rate, micro en loopback, etc.
@@ -62,7 +67,7 @@ class AudioSettingsWidget(QWidget):
         self.auto_norm_checkbox.clicked.connect(self.settings.toggleAutoNormalize)
 
         # Cible LUFS
-        self.lufs_spin = QSpinBox()
+        self.lufs_spin = NoWheelSpinBox()
         self.lufs_spin.setRange(-30, 0)
         self.lufs_spin.setSuffix(" LUFS")
         self.lufs_spin.setValue(self.settings.getNormalizationLevel())

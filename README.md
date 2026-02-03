@@ -35,7 +35,8 @@ Application audio desktop avec:
 - Refonte UI du Directory Widget (lisibilite + actions rapides).
 - Refactor les fichiers trop gros
 - Concateneur de samples
-- 
+- Modifier l'ui pour le record widget
+- ajouter la capture d'ecran
 
 ## Faits
 - Clic droit sur la waveform pour lancer la lecture a cet endroit.
