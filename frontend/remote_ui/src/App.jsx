@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const apiUrl = (path) => `${path}`;
 
@@ -19,6 +19,9 @@ export default function App() {
   });
   const [libraries, setLibraries] = useState([]);
   const [selectedId, setSelectedId] = useState("");
+  const [retroTime, setRetroTime] = useState(10);
+  const retroInitializedRef = useRef(false);
+  const retroTouchedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -26,6 +29,16 @@ export default function App() {
     try {
       const data = await fetchJson("/record/status");
       setStatus(data);
+      if (
+        !retroInitializedRef.current &&
+        !retroTouchedRef.current &&
+        typeof data.pre_seconds === "number"
+      ) {
+        setRetroTime(data.pre_seconds);
+        retroInitializedRef.current = true;
+      } else if (!retroInitializedRef.current) {
+        retroInitializedRef.current = true;
+      }
     } catch (err) {
       setError(err.message);
     }
@@ -51,29 +64,26 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const startRecording = async () => {
-    if (!selectedId) return;
+  const toggleRecording = async () => {
     setLoading(true);
     setError("");
     try {
-      await fetchJson("/record/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ library_id: Number(selectedId) }),
-      });
-      await loadStatus();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const stopRecording = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      await fetchJson("/record/stop", { method: "POST" });
+      if (status.is_recording) {
+        await fetchJson("/record/stop", { method: "POST" });
+      } else {
+        if (!selectedId) {
+          setError("Select a library first.");
+          return;
+        }
+        await fetchJson("/record/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            library_id: Number(selectedId),
+            retro_time: Number(retroTime) || 0,
+          }),
+        });
+      }
       await loadStatus();
     } catch (err) {
       setError(err.message);
@@ -111,16 +121,32 @@ export default function App() {
           </select>
         </section>
 
+        <section className="section">
+          <label className="label">Retro time</label>
+          <div className="chips">
+            {[0, 10, 20].map((value) => (
+              <button
+                key={value}
+                className={`chip ${retroTime === value ? "active" : ""}`}
+                onClick={() => {
+                  retroTouchedRef.current = true;
+                  setRetroTime(value);
+                }}
+                type="button"
+              >
+                {value}s
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section className="section actions">
           <button
-            className="btn primary"
-            onClick={startRecording}
-            disabled={loading || !selectedId}
+            className={`btn toggle ${status.is_recording ? "stop" : "start"}`}
+            onClick={toggleRecording}
+            disabled={loading || (!selectedId && !status.is_recording)}
           >
-            Start
-          </button>
-          <button className="btn ghost" onClick={stopRecording} disabled={loading}>
-            Stop
+            {status.is_recording ? "Stop" : "Start"}
           </button>
         </section>
 
@@ -130,8 +156,12 @@ export default function App() {
             <strong>{status.retro_enabled ? "Enabled" : "Disabled"}</strong>
           </div>
           <div className="stat">
-            <span>Pre seconds</span>
-            <strong>{status.pre_seconds}</strong>
+            <span>Retro selection</span>
+            <strong>{retroTime}s</strong>
+          </div>
+          <div className="stat">
+            <span>Buffer max</span>
+            <strong>{status.pre_seconds}s</strong>
           </div>
         </section>
 
