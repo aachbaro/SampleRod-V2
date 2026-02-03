@@ -28,6 +28,9 @@ export default function App() {
   const [renameId, setRenameId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [busyId, setBusyId] = useState(null);
+  const [playingId, setPlayingId] = useState(null);
+  const [audioState, setAudioState] = useState({});
+  const audioRefs = useRef({});
 
   const applyStatus = (data) => {
     setStatus(data);
@@ -78,6 +81,26 @@ export default function App() {
   const formatDuration = (value) => {
     if (value === null || value === undefined) return "";
     return `${Number(value).toFixed(1)}s`;
+  };
+
+  const formatClock = (seconds) => {
+    if (!isFinite(seconds)) return "0:00";
+    const s = Math.max(0, Math.floor(seconds));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, "0")}`;
+  };
+
+  const updateAudioState = (id, patch) => {
+    setAudioState((prev) => ({
+      ...prev,
+      [id]: {
+        current: 0,
+        duration: 0,
+        ...(prev[id] || {}),
+        ...patch,
+      },
+    }));
   };
 
   useEffect(() => {
@@ -203,6 +226,32 @@ export default function App() {
     }
   };
 
+  const togglePlay = async (sampleId) => {
+    const audio = audioRefs.current[sampleId];
+    if (!audio) return;
+
+    if (playingId && playingId !== sampleId) {
+      const prev = audioRefs.current[playingId];
+      if (prev) {
+        prev.pause();
+        prev.currentTime = 0;
+        updateAudioState(playingId, { current: 0 });
+      }
+    }
+
+    if (audio.paused) {
+      try {
+        await audio.play();
+        setPlayingId(sampleId);
+      } catch (err) {
+        setError(err.message || "Playback failed");
+      }
+    } else {
+      audio.pause();
+      setPlayingId(null);
+    }
+  };
+
   return (
     <div className="page">
       <div className="card">
@@ -235,7 +284,7 @@ export default function App() {
         <section className="section">
           <label className="label">Retro time</label>
           <div className="chips">
-            {[0, 10, 20].map((value) => (
+            {[0, 5, 10, 20].map((value) => (
               <button
                 key={value}
                 className={`chip ${retroTime === value ? "active" : ""}`}
@@ -316,39 +365,113 @@ export default function App() {
                   {formatDuration(samp.duration)} · {formatDate(samp.created_at)}
                 </div>
               </div>
-              <audio
-                className="history-audio"
-                controls
-                preload="none"
-                src={`/samples/${samp.id}/audio`}
-              />
+              <div className="history-audio-row">
+                <button
+                  className={`play-btn ${
+                    playingId === samp.id ? "pause" : "play"
+                  }`}
+                  onClick={() => togglePlay(samp.id)}
+                  aria-label={playingId === samp.id ? "Pause" : "Play"}
+                >
+                  {playingId === samp.id ? (
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="5" y="4" width="5" height="16" rx="1.5" />
+                      <rect x="14" y="4" width="5" height="16" rx="1.5" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M7 5v14l11-7z" />
+                    </svg>
+                  )}
+                </button>
+                <input
+                  className="progress"
+                  type="range"
+                  min="0"
+                  max={audioState[samp.id]?.duration || samp.duration || 1}
+                  step="0.01"
+                  value={audioState[samp.id]?.current || 0}
+                  onChange={(e) => {
+                    const audio = audioRefs.current[samp.id];
+                    const next = Number(e.target.value);
+                    if (audio) {
+                      audio.currentTime = next;
+                    }
+                    updateAudioState(samp.id, { current: next });
+                  }}
+                />
+                <div className="time">
+                  {formatClock(audioState[samp.id]?.current || 0)} /{" "}
+                  {formatClock(
+                    audioState[samp.id]?.duration || samp.duration || 0
+                  )}
+                </div>
+                <audio
+                  ref={(el) => {
+                    if (el) {
+                      audioRefs.current[samp.id] = el;
+                    }
+                  }}
+                  preload="metadata"
+                  src={`/samples/${samp.id}/audio`}
+                  onLoadedMetadata={(e) => {
+                    updateAudioState(samp.id, {
+                      duration: e.currentTarget.duration || 0,
+                    });
+                  }}
+                  onTimeUpdate={(e) => {
+                    updateAudioState(samp.id, {
+                      current: e.currentTarget.currentTime || 0,
+                    });
+                  }}
+                  onEnded={() => {
+                    setPlayingId(null);
+                    updateAudioState(samp.id, { current: 0 });
+                  }}
+                />
+              </div>
               {renameId === samp.id ? (
                 <div className="history-rename">
                   <button
-                    className="btn small"
+                    className="icon-btn"
                     onClick={() => saveRename(samp.id)}
                     disabled={busyId === samp.id}
+                    aria-label="Save"
                   >
-                    Save
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M9.2 16.2 5.5 12.5l-1.4 1.4 5.1 5.1L20 8.2l-1.4-1.4z" />
+                    </svg>
                   </button>
-                  <button className="btn small ghost" onClick={cancelRename}>
-                    Cancel
+                  <button
+                    className="icon-btn ghost"
+                    onClick={cancelRename}
+                    aria-label="Cancel"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z" />
+                    </svg>
                   </button>
                 </div>
               ) : (
                 <div className="history-actions">
                   <button
-                    className="btn small ghost"
+                    className="icon-btn ghost"
                     onClick={() => startRename(samp)}
+                    aria-label="Rename"
                   >
-                    Rename
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M3 17.3V21h3.7l10.9-10.9-3.7-3.7L3 17.3zm17.7-10.6c.4-.4.4-1 0-1.4L18.7 3.3c-.4-.4-1-.4-1.4 0l-2 2 3.7 3.7 2-2z" />
+                    </svg>
                   </button>
                   <button
-                    className="btn small danger"
+                    className="icon-btn danger"
                     onClick={() => deleteSample(samp.id)}
                     disabled={busyId === samp.id}
+                    aria-label="Delete"
                   >
-                    Delete
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
+                    </svg>
                   </button>
                 </div>
               )}
