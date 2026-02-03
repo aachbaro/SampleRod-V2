@@ -10,6 +10,7 @@
 # - Libraries: ajout/suppression/reorder.
 # - Normalization: auto-normalize + niveau LUFS.
 # - Display: pagination des samples.
+# - Remote control: toggle + port serveur HTTP.
 #
 # CE QUI RESTE A IMPLEMENTER (IDEES)
 # - Latence/buffer: taille de buffer, taille de bloc, device input/output.
@@ -35,6 +36,8 @@ from backend.models.SampleLibrary import SampleBank
 from backend.db import SessionLocal
 # soundcard: detection des devices audio (loopback)
 import soundcard as sc
+# Acces aux variables d'environnement
+import os
 # Notifications UI
 from backend.services.notification_service import NotificationType
 # Logging
@@ -52,6 +55,8 @@ class SettingsService(QObject):
     autoNormalizeToggled   = pyqtSignal(bool)
     normalizationLevelChanged = pyqtSignal(int)
     samplesPerPageChanged = pyqtSignal(int)
+    remoteControlToggled = pyqtSignal(bool)
+    remoteControlPortChanged = pyqtSignal(int)
 
     def __init__(self, app_context):
         super().__init__()
@@ -246,3 +251,28 @@ class SettingsService(QObject):
 
     def getSamplesPerPage(self) -> int:
         return self._qs.value("display/samples_per_page", 20, type=int)
+
+    # ------------------------------------------------------------------ Remote Control Settings
+    def isRemoteControlEnabled(self) -> bool:
+        """Retourne si le controle distant est actif (QSettings + fallback env)."""
+        default_enabled = os.getenv("REMOTE_CONTROL_ENABLED", "1").lower() not in ("0", "false", "no")
+        return self._qs.value("remote_control/enabled", default_enabled, type=bool)
+
+    def setRemoteControlEnabled(self, enabled: bool):
+        """Persiste le toggle du controle distant."""
+        self._qs.setValue("remote_control/enabled", enabled)
+        self.remoteControlToggled.emit(enabled)
+
+    def getRemoteControlPort(self) -> int:
+        """Port HTTP pour le controle distant (QSettings + fallback env)."""
+        env_port = os.getenv("REMOTE_CONTROL_PORT", "8765")
+        try:
+            default_port = int(env_port)
+        except ValueError:
+            default_port = 8765
+        return self._qs.value("remote_control/port", default_port, type=int)
+
+    def setRemoteControlPort(self, port: int):
+        """Persiste le port HTTP du controle distant."""
+        self._qs.setValue("remote_control/port", port)
+        self.remoteControlPortChanged.emit(port)

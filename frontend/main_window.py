@@ -24,6 +24,7 @@ from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
 from frontend.sample_gui.sample_list import SampleListWidget
 from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
+from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.directory_widget import DirectoryWidget
 
@@ -106,6 +107,7 @@ class MainWindow(QMainWindow):
         self.settings_retro_widget = RetroRecordingWidget(self.settings)
         self.audio_settings_widget = AudioSettingsWidget(self.app_context)
         self.display_settings_widget = DisplaySettingsWidget(self.settings)
+        self.remote_control_widget = RemoteControlSettingsWidget(self.app_context)
 
         # Section: bibliotheques (pleine largeur)
         libraries_group = self._make_settings_group(
@@ -139,12 +141,18 @@ class MainWindow(QMainWindow):
             "Sample rate, loopback et normalisation.",
             self.audio_settings_widget
         )
+        remote_group = self._make_settings_group(
+            "Controle distant",
+            "Piloter l'app depuis un navigateur (mobile) sur le meme reseau.",
+            self.remote_control_widget
+        )
 
         left_col.addWidget(retro_group)
         left_col.addWidget(display_group)
         left_col.addStretch()
 
         right_col.addWidget(audio_group)
+        right_col.addWidget(remote_group)
         right_col.addStretch()
 
         columns.addLayout(left_col, 1)
@@ -212,8 +220,7 @@ class MainWindow(QMainWindow):
     def _exit_procedure(self):
         """Actions de nettoyage avant fermeture"""
         logger.info("Fermeture de l'application proprement...")
-        if self.app_context.recorder.is_recording:
-            self.app_context.recorder.stop()
+        self.app_context.shutdown()
         # TODO: autres nettoyages (sauvegarde, etc.)
 
     def _increment_badge(self):

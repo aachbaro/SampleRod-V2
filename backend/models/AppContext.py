@@ -1,11 +1,30 @@
-# /backend/models/AppContext.py
-# Contexte applicatif et lecteur audio simple base sur pygame.
-# Ce fichier centralise l'instanciation des services et l'etat global.
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Contexte global qui instancie et expose les services principaux.
+# - Point d'entree pour le cycle de vie backend (start/stop).
+# - Fournit un lecteur audio simple (pygame) partage dans l'app.
+#
+# CE QUI EST DEJA EN PLACE
+# - Instanciation: SettingsService, RecorderService, SampleService, Notifications.
+# - AudioPlayer base sur pygame.mixer.music.
+# - RemoteControlService (serveur HTTP local) demarre au lancement si active.
+#
+# CE QUI RESTE A IMPLEMENTER (IDEES)
+# - Centraliser plus d'initialisation (db, cache, jobs).
+# - Gestion des erreurs de demarrage + retries.
+# - Telemetrie et health check global.
+#
+# NOTES
+# - AppContext.shutdown() doit etre appele a la fermeture de l'app.
+# -----------------------------------------------------------------------------
+# backend/models/AppContext.py
 
 # Utilitaires de gestion de chemins
 from pathlib import Path
 # Acces a la configuration du runtime Python (sys.path, etc.)
 import sys
+# Acces aux variables d'environnement
+import os
 # Journalisation pour tracer l'etat de l'appli
 import logging
 # Logger nomme pour isoler les messages du contexte applicatif
@@ -25,6 +44,7 @@ from backend.services.sample_service import SampleService
 from backend.services.sample_service import IntegrityCheckWorker
 from backend.services.notification_service import NotificationService
 from backend.services.directory_service import DirectoryService
+from backend.services.remote_control_service import RemoteControlService
 
 # Contexte global: instancie les services principaux de l'application.
 class AppContext:
@@ -54,6 +74,51 @@ class AppContext:
 
         # Service de gestion des samples (stockage, import, etc.)
         self.sample_store = SampleService(self)
+
+        # Service de controle a distance (serveur HTTP local)
+        self.remote_control = None
+        enabled = self.settings.isRemoteControlEnabled()
+        if enabled:
+            port = self.settings.getRemoteControlPort()
+            repo_root = Path(__file__).resolve().parents[2]
+            ui_root = repo_root / "frontend" / "remote_ui"
+            self.remote_control = RemoteControlService(
+                app_context=self,
+                host=os.getenv("REMOTE_CONTROL_HOST", "0.0.0.0"),
+                port=port,
+                allow_origin=os.getenv("REMOTE_CONTROL_CORS", "*"),
+                auth_token=os.getenv("REMOTE_CONTROL_TOKEN"),
+                ui_root=ui_root,
+                auto_build_ui=True,
+            )
+            try:
+                self.remote_control.start()
+            except Exception:
+                logger.exception("[AppContext] RemoteControlService: demarrage impossible")
+
+    def shutdown(self):
+        """Nettoie les ressources principales (serveur, recorder, audio)."""
+        logger.info("[AppContext] Shutdown...")
+        # 1) Arreter le serveur remote si actif
+        if self.remote_control and self.remote_control.is_running:
+            try:
+                self.remote_control.stop()
+            except Exception:
+                logger.exception("[AppContext] RemoteControlService: stop impossible")
+
+        # 2) Stop recorder + worker
+        try:
+            if self.recorder.is_recording:
+                self.recorder.stop()
+            self.recorder.shutdown()
+        except Exception:
+            logger.exception("[AppContext] RecorderService: shutdown impossible")
+
+        # 3) Libere le player
+        try:
+            self.audio_player.clear_audio()
+        except Exception:
+            logger.exception("[AppContext] AudioPlayer: clear impossible")
 
 
 
