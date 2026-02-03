@@ -24,7 +24,7 @@
 # DEPENDANCES
 # - PyQt6 (Qt, QListWidgetItem)
 # - pyqtgraph (InfiniteLine)
-# - qtawesome (icone marker mode)
+# - qtawesome (icones chargees par le UI builder)
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -32,7 +32,6 @@ from __future__ import annotations
 import logging
 import bisect
 import pyqtgraph as pg
-import qtawesome as qta
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QListWidgetItem
 
@@ -48,8 +47,9 @@ class WaveformMarkersController:
         """Active/desactive le mode marqueurs."""
         w = self.widget
         w.marker_mode = checked
-        color = "lightgreen" if checked else "lightgray"
-        w.marker_mode_button.setIcon(qta.icon("fa5s.map-marker-alt", color=color))
+        # Synchronise l'etat visuel du bouton (utile pour les raccourcis clavier)
+        if w.marker_mode_button.isChecked() != checked:
+            w.marker_mode_button.setChecked(checked)
 
     def add_marker(self, t: float):
         """Ajoute un marqueur et met a jour la liste."""

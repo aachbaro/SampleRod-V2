@@ -23,7 +23,7 @@
 # DEPENDANCES
 # - sounddevice (stream audio)
 # - numpy (buffering, slicing)
-# - qtawesome (mise a jour de l'icone loop)
+# - qtawesome (icones chargees par le UI builder)
 #
 # IDEES / TODO
 # - Fade in/out pour eviter les clicks en debut/fin.
@@ -37,7 +37,6 @@ from __future__ import annotations
 import logging
 import numpy as np
 import sounddevice as sd
-import qtawesome as qta
 
 logger = logging.getLogger("waveform_playback")
 
@@ -182,5 +181,3 @@ class WaveformPlaybackController:
         """Active/desactive le mode boucle."""
         w = self.widget
         w.loop_enabled = checked
-        color = "lightgreen" if checked else "lightgray"
-        w.loop_button.setIcon(qta.icon("fa5s.sync", color=color))

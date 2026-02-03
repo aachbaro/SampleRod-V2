@@ -25,15 +25,114 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt6.QtCore import Qt, QTimer, QSize, QVariantAnimation
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QVBoxLayout,
+    QHBoxLayout,
+    QToolButton,
+    QFrame,
+)
 import pyqtgraph as pg
 import qtawesome as qta
 
 from ..marker_manager import MarkerListWidget
 
 
+class HoverIconButton(QToolButton):
+    """
+    Bouton rond a icone avec effet hover doux.
+    - icon_color_normal : couleur par defaut de l'icone
+    - icon_color_hover  : couleur de l'icone quand la souris passe dessus
+    - border_color      : couleur de la bordure du bouton
+    Le background passe progressivement a blanc au hover, avec une animation.
+    """
+    def __init__(
+        self,
+        icon_name: str,
+        size: int,
+        icon_size: int,
+        icon_color_normal: str,
+        icon_color_hover: str,
+        border_color: str = "#2A2A2A",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setProperty("iconOnly", True)
+        self.setFixedSize(size, size)
+        self.setIconSize(QSize(icon_size, icon_size))
+        self.setContentsMargins(0, 0, 0, 0)
+        self._radius = size // 2
+        self._icon_normal = qta.icon(icon_name, color=icon_color_normal)
+        self._icon_hover = qta.icon(icon_name, color=icon_color_hover)
+        self._border_color = border_color
+        self._bg_normal = QColor(255, 255, 255, 0)
+        self._bg_hover = QColor(255, 255, 255, 255)
+        self._current_bg = QColor(self._bg_normal)
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(140)
+        self._anim.valueChanged.connect(self._apply_bg)
+        self.setIcon(self._icon_normal)
+        self.toggled.connect(self._on_toggled)
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.setAutoRaise(False)
+        self._apply_style()
+
+    def enterEvent(self, ev):
+        # Au hover: icone plus sombre + fond blanc (animation)
+        if not self.isChecked():
+            self.setIcon(self._icon_hover)
+            self._animate(True)
+        super().enterEvent(ev)
+
+    def leaveEvent(self, ev):
+        # Quand la souris sort: retour au fond transparent + icone claire
+        if not self.isChecked():
+            self.setIcon(self._icon_normal)
+            self._animate(False)
+        super().leaveEvent(ev)
+
+    def _on_toggled(self, checked: bool):
+        # Si le bouton est "toggle" (checkable), on force le style blanc
+        if checked:
+            self._current_bg = QColor(self._bg_hover)
+            self.setIcon(self._icon_hover)
+        else:
+            self._current_bg = QColor(self._bg_normal)
+            self.setIcon(self._icon_normal)
+        self._apply_style()
+
+    def _animate(self, hover: bool):
+        self._anim.stop()
+        start = self._current_bg
+        end = self._bg_hover if hover else self._bg_normal
+        self._anim.setStartValue(start)
+        self._anim.setEndValue(end)
+        self._anim.start()
+
+    def _apply_bg(self, color: QColor):
+        self._current_bg = color
+        self._apply_style()
+
+    def _apply_style(self):
+        # Applique le style (bordure + background + rayon)
+        bg = self._current_bg if not self.isChecked() else self._bg_hover
+        border = self._border_color
+        rgba = f"rgba({bg.red()}, {bg.green()}, {bg.blue()}, {bg.alpha()})"
+        self.setStyleSheet(
+            "border: 1px solid %s; border-radius: %dpx; background: %s; padding: 0; margin: 0;"
+            % (border, self._radius, rgba)
+        )
+
+
 class WaveformUIBuilder:
+    """
+    Construit toute l'UI du WaveformWidget.
+    Pour modifier l'apparence:
+    - tailles / couleurs des boutons: ici dans build()
+    - styles globaux: feuille de style en bas
+    - hauteur du plot: w.plot.setFixedHeight(...)
+    """
     def __init__(self, widget, viewbox_cls):
         self.widget = widget
         self.viewbox_cls = viewbox_cls
@@ -41,98 +140,174 @@ class WaveformUIBuilder:
     def build(self):
         w = self.widget
 
+        w.setObjectName("WaveformWidget")
         w.layout = QVBoxLayout(w)
+        w.layout.setContentsMargins(6, 6, 6, 6)
+        w.layout.setSpacing(0)
 
-        # — Save (enregistre l'état actuel de waveform_data)
-        save_layout = QHBoxLayout()
-        save_layout.addStretch()
-        w.save_button = QPushButton()
-        w.save_button.setIcon(qta.icon("fa5s.save", color="lightgray"))
+        # ----- Conteneur principal (tout l'editor est dans ce bloc)
+        editor = QFrame()
+        editor.setObjectName("WaveformEditor")
+        editor_layout = QVBoxLayout(editor)
+        editor_layout.setContentsMargins(10, 10, 10, 10)
+        editor_layout.setSpacing(6)
+        w.layout.addWidget(editor)
+
+        # ----- Barre d'outils (en haut)
+        # — Toolbar (compact)
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setSpacing(8)
+
+        toolbar_layout.addStretch()
+
+        # Boutons petits pour save / undo / redo
+        # Save
+        w.save_button = HoverIconButton(
+            "fa5s.save",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#E6E6E6",
+            icon_color_hover="#1B1B1B",
+        )
         w.save_button.setToolTip("Save waveform - ctrl + s")
-        w.save_button.setFixedSize(30, 30)
         w.save_button.clicked.connect(w.onSaveClicked)
-        save_layout.addWidget(w.save_button)
-        w.layout.addLayout(save_layout)
+        toolbar_layout.addWidget(w.save_button)
 
-        # — Undo / Redo au-dessus de la waveform
-        h_hist = QHBoxLayout()
-        # Undo
-        w.undo_button = QPushButton()
-        w.undo_button.setFixedSize(30, 30)
-        w.undo_button.setIcon(qta.icon("fa5s.undo", color="lightgray"))
+        # Undo / Redo
+        w.undo_button = HoverIconButton(
+            "fa5s.undo",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#E0E0E0",
+            icon_color_hover="#1B1B1B",
+        )
         w.undo_button.setToolTip("Undo - ctrl + z")
         w.undo_button.clicked.connect(w.undo)
-        h_hist.addWidget(w.undo_button)
-        # Redo
-        w.redo_button = QPushButton()
-        w.redo_button.setFixedSize(30, 30)
-        w.redo_button.setIcon(qta.icon("fa5s.redo", color="lightgray"))
+        toolbar_layout.addWidget(w.undo_button)
+
+        w.redo_button = HoverIconButton(
+            "fa5s.redo",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#E0E0E0",
+            icon_color_hover="#1B1B1B",
+        )
         w.redo_button.setToolTip("Redo - ctrl + shift + z")
         w.redo_button.clicked.connect(w.redo)
-        h_hist.addWidget(w.redo_button)
+        toolbar_layout.addWidget(w.redo_button)
 
-        # on ajoute la barre d'historique avant la waveform
-        w.layout.addLayout(h_hist)
+        editor_layout.addLayout(toolbar_layout)
 
+        # ----- Waveform plot (zone centrale)
         # — Waveform plot
         w.plot = pg.PlotWidget(viewBox=self.viewbox_cls())
-        w.plot.setFixedHeight(150)
-        w.plot.showGrid(x=True, y=True, alpha=0.3)
-        w.plot.setBackground("#222")
+        w.plot.setFixedHeight(158)
+        w.plot.showGrid(x=True, y=True, alpha=0.15)
+        w.plot.setBackground("#1B1B1B")
         w.plot.hideAxis("left")
         w.plot.setMouseEnabled(x=True, y=False)
 
         # Courbes pour chaque canal (gauche et droite)
-        w.curve_left = pg.PlotDataItem(pen=pg.mkPen("w", width=1))
-        w.curve_right = pg.PlotDataItem(pen=pg.mkPen("#DAA520", width=1))
+        w.curve_left = pg.PlotDataItem(pen=pg.mkPen("#E6E6E6", width=1))
+        w.curve_right = pg.PlotDataItem(pen=pg.mkPen("#B0B0B0", width=1))
         w.plot.addItem(w.curve_right)
         w.plot.addItem(w.curve_left)
 
         # Pour compatibilité mono, conserver self.curve
-        w.curve = pg.PlotDataItem(pen=pg.mkPen("w", width=1))
+        w.curve = pg.PlotDataItem(pen=pg.mkPen("#E6E6E6", width=1))
         w.plot.addItem(w.curve)
 
         # recalcule l'enveloppe lorsqu'on zoome ou qu'on pan
         vb = w.plot.getViewBox()
         vb.sigXRangeChanged.connect(w._on_view_range_changed)
 
-        w.layout.addWidget(w.plot)
+        editor_layout.addWidget(w.plot)
 
+        # ----- Barre de controles (play/pause/stop + toggles)
         # — Contrôles
-        h = QHBoxLayout()
-        for ico, cb, tip in [
-            ("fa5s.play", w.play_from_start, "Play - ctrl + space"),
-            ("fa5s.pause", w.pause_or_resume, "Pause / Resume - space"),
-            ("fa5s.stop", w.stop_and_reset, "Stop and Reset - alt + space"),
-        ]:
-            b = QPushButton()
-            b.setFixedSize(30, 30)
-            b.setIcon(qta.icon(ico, color="lightgray"))
-            b.clicked.connect(cb)
-            b.setToolTip(tip)
-            h.addWidget(b)
+        controls_layout = QHBoxLayout()
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
 
-        # Loop
-        w.loop_button = QPushButton()
+        play_layout = QHBoxLayout()
+        play_layout.setSpacing(6)
+
+        # Play / Pause / Stop (taille + icones)
+        w.play_button = HoverIconButton(
+            "fa5s.play",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#EDEDED",
+            icon_color_hover="#1B1B1B",
+        )
+        w.play_button.setProperty("role", "primary")
+        w.play_button.clicked.connect(w.play_from_start)
+        w.play_button.setToolTip("Play - ctrl + space")
+        play_layout.addWidget(w.play_button)
+
+        w.pause_button = HoverIconButton(
+            "fa5s.pause",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#E0E0E0",
+            icon_color_hover="#1B1B1B",
+        )
+        w.pause_button.clicked.connect(w.pause_or_resume)
+        w.pause_button.setToolTip("Pause / Resume - space")
+        play_layout.addWidget(w.pause_button)
+
+        w.stop_button = HoverIconButton(
+            "fa5s.stop",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#E0E0E0",
+            icon_color_hover="#1B1B1B",
+        )
+        w.stop_button.clicked.connect(w.stop_and_reset)
+        w.stop_button.setToolTip("Stop and Reset - alt + space")
+        play_layout.addWidget(w.stop_button)
+
+        controls_layout.addLayout(play_layout)
+        controls_layout.addStretch()
+
+        # Toggles (Loop / Marker Mode)
+        # Toggles
+        toggles = QHBoxLayout()
+        toggles.setSpacing(6)
+
+        w.loop_button = HoverIconButton(
+            "fa5s.sync",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#D2D2D2",
+            icon_color_hover="#1B1B1B",
+        )
         w.loop_button.setCheckable(True)
-        w.loop_button.setFixedSize(30, 30)
-        w.loop_button.setIcon(qta.icon("fa5s.sync", color="lightgray"))
+        w.loop_button.setProperty("toggle", True)
         w.loop_button.toggled.connect(w.toggle_loop)
         w.loop_button.setToolTip("Loop ON/OF - ctrl + l")
-        h.addWidget(w.loop_button)
+        toggles.addWidget(w.loop_button)
         w.loop_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         # Marker Mode
-        w.marker_mode_button = QPushButton()
+        w.marker_mode_button = HoverIconButton(
+            "fa5s.map-marker-alt",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#D2D2D2",
+            icon_color_hover="#1B1B1B",
+        )
         w.marker_mode_button.setCheckable(True)
-        w.marker_mode_button.setFixedSize(30, 30)
-        w.marker_mode_button.setIcon(qta.icon("fa5s.map-marker-alt", color="lightgray"))
+        w.marker_mode_button.setProperty("toggle", True)
         w.marker_mode_button.setToolTip("Marker Mode ON/OFF - ctrl + g")
         w.marker_mode_button.toggled.connect(w.toggle_marker_mode)
-        h.addWidget(w.marker_mode_button)
+        toggles.addWidget(w.marker_mode_button)
 
-        w.layout.addLayout(h)
+        controls_layout.addLayout(toggles)
+        editor_layout.addLayout(controls_layout)
 
+        # ----- Read head + timer (logic audio)
         # — Read head + timer
         w.read_head = pg.InfiniteLine(angle=90, pen=pg.mkPen("r", width=2))
         w.plot.addItem(w.read_head)
@@ -141,21 +316,49 @@ class WaveformUIBuilder:
         w.stop_timer_signal.connect(w.timer.stop)
         w.timer.start(5)
 
+        # ----- Liste des markers (en bas)
         # — Liste des marqueurs (visibilité gérée après instanciation de marker_manager)
         w.marker_list = MarkerListWidget(w)
+        w.marker_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         w.marker_list.itemClicked.connect(w.on_marker_list_clicked)
         w.marker_list.itemDoubleClicked.connect(w.on_marker_list_double_clicked)
-        w.layout.addWidget(w.marker_list)
+        editor_layout.addWidget(w.marker_list)
 
+        # ----- EventFilter pour les interactions (clic / drag / raccourcis)
         # — Install filter une seule fois
         w.plot.getViewBox().scene().installEventFilter(w)
 
+        # ----- Styles globaux de l'editor
         w.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         w.setStyleSheet("""
-            WaveformWidget[focused="true"] {
-                border: 2px solid #2979ff;
+            QWidget#WaveformWidget {
+                background: transparent;
+                border: none;
             }
-            WaveformWidget[focused="false"] {
-                border: 1px solid #ccc;
+            QFrame#WaveformEditor {
+                background: #1B1B1B;
+                border: 1px solid #2A2A2A;
+                border-radius: 12px;
+            }
+            WaveformWidget[focused="true"] QFrame#WaveformEditor {
+                border: 1px solid #3A3A3A;
+            }
+            QListWidget {
+                background: #1B1B1B;
+                border: 1px solid #2A2A2A;
+                border-radius: 8px;
+                padding: 4px;
+                color: #D6D6D6;
+            }
+            QListWidget::item {
+                padding: 4px 6px;
+                border-radius: 6px;
+            }
+            QListWidget::item:selected {
+                background: #262626;
+                color: #FFFFFF;
+            }
+            QListWidget::item:focus {
+                outline: none;
             }
         """)
