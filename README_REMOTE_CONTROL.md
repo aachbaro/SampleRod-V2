@@ -47,6 +47,7 @@ depuis un telephone sur le meme reseau.
 - `GET /libraries` -> `{ libraries: [ {id, path, position} ] }`
 - `GET /samples/history` -> `{ samples: [...] }` (historique session)
 - `GET /samples/{id}/audio` -> flux audio (lecture)
+- `GET /samples/{id}/download` -> telechargement du fichier
 - `POST /samples/{id}/rename` -> `{ name }`
 - `POST /samples/{id}/delete`
 - `POST /record/start` -> body JSON:

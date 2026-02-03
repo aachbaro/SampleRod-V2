@@ -408,6 +408,20 @@ class RemoteControlService:
             self._send_file(handler, Path(sample.path))
             return True
 
+        # /samples/{id}/download
+        if len(parts) == 3 and parts[2] == "download" and method == "GET":
+            sample_id = self._parse_sample_id(parts[1])
+            if sample_id is None:
+                self._send_json(handler, 400, {"error": "invalid_sample_id"})
+                return True
+            sample = self._get_sample_by_id(sample_id)
+            if not sample or not os.path.isfile(sample.path):
+                self._send_json(handler, 404, {"error": "sample_not_found"})
+                return True
+            filename = os.path.basename(sample.path)
+            self._send_file(handler, Path(sample.path), download_name=filename)
+            return True
+
         # /samples/{id}/rename
         if len(parts) == 3 and parts[2] == "rename" and method == "POST":
             sample_id = self._parse_sample_id(parts[1])
@@ -710,7 +724,12 @@ class RemoteControlService:
         self._send_file(handler, target)
         return True
 
-    def _send_file(self, handler: BaseHTTPRequestHandler, path: Path) -> None:
+    def _send_file(
+        self,
+        handler: BaseHTTPRequestHandler,
+        path: Path,
+        download_name: Optional[str] = None,
+    ) -> None:
         """Envoie un fichier statique avec le bon Content-Type."""
         try:
             data = path.read_bytes()
@@ -725,6 +744,11 @@ class RemoteControlService:
         handler.send_response(200)
         handler.send_header("Content-Type", mime)
         handler.send_header("Content-Length", str(len(data)))
+        if download_name:
+            handler.send_header(
+                "Content-Disposition",
+                f'attachment; filename="{download_name}"',
+            )
         self._send_cors_headers(handler)
         handler.end_headers()
         handler.wfile.write(data)

@@ -463,6 +463,16 @@ export default function App() {
                       <path d="M3 17.3V21h3.7l10.9-10.9-3.7-3.7L3 17.3zm17.7-10.6c.4-.4.4-1 0-1.4L18.7 3.3c-.4-.4-1-.4-1.4 0l-2 2 3.7 3.7 2-2z" />
                     </svg>
                   </button>
+                  <a
+                    className="icon-btn ghost"
+                    href={`/samples/${samp.id}/download`}
+                    download
+                    aria-label="Download"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 3v10.2l3.3-3.3 1.4 1.4-5.7 5.7-5.7-5.7 1.4-1.4 3.3 3.3V3h2zm-7 15h14v2H5v-2z" />
+                    </svg>
+                  </a>
                   <button
                     className="icon-btn danger"
                     onClick={() => deleteSample(samp.id)}

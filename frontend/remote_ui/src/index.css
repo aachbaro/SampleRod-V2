@@ -146,6 +146,7 @@ h1 {
   background: #111827;
   color: #ffffff;
   cursor: pointer;
+  text-decoration: none;
 }
 
 .icon-btn svg {
