@@ -11,10 +11,12 @@
 # - Selection par region (LinearRegionItem) + markers (add/remove/move).
 # - Mode marker (toggle) et gestion de la liste de markers.
 # - Playback audio avec loop, pause, stop, play from start.
-# - Playback/gestes/region extraits en controllers:
+# - Playback/gestes/region/markers/renderer extraits en controllers:
 #   - WaveformPlaybackController (audio)
 #   - WaveformInteractionsController (events)
 #   - WaveformRegionController (selection, cut, export)
+#   - WaveformMarkersController (markers + liste)
+#   - WaveformRenderer (rendu waveform)
 # - Export d'une region en nouveau WAV + ajout au SampleService.
 # - Historique d'actions (undo/redo) via HistoryStack.
 # - Drag & drop de segments (slice drag).
@@ -39,7 +41,7 @@
 # - Clic molette / gestures coherents avec le reste de l'app.
 # - Edition non destructive / versions.
 # - Metriques (RMS, peak, LUFS) et overlays.
-# - Continuer la decoupe (renderer/commands) pour alleger ce fichier.
+# - Continuer la decoupe (commands/toolbar) pour alleger ce fichier.
 #
 # NOTES
 # - Ce fichier est long car il centralise: UI + logique audio + interactions.
@@ -50,7 +52,7 @@
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QListWidgetItem, QMenu, QMessageBox
+    QMenu, QMessageBox
 )
 import logging
 logger = logging.getLogger("wave_form")
@@ -58,7 +60,6 @@ logger = logging.getLogger("wave_form")
 from PyQt6.QtGui import QCursor, QMouseEvent, QDrag
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QEvent, QMimeData
 import pyqtgraph as pg
-import numpy as np
 import qtawesome as qta
 
 import os
@@ -74,6 +75,8 @@ from .waveform.history_stack import HistoryStack
 from .waveform.waveform_interactions import WaveformInteractionsController
 from .waveform.waveform_playback import WaveformPlaybackController
 from .waveform.waveform_region import WaveformRegionController
+from .waveform.waveform_markers import WaveformMarkersController
+from .waveform.waveform_renderer import WaveformRenderer
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
     def __init__(self, *args, **kwargs):
@@ -167,11 +170,13 @@ class WaveformWidget(QWidget):
 
         # construction de l'UI (définit notamment self.plot)
         self._build_ui()
+        self.renderer = WaveformRenderer(self)
         self.region_controller = WaveformRegionController(self, ContextMenuLinearRegionItem)
         self.playback = WaveformPlaybackController(self)
         self.interactions = WaveformInteractionsController(self, ContextMenuLinearRegionItem)
         # gestion des marqueurs via un composant dédié, APRES avoir défini self.plot
         self.marker_manager = MarkerManager(self)
+        self.marker_controller = WaveformMarkersController(self, ContextMenuLinearRegionItem)
         # affichage initial de la liste de marqueurs
         if not self.marker_manager.markers:
             self.marker_list.hide()
@@ -364,62 +369,13 @@ class WaveformWidget(QWidget):
         self._draw_waveform()
 
     def _draw_waveform(self):
-        """Recalcule l'enveloppe sur la portion actuellement visible."""
-        vb = self.plot.getViewBox()
-        x0, x1 = vb.viewRange()[0]
-        self._on_view_range_changed(vb, (x0, x1))
+        self.renderer.draw_waveform()
 
     def _on_view_range_changed(self, view_box, range):
-        """Update the displayed envelope when the view range changes."""
-        if self.waveform_data is None or self.sample_rate is None:
-            return
-
-        x0, x1 = range
-        i0 = max(0, int(x0 * self.sample_rate))
-        i1 = min(len(self.waveform_data), int(x1 * self.sample_rate))
-
-        if self.is_stereo:
-            # Pour chaque canal, on calcule min/max par bloc et on trace sur la courbe correspondante
-            for idx, curve in enumerate((self.curve_left, self.curve_right)):
-                segment = self.waveform_data[i0:i1, idx]
-                if len(segment) == 0:
-                    curve.setData([], [])
-                    continue
-
-                width    = self.plot.width() or 800
-                step     = max(1, len(segment) // width)
-                n_blocks = len(segment) // step
-                seg      = segment[: n_blocks * step].reshape(n_blocks, step)
-                mins     = seg.min(axis=1)
-                maxs     = seg.max(axis=1)
-                xs       = np.linspace(i0 / self.sample_rate, i1 / self.sample_rate, n_blocks)
-
-                X_poly = np.concatenate([xs, xs[::-1]])
-                Y_poly = np.concatenate([maxs, mins[::-1]])
-                curve.setData(X_poly, Y_poly)
-        else:
-            segment = self.waveform_data[i0:i1]
-            if len(segment) == 0:
-                self.curve.setData([], [])
-                return
-
-            width    = self.plot.width() or 800
-            step     = max(1, len(segment) // width)
-            n_blocks = len(segment) // step
-            seg      = segment[: n_blocks * step].reshape(n_blocks, step)
-            mins     = seg.min(axis=1)
-            maxs     = seg.max(axis=1)
-            xs       = np.linspace(i0 / self.sample_rate, i1 / self.sample_rate, n_blocks)
-
-            X_poly = np.concatenate([xs, xs[::-1]])
-            Y_poly = np.concatenate([maxs, mins[::-1]])
-            self.curve.setData(X_poly, Y_poly)
-        self.read_head.setPos(self.current_time)
+        self.renderer.on_view_range_changed(view_box, range)
 
     def _redraw_all(self):
-        self._draw_waveform()
-        for line in self.marker_lines.values():
-            self.plot.addItem(line)
+        self.renderer.redraw_all()
 
 # ———————————————————————————————————————————————————— Navigation   -————————————————————————————————————————————————————
 
@@ -432,96 +388,35 @@ class WaveformWidget(QWidget):
             pg.ViewBox.wheelEvent(vb, ev)
 
     def toggle_marker_mode(self, checked: bool):
-        """Active/désactive le mode marqueurs."""
-        self.marker_mode = checked
-        c = 'lightgreen' if checked else 'lightgray'
-        self.marker_mode_button.setIcon(qta.icon('fa5s.map-marker-alt', color=c))
+        self.marker_controller.toggle_marker_mode(checked)
 
 # ——————————————————————————————————————————————————— Marqueurs —————————————————————————————————————————————————————
 
     def add_marker(self, t: float):
-        """Ajoute un marqueur et met à jour la liste."""
-        # Sécurité : ne pas ajouter si un marker existe déjà ici
-        # (on compare avec une petite tolérance pour les floats)
-        tol = 1e-6
-        if any(abs(existing - t) < tol for existing in self.markers):
-            return
-        self.marker_manager.add_marker(t)
-        self._refresh_marker_list()
+        self.marker_controller.add_marker(t)
 
     def on_marker_moved(self, line: pg.InfiniteLine):
-        self.marker_manager.on_marker_moved(line)
+        self.marker_controller.on_marker_moved(line)
 
     def _on_marker_move_finished(self, line):
-        self.marker_manager.on_marker_move_finished(line)
+        self.marker_controller._on_marker_move_finished(line)
 
     def remove_marker(self, t: float):
-        """Supprime un marqueur et met à jour la liste."""
-        self.marker_manager.remove_marker(t)
-        # on rafraîchit et on masque la liste si nécessaire
-        self._refresh_marker_list()
+        self.marker_controller.remove_marker(t)
 
-    def on_marker_list_clicked(self, item: QListWidgetItem):
-        payload = item.data(Qt.ItemDataRole.UserRole)
-        t = payload.get("time") if isinstance(payload, dict) else payload
-        # trouve l'indice exact
-        idx = self.markers.index(t)
-        self.current_marker_idx = idx
-        # next bound
-        if idx+1 < len(self.markers):
-            t2 = self.markers[idx+1]
-        else:
-            t2 = self.duration
+    def on_marker_list_clicked(self, item):
+        self.marker_controller.on_marker_list_clicked(item)
 
-        # supprime l'ancienne région
-        if self.region:
-            self.plot.removeItem(self.region)
-        # crée la nouvelle région
-        self.region = ContextMenuLinearRegionItem([t, t2],
-                                          brush=pg.mkBrush(255,255,255,40),
-                                          pen=pg.mkPen('c', width=1))
-        self.region.setZValue(1) 
-        self.region.setBounds([0, self.duration])
-        # self.region.sigContextMenuRequested.connect(self._on_region_context_menu)
-        self.region.sigRegionChangeFinished.connect(self.on_region_changed)
-        self.region._parent = self
-        self.plot.addItem(self.region)
-
-        # mets à jour play_start / play_end et place la tête de lecture
-        self.play_start, self.play_end = t, t2
-        self.read_head.setPos(t)
-        logger.info(f"Région mise à jour: {t:.3f}s → {t2:.3f}s")
-
-    def on_marker_list_double_clicked(self, item: QListWidgetItem):
-        payload = item.data(Qt.ItemDataRole.UserRole)
-        t = payload.get("time") if isinstance(payload, dict) else payload
-        self.remove_marker(t)
+    def on_marker_list_double_clicked(self, item):
+        self.marker_controller.on_marker_list_double_clicked(item)
 
     def _refresh_marker_list(self):
-        self.marker_manager.refresh_marker_list()
-        # montrer/cacher automatiquement selon qu'il y a des marqueurs
-        if self.marker_manager.markers:
-            self.marker_list.show()
-        else:
-            self.marker_list.hide()
+        self.marker_controller._refresh_marker_list()
 
 # ——————————————————————————————————————— region et dash     ——————————————————————————————————————————————————————
 
     def _set_marker(self, x):
-        # on détruit la région si elle existait
-        if self.region:
-            self.plot.removeItem(self.region)
-            self.region = None
-
-        # pose du marker (visuel uniquement — ne modifie plus play_start/play_end)
-        logger.info(f"Marqueur placé à {x:.3f}s")
-        if self.marker:
-            self.plot.removeItem(self.marker)
-        self.marker = pg.InfiniteLine(
-            pos=x, angle=90,
-            pen=pg.mkPen('b', width=1, style=Qt.PenStyle.DashLine)
-        )
-        self.plot.addItem(self.marker)
+        self.marker_controller._set_marker(x)
 
     def on_region_changed(self):
         self.region_controller.on_region_changed()
@@ -540,15 +435,7 @@ class WaveformWidget(QWidget):
         self.region_controller._undo_cut(cmd)
 
     def _create_marker_line(self, t):
-        """Créer la ligne d’un marker sans touch­er à l’historique."""
-        import bisect
-        bisect.insort(self.markers, t)
-        line = pg.InfiniteLine(pos=t, angle=90, pen=pg.mkPen('y', width=2))
-        line.setMovable(True)
-        line.old_pos = t
-        line.sigPositionChanged.connect(lambda _, l=line: self.on_marker_moved(l))
-        line.sigPositionChangeFinished.connect(lambda _, l=line: self._on_marker_move_finished(l))
-        self.marker_lines[t] = line
+        self.marker_controller._create_marker_line(t)
 
     def _export_region(self, start, end):
         self.region_controller._export_region(start, end)
