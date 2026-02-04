@@ -84,6 +84,12 @@ class SampleCardUIBuilder:
             color: #e6e6e6;
             font-size: 11px;
         }
+        QLabel#IdChip {
+            background-color: #2a2a2a;
+            color: #cfcfcf;
+            border-radius: 10px;
+            padding: 2px 10px;
+        }
         QLineEdit#RenameInput {
             background-color: #2a2a2a;
             color: #ffffff;
@@ -276,14 +282,7 @@ class SampleCardUIBuilder:
         details_layout = QHBoxLayout()
         details_layout.setSpacing(10)
 
-        folder_label = QLabel("Dossier")
-        folder_label.setObjectName("MetaLabel")
-        folder_row = QHBoxLayout()
-        folder_row.setSpacing(6)
-        folder_row.addWidget(folder_label)
-        folder_row.addWidget(c.change_dir_combobox)
-
-        details_layout.addLayout(folder_row)
+        details_layout.addWidget(c.change_dir_combobox)
         details_layout.addSpacing(6)
         details_layout.addWidget(c.length_label)
         details_layout.addWidget(c.date_label)
@@ -300,10 +299,15 @@ class SampleCardUIBuilder:
 
         main_layout.addLayout(c.waveform_layout)
 
-        c.id_label = QLabel(f"ID: {c.sample.id}", c)
-        c.id_label.setObjectName("MetaLabel")
-        c.id_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-        main_layout.addWidget(c.id_label)
+        id_row = QHBoxLayout()
+        id_row.addStretch()
+        c.id_label = QLabel(f"{c.sample.id}", c)
+        c.id_label.setObjectName("IdChip")
+        c.id_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c.id_label.setFixedHeight(22)
+        id_row.addWidget(c.id_label)
+        id_row.addStretch()
+        main_layout.addLayout(id_row)
 
         # Masquer les champs de renommage par defaut
         c.rename_input.setVisible(False)
@@ -316,17 +320,20 @@ class SampleCardUIBuilder:
         c.playback_slider.setStyleSheet("""
             QSlider::groove:horizontal {
                 height: 6px;
-                background: #e2e2e2;
+                background: #2f2f2f;
+            }
+            QSlider::sub-page:horizontal {
+                background: #8e8e8e;
             }
             QSlider::groove:horizontal:add-page {
-                background: #e2e2e2;
+                background: #2f2f2f;
             }
             QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
-                border: 1px solid #5c5c5c;
-                width: 18px;
-                margin: -2px 0;
-                border-radius: 3px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b0b0b0, stop:1 #7e7e7e);
+                border: 1px solid #4a4a4a;
+                width: 12px;
+                margin: -3px 0;
+                border-radius: 6px;
             }
         """)
 
