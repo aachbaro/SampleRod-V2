@@ -84,7 +84,14 @@ class SampleCardHeaderActions:
         if c.app_context.audio_player.current_sample_id == c.sample.id:
             try:
                 c.app_context.audio_player.clear_audio()
-                c.play_button.setIcon(qta.icon("fa5s.play", color="lightgray"))
+                if hasattr(c.play_button, "set_icon_pair"):
+                    c.play_button.set_icon_pair(
+                        "fa5s.play",
+                        icon_color_normal="#cfcfcf",
+                        icon_color_hover="#121212",
+                    )
+                else:
+                    c.play_button.setIcon(qta.icon("fa5s.play", color="lightgray"))
             except Exception:
                 pass
         c.deleteSample.emit(c.sample.id)
@@ -98,7 +105,14 @@ class SampleCardHeaderActions:
         if c.app_context.audio_player.current_sample_id == c.sample.id:
             try:
                 c.app_context.audio_player.clear_audio()
-                c.play_button.setIcon(qta.icon("fa5s.play", color="lightgray"))
+                if hasattr(c.play_button, "set_icon_pair"):
+                    c.play_button.set_icon_pair(
+                        "fa5s.play",
+                        icon_color_normal="#cfcfcf",
+                        icon_color_hover="#121212",
+                    )
+                else:
+                    c.play_button.setIcon(qta.icon("fa5s.play", color="lightgray"))
             except Exception:
                 pass
         c.removeFromHistory.emit(c.sample.id)

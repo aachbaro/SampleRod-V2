@@ -63,8 +63,10 @@ class HoverIconButton(QToolButton):
         self.setIconSize(QSize(icon_size, icon_size))
         self.setContentsMargins(0, 0, 0, 0)
         self._radius = size // 2
-        self._icon_normal = qta.icon(icon_name, color=icon_color_normal)
-        self._icon_hover = qta.icon(icon_name, color=icon_color_hover)
+        self._icon_color_normal = icon_color_normal
+        self._icon_color_hover = icon_color_hover
+        self._icon_normal = qta.icon(icon_name, color=self._icon_color_normal)
+        self._icon_hover = qta.icon(icon_name, color=self._icon_color_hover)
         self._border_color = border_color
         self._bg_normal = QColor(255, 255, 255, 0)
         self._bg_hover = QColor(255, 255, 255, 255)
@@ -77,6 +79,25 @@ class HoverIconButton(QToolButton):
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.setAutoRaise(False)
         self._apply_style()
+
+    def set_icon_pair(
+        self,
+        icon_name: str,
+        icon_color_normal: str | None = None,
+        icon_color_hover: str | None = None,
+    ):
+        """
+        Met a jour l'icone (et optionnellement les couleurs) tout en gardant
+        le comportement hover/checked coherent.
+        """
+        if icon_color_normal is not None:
+            self._icon_color_normal = icon_color_normal
+        if icon_color_hover is not None:
+            self._icon_color_hover = icon_color_hover
+
+        self._icon_normal = qta.icon(icon_name, color=self._icon_color_normal)
+        self._icon_hover = qta.icon(icon_name, color=self._icon_color_hover)
+        self.setIcon(self._icon_hover if self.isChecked() else self._icon_normal)
 
     def enterEvent(self, ev):
         # Au hover: icone plus sombre + fond blanc (animation)

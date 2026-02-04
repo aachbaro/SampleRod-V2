@@ -72,7 +72,14 @@ class SampleCardPlayback:
 
     def _apply_state(self, is_playing: bool):
         icon_name = "fa5s.pause" if is_playing else "fa5s.play"
-        self.card.play_button.setIcon(qta.icon(icon_name, color="lightgray"))
+        if hasattr(self.card.play_button, "set_icon_pair"):
+            self.card.play_button.set_icon_pair(
+                icon_name,
+                icon_color_normal="#cfcfcf",
+                icon_color_hover="#121212",
+            )
+        else:
+            self.card.play_button.setIcon(qta.icon(icon_name, color="lightgray"))
 
     def set_paused_icon(self):
         self._apply_state(False)

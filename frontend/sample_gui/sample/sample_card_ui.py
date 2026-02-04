@@ -18,12 +18,10 @@
 from __future__ import annotations
 
 import os
-import qtawesome as qta
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QLabel,
-    QPushButton,
     QHBoxLayout,
     QVBoxLayout,
     QSizePolicy,
@@ -34,6 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from frontend.custom_widgets import CustomSlider
+from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 
 
 class SampleCardUIBuilder:
@@ -92,16 +91,6 @@ class SampleCardUIBuilder:
             padding: 4px 6px;
             border-radius: 4px;
         }
-        QPushButton[iconBtn="true"] {
-            background: transparent;
-            border: 1px solid transparent;
-            border-radius: 6px;
-            padding: 4px;
-        }
-        QPushButton[iconBtn="true"]:hover {
-            background: rgba(255, 255, 255, 0.06);
-            border-color: rgba(255, 255, 255, 0.08);
-        }
         QComboBox#DirCombo {
             background-color: #222222;
             color: #e6e6e6;
@@ -111,10 +100,10 @@ class SampleCardUIBuilder:
         }
         """)
 
-        btn_size = 28
-        btn_icon = QSize(16, 16)
-        play_btn_size = 32
-        play_icon = QSize(18, 18)
+        btn_size = 24
+        btn_icon = 10
+        icon_normal = "#cfcfcf"
+        icon_hover = "#121212"
 
         # ---- Widgets
         c.checkbox = QCheckBox()
@@ -135,57 +124,74 @@ class SampleCardUIBuilder:
         c.rename_input.setMinimumWidth(220)
         c.rename_input.returnPressed.connect(c.submitRename)
 
-        c.check_button = QPushButton()
-        c.check_button.setProperty("iconBtn", True)
-        c.check_button.setIcon(qta.icon('fa5s.check', color='green'))
-        c.check_button.setFixedSize(btn_size, btn_size)
-        c.check_button.setIconSize(btn_icon)
+        c.check_button = self._make_round_btn(
+            "fa5s.check",
+            "Valider le renommage",
+            color_normal="#9bd18f",
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
         c.check_button.clicked.connect(c.submitRename)
 
-        c.cancel_button = QPushButton()
-        c.cancel_button.setProperty("iconBtn", True)
-        c.cancel_button.setIcon(qta.icon('fa5s.times', color='lightgray'))
-        c.cancel_button.setFixedSize(btn_size, btn_size)
-        c.cancel_button.setIconSize(btn_icon)
+        c.cancel_button = self._make_round_btn(
+            "fa5s.times",
+            "Annuler le renommage",
+            color_normal=icon_normal,
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
         c.cancel_button.clicked.connect(c.cancelRename)
 
-        c.rename_button = QPushButton()
-        c.rename_button.setProperty("iconBtn", True)
-        c.rename_button.setIcon(qta.icon('fa6s.pen', color='lightgray'))
-        c.rename_button.setToolTip("Renommer")
-        c.rename_button.setFixedSize(btn_size, btn_size)
-        c.rename_button.setIconSize(btn_icon)
+        c.rename_button = self._make_round_btn(
+            "fa6s.pen",
+            "Renommer",
+            color_normal=icon_normal,
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
         c.rename_button.clicked.connect(c.startRename)
 
-        c.delete_button = QPushButton()
-        c.delete_button.setProperty("iconBtn", True)
-        c.delete_button.setIcon(qta.icon('fa5s.trash-alt', color='red'))
-        c.delete_button.setToolTip("Supprimer")
-        c.delete_button.setFixedSize(btn_size, btn_size)
-        c.delete_button.setIconSize(btn_icon)
+        c.delete_button = self._make_round_btn(
+            "fa5s.trash-alt",
+            "Supprimer",
+            color_normal="#d77a7a",
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
         c.delete_button.clicked.connect(c.confirmDelete)
 
-        c.archive_button = QPushButton()
-        c.archive_button.setProperty("iconBtn", True)
-        c.archive_button.setIcon(qta.icon('fa5s.times-circle', color='lightgray'))
-        c.archive_button.setToolTip("Retirer de l'historique")
-        c.archive_button.setFixedSize(btn_size, btn_size)
-        c.archive_button.setIconSize(btn_icon)
+        c.archive_button = self._make_round_btn(
+            "fa5s.times-circle",
+            "Retirer de l'historique",
+            color_normal=icon_normal,
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
         c.archive_button.clicked.connect(c.onArchiveClicked)
 
-        c.normalize_button = QPushButton()
-        c.normalize_button.setProperty("iconBtn", True)
-        c.normalize_button.setIcon(qta.icon('fa5s.bolt', color='orange'))
-        c.normalize_button.setToolTip("Normalize sample")
-        c.normalize_button.setFixedSize(btn_size, btn_size)
-        c.normalize_button.setIconSize(btn_icon)
+        c.normalize_button = self._make_round_btn(
+            "fa5s.bolt",
+            "Normaliser le sample",
+            color_normal="#c9a75a",
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
         c.normalize_button.clicked.connect(c.onNormalizeButtonClicked)
 
-        c.waveform_button = QPushButton()
-        c.waveform_button.setProperty("iconBtn", True)
-        c.waveform_button.setIcon(qta.icon('mdi.waveform'))
-        c.waveform_button.setFixedSize(btn_size, btn_size)
-        c.waveform_button.setIconSize(btn_icon)
+        c.waveform_button = self._make_round_btn(
+            "mdi.waveform",
+            "Afficher le waveform",
+            color_normal=icon_normal,
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
         c.waveform_button.clicked.connect(c.toggleWaveform)
 
         # Statut normalisation
@@ -218,12 +224,14 @@ class SampleCardUIBuilder:
         c.date_label.setFixedHeight(24)
 
         # Playback
-        c.play_button = QPushButton()
-        c.play_button.setFixedSize(play_btn_size, play_btn_size)
-        c.play_button.setIconSize(play_icon)
-        c.play_button.setProperty("iconBtn", True)
-        c.play_button.setIcon(qta.icon('fa5s.play', color='lightgray'))
-        c.play_button.setToolTip("Lire")
+        c.play_button = self._make_round_btn(
+            "fa5s.play",
+            "Lire",
+            color_normal=icon_normal,
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
 
         c.playback_slider = CustomSlider(Qt.Orientation.Horizontal)
         c.playback_slider.setRange(0, 100)
@@ -325,3 +333,25 @@ class SampleCardUIBuilder:
         # Installer l'event filter sur tous les enfants pour gerer le focus visuel
         for child in c.findChildren(QWidget):
             child.installEventFilter(c)
+
+    def _make_round_btn(
+        self,
+        icon_name: str,
+        tooltip: str,
+        color_normal: str,
+        color_hover: str,
+        size: int,
+        icon_size: int,
+    ) -> HoverIconButton:
+        btn = HoverIconButton(
+            icon_name=icon_name,
+            size=size,
+            icon_size=icon_size,
+            icon_color_normal=color_normal,
+            icon_color_hover=color_hover,
+            border_color="#2a2a2a",
+            parent=self.card,
+        )
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        return btn
