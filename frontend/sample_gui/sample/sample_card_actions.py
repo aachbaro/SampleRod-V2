@@ -128,20 +128,24 @@ class SampleCardHeaderActions:
                 pass
 
         c.status_label.setText("⏳ Normalisation...")
+        c.status_label.setVisible(True)
         c.normalize_button.setEnabled(False)
         c.normalizeClicked.emit(c.sample.id)
 
     def indicate_normalization_started(self):
         c = self.card
         c.status_label.setText("⏳ Normalisation...")
+        c.status_label.setVisible(True)
         c.normalize_button.setEnabled(False)
 
     def indicate_normalization_finished(self):
         c = self.card
         c.status_label.setText("✔️ Normalisé")
+        c.status_label.setVisible(True)
         c.normalize_button.setEnabled(True)
 
     def indicate_normalization_error(self, message: str):
         c = self.card
         c.status_label.setText(f"❌ Erreur: {message}")
+        c.status_label.setVisible(True)
         c.normalize_button.setEnabled(True)

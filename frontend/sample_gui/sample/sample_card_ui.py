@@ -61,11 +61,11 @@ class SampleCardUIBuilder:
             border-color: #3a3a3a;
         }
         SampleCard[focused="true"] {
-            border: 2px solid #5b8def;
+            border: 2px solid #f2c94c;
         }
         SampleCard[checked="true"] {
             background-color: #232a33;
-            border-color: #3b4b5a;
+            border-color: #f2c94c;
         }
         QLabel#SampleName {
             font-weight: 600;
@@ -83,6 +83,12 @@ class SampleCardUIBuilder:
         QLabel#TimeLabel {
             color: #e6e6e6;
             font-size: 11px;
+        }
+        QLabel#DateChip {
+            background-color: #2a2a2a;
+            color: #cfcfcf;
+            border-radius: 10px;
+            padding: 2px 10px;
         }
         QLabel#IdChip {
             background-color: #2a2a2a;
@@ -200,10 +206,6 @@ class SampleCardUIBuilder:
         )
         c.waveform_button.clicked.connect(c.toggleWaveform)
 
-        # Statut normalisation
-        c.status_label = QLabel("")
-        c.status_label.setObjectName("StatusLabel")
-
         # Details
         c.change_dir_combobox = QComboBox()
         c.change_dir_combobox.setObjectName("DirCombo")
@@ -215,19 +217,32 @@ class SampleCardUIBuilder:
         c.change_dir_combobox.wheelEvent = lambda evt: evt.ignore()
         c.change_dir_combobox.setMinimumWidth(160)
         c.change_dir_combobox.setMaximumWidth(260)
-        c.change_dir_combobox.setFixedHeight(28)
+        c.change_dir_combobox.setFixedHeight(24)
         c.change_dir_combobox.currentIndexChanged.connect(c.move_sample)
 
         c.length_label = QLabel(f"{c.sample.duration:.1f}s")
         c.length_label.setObjectName("MetaLabel")
         c.length_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         c.length_label.setFixedHeight(24)
+        c.length_label.setVisible(False)
 
         formatted_date = c.sample.created_at.strftime("%d/%m/%Y %H:%M")
         c.date_label = QLabel(f"{formatted_date}")
-        c.date_label.setObjectName("MetaLabel")
-        c.date_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-        c.date_label.setFixedHeight(24)
+        c.date_label.setObjectName("DateChip")
+        c.date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c.date_label.setFixedHeight(22)
+
+        c.id_label = QLabel(f"{c.sample.id}", c)
+        c.id_label.setObjectName("IdChip")
+        c.id_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c.id_label.setFixedHeight(22)
+
+        # Statut normalisation
+        c.status_label = QLabel("")
+        c.status_label.setObjectName("StatusLabel")
+        c.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        c.status_label.setFixedHeight(22)
+        c.status_label.setVisible(False)
 
         # Playback
         c.play_button = self._make_round_btn(
@@ -279,35 +294,40 @@ class SampleCardUIBuilder:
         header_layout.addLayout(actions_layout)
         main_layout.addLayout(header_layout)
 
-        details_layout = QHBoxLayout()
-        details_layout.setSpacing(10)
+        info_layout = QHBoxLayout()
+        info_layout.setSpacing(0)
 
-        details_layout.addWidget(c.change_dir_combobox)
-        details_layout.addSpacing(6)
-        details_layout.addWidget(c.length_label)
-        details_layout.addWidget(c.date_label)
-        details_layout.addStretch()
-        details_layout.addWidget(c.status_label)
-        main_layout.addLayout(details_layout)
+        left_box = QWidget()
+        left_layout = QHBoxLayout(left_box)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(c.change_dir_combobox, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        center_box = QWidget()
+        center_layout = QHBoxLayout(center_box)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.addWidget(c.date_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        right_box = QWidget()
+        right_layout = QHBoxLayout(right_box)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(c.status_label, alignment=Qt.AlignmentFlag.AlignRight)
+        right_layout.addSpacing(6)
+        right_layout.addWidget(c.id_label, alignment=Qt.AlignmentFlag.AlignRight)
+
+        info_layout.addWidget(left_box, 1)
+        info_layout.addWidget(center_box, 1)
+        info_layout.addWidget(right_box, 1)
+        main_layout.addLayout(info_layout)
 
         playback_layout = QHBoxLayout()
         playback_layout.setSpacing(8)
         playback_layout.addWidget(c.play_button)
+        c.playback_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         playback_layout.addWidget(c.playback_slider, 1)
         playback_layout.addWidget(c.time_label)
         main_layout.addLayout(playback_layout)
 
         main_layout.addLayout(c.waveform_layout)
-
-        id_row = QHBoxLayout()
-        id_row.addStretch()
-        c.id_label = QLabel(f"{c.sample.id}", c)
-        c.id_label.setObjectName("IdChip")
-        c.id_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        c.id_label.setFixedHeight(22)
-        id_row.addWidget(c.id_label)
-        id_row.addStretch()
-        main_layout.addLayout(id_row)
 
         # Masquer les champs de renommage par defaut
         c.rename_input.setVisible(False)

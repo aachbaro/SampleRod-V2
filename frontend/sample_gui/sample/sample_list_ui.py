@@ -182,7 +182,6 @@ class SampleListUIBuilder:
 
         w.pagination_label = QLabel("0 - 0 / 0")
         w.pagination_label.setObjectName("PaginationLabel")
-        w.pagination_layout.addWidget(w.pagination_label)
 
         w.prev_button = self._make_round_btn("fa5s.chevron-left", "Page precedente")
         w.next_button = self._make_round_btn("fa5s.chevron-right", "Page suivante")
@@ -190,6 +189,7 @@ class SampleListUIBuilder:
         w.next_button.clicked.connect(w._next_page)
 
         w.pagination_layout.addWidget(w.prev_button)
+        w.pagination_layout.addWidget(w.pagination_label)
         w.pagination_layout.addWidget(w.next_button)
         panel_layout.addLayout(w.pagination_layout)
 
