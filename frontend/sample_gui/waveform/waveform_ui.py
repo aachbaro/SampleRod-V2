@@ -245,7 +245,7 @@ class WaveformUIBuilder:
 
         editor_layout.addWidget(w.plot)
 
-        # ----- Barre de controles (play/pause/stop + toggles)
+        # ----- Barre de controles (play/pause/stop/loop + toggles)
         # — Contrôles
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
@@ -289,14 +289,7 @@ class WaveformUIBuilder:
         w.stop_button.setToolTip("Stop and Reset - alt + space")
         play_layout.addWidget(w.stop_button)
 
-        controls_layout.addLayout(play_layout)
-        controls_layout.addStretch()
-
-        # Toggles (Loop / Marker Mode)
-        # Toggles
-        toggles = QHBoxLayout()
-        toggles.setSpacing(6)
-
+        # Loop: plus logique a cote des boutons de lecture
         w.loop_button = HoverIconButton(
             "fa5s.sync",
             size=24,
@@ -308,8 +301,15 @@ class WaveformUIBuilder:
         w.loop_button.setProperty("toggle", True)
         w.loop_button.toggled.connect(w.toggle_loop)
         w.loop_button.setToolTip("Loop ON/OF - ctrl + l")
-        toggles.addWidget(w.loop_button)
+        play_layout.addWidget(w.loop_button)
         w.loop_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        controls_layout.addLayout(play_layout)
+        controls_layout.addStretch()
+
+        # Toggles (Marker Mode)
+        toggles = QHBoxLayout()
+        toggles.setSpacing(6)
 
         # Marker Mode
         w.marker_mode_button = HoverIconButton(
@@ -343,6 +343,10 @@ class WaveformUIBuilder:
         w.marker_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         w.marker_list.itemClicked.connect(w.on_marker_list_clicked)
         w.marker_list.itemDoubleClicked.connect(w.on_marker_list_double_clicked)
+        # Par défaut on la garde "pliée" : elle s'animera quand un marker existe.
+        w.marker_list.setVisible(False)
+        w.marker_list.setMinimumHeight(0)
+        w.marker_list.setMaximumHeight(0)
         editor_layout.addWidget(w.marker_list)
 
         # ----- EventFilter pour les interactions (clic / drag / raccourcis)

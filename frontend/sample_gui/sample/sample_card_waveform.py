@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
+from PyQt6.QtWidgets import QGraphicsOpacityEffect
 
 from frontend.sample_gui.wave_form import WaveformWidget
 
@@ -61,12 +62,11 @@ class SampleCardWaveform:
             return
 
         # Prepare le fade-in du waveform AVANT de l'afficher pour eviter un flash.
-        wave_fx = getattr(c, "waveform_opacity_effect", None)
+        wave_fx = self._ensure_waveform_opacity_effect()
         if wave_fx is not None:
-            try:
-                wave_fx.setOpacity(0.0)
-            except Exception:
-                pass
+            # Active l'effet uniquement pendant la transition.
+            wave_fx.setEnabled(True)
+            wave_fx.setOpacity(0.0)
 
         start_h = self._editor_current_height()
         editor.setMaximumHeight(start_h)
@@ -105,6 +105,15 @@ class SampleCardWaveform:
             return
         editor.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
 
+        # IMPORTANT (PyQtGraph + QGraphicsOpacityEffect)
+        # QGraphicsOpacityEffect force un rendu offscreen: sur PyQtGraph, ca peut
+        # spammer des warnings QPainter au survol (repaints frequents).
+        # Solution: garder l'effet installe, mais le DESACTIVER hors transition.
+        wave_fx = self._ensure_waveform_opacity_effect()
+        if wave_fx is not None:
+            wave_fx.setOpacity(1.0)
+            wave_fx.setEnabled(False)
+
     def _close_waveform(self):
         c = self.card
 
@@ -130,8 +139,10 @@ class SampleCardWaveform:
         self._stop_waveform_runtime()
 
         # Fade-out du waveform pendant la fermeture.
-        wave_fx = getattr(c, "waveform_opacity_effect", None)
+        wave_fx = self._ensure_waveform_opacity_effect()
         if wave_fx is not None:
+            wave_fx.setEnabled(True)
+            wave_fx.setOpacity(1.0)
             self._fade = self._animate_opacity(
                 wave_fx,
                 to_opacity=0.0,
@@ -170,6 +181,12 @@ class SampleCardWaveform:
                     duration_ms=140,
                     easing=QEasingCurve.Type.OutCubic,
                 )
+
+            # Waveform hors ecran: on desactive l'effet (voir note PyQtGraph).
+            wave_fx = self._ensure_waveform_opacity_effect()
+            if wave_fx is not None:
+                wave_fx.setOpacity(1.0)
+                wave_fx.setEnabled(False)
         self._cleanup_waveform()
         self._show_playback()
 
@@ -264,6 +281,41 @@ class SampleCardWaveform:
         anim.setEndValue(float(to_opacity))
         anim.start()
         return anim
+
+    def _ensure_waveform_opacity_effect(self) -> QGraphicsOpacityEffect | None:
+        """
+        Renvoie l'opacite effect du waveform (cree si besoin).
+
+        Pourquoi:
+        - QWidget.setGraphicsEffect() prend ownership et peut detruire l'effet
+          si on le remplace / retire.
+        - On veut un objet stable, mais on souhaite aussi pouvoir recuperer
+          si un effet a ete supprime dans une session precedente (dev).
+        """
+        c = self.card
+        container = getattr(c, "waveform_container", None)
+        if container is None:
+            return None
+
+        wave_fx = getattr(c, "waveform_opacity_effect", None)
+        if wave_fx is None:
+            wave_fx = QGraphicsOpacityEffect(container)
+            wave_fx.setOpacity(1.0)
+            container.setGraphicsEffect(wave_fx)
+            c.waveform_opacity_effect = wave_fx
+            return wave_fx
+
+        # Si l'objet C++ a ete supprime, PyQt leve RuntimeError.
+        try:
+            _ = wave_fx.opacity()
+        except RuntimeError:
+            wave_fx = QGraphicsOpacityEffect(container)
+            wave_fx.setOpacity(1.0)
+            container.setGraphicsEffect(wave_fx)
+            c.waveform_opacity_effect = wave_fx
+            return wave_fx
+
+        return wave_fx
 
     def _stop_waveform_runtime(self):
         """Stoppe l'audio/timer du waveform sans detruire le widget (pour l'anim)."""

@@ -133,11 +133,8 @@ class WaveformWidget(QWidget):
         # gestion des marqueurs via un composant dédié, APRES avoir défini self.plot
         self.marker_manager = MarkerManager(self)
         self.marker_controller = WaveformMarkersController(self, ContextMenuLinearRegionItem)
-        # affichage initial de la liste de marqueurs
-        if not self.marker_manager.markers:
-            self.marker_list.hide()
-        else:
-            self.marker_list.show()
+        # affichage initial de la liste de marqueurs (sans animation)
+        self.marker_controller._set_marker_list_visible(bool(self.marker_manager.markers), animated=False)
         self._load_audio(audio_file_path)
         self.positionUpdated.connect(lambda t: self.read_head.setPos(t))
 

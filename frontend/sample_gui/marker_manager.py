@@ -17,6 +17,19 @@ class MarkerListWidget(QListWidget):
         self.editor = editor
         self.setDragEnabled(True)
 
+    def wheelEvent(self, event):
+        """
+        Important UX:
+        - La liste de markers vit souvent dans un parent scrollable (SampleList).
+        - Quand on arrive en haut/bas, Qt peut relayer le wheelEvent au parent,
+          ce qui fait "scroller la liste de samples" alors qu'on est sur les markers.
+
+        Ici on laisse QListWidget gerer le scroll interne, mais on accepte toujours
+        l'event pour bloquer la propagation au parent.
+        """
+        super().wheelEvent(event)
+        event.accept()
+
     def startDrag(self, supportedActions):
         item = self.currentItem()
         if not item:
