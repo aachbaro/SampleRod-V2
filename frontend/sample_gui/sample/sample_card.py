@@ -132,6 +132,14 @@ class SampleCard(QWidget):
         child = self.childAt(event.position().toPoint())
         excluded_types = (QAbstractButton, QLineEdit, QComboBox, QSlider)
 
+        # Ne jamais toggler la waveform si le double-clic vient du waveform editor lui-meme,
+        # sinon on ferme l'editor pendant des interactions internes.
+        if self.showWaveform and child is not None:
+            wc = getattr(self, "waveform_container", None)
+            if wc is not None and (child is wc or wc.isAncestorOf(child)):
+                super().mouseDoubleClickEvent(event)
+                return
+
         # Remonte la hierarchy pour detecter si on est dans un widget interactif.
         w = child
         while w is not None and w is not self:

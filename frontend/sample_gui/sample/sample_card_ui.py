@@ -262,8 +262,18 @@ class SampleCardUIBuilder:
         c.playback_slider.setFixedHeight(24)
 
         c.time_label = QLabel("00:00/00:00")
-        c.time_label.setFixedSize(90, 24)
+        # Largeur calculee sur le format max (mm:ss / mm:ss) pour:
+        # - eviter les sauts de layout
+        # - reduire au minimum l'espace reserve a droite
+        max_time_str = "00:00 / 00:00"
+        time_w = c.time_label.fontMetrics().horizontalAdvance(max_time_str) + 4
+        c.time_label.setFixedSize(time_w, 24)
         c.time_label.setObjectName("TimeLabel")
+        c.time_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        # L'overlay ne doit pas bloquer les clics/drag du slider.
+        c.time_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
         # Waveform container (rempli dynamiquement).
         # Il sera affiche via un QStackedLayout dans l'espace "editor" (ligne 3).
@@ -338,11 +348,50 @@ class SampleCardUIBuilder:
         )
         playback_layout = QHBoxLayout(c.playback_container)
         playback_layout.setContentsMargins(0, 0, 0, 0)
-        playback_layout.setSpacing(8)
+        playback_layout.setSpacing(0)
         playback_layout.addWidget(c.play_button)
+
+        # Timeline : slider pleine largeur + time overlay a droite.
+        c.timeline_container = QWidget()
+        c.timeline_container.setObjectName("TimelineContainer")
+        c.timeline_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        c.timeline_container.setFixedHeight(24)
+        c.timeline_stack = QStackedLayout(c.timeline_container)
+        c.timeline_stack.setContentsMargins(0, 0, 0, 0)
+        c.timeline_stack.setSpacing(0)
+        c.timeline_stack.setStackingMode(QStackedLayout.StackingMode.StackAll)
+
+        # Base layer: slider + spacer reserve la place du time label pour que
+        # la barre ne "passe pas dessous".
+        base = QWidget()
+        base_layout = QHBoxLayout(base)
+        base_layout.setContentsMargins(0, 0, 0, 0)
+        base_layout.setSpacing(0)
+        base_layout.addWidget(c.playback_slider, 1)
+        c.timeline_right_spacer = QWidget()
+        # Reserve strictement la place du time label (pas plus).
+        c.timeline_right_spacer.setFixedWidth(c.time_label.width())
+        base_layout.addWidget(c.timeline_right_spacer)
+
+        # Overlay layer: time label aligne a droite.
+        overlay = QWidget()
+        overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        overlay_layout = QHBoxLayout(overlay)
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
+        overlay_layout.setSpacing(0)
+        overlay_layout.addStretch(1)
+        overlay_layout.addWidget(
+            c.time_label,
+            alignment=Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+
+        c.timeline_stack.addWidget(base)
+        c.timeline_stack.addWidget(overlay)
+
         c.playback_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        playback_layout.addWidget(c.playback_slider, 1)
-        playback_layout.addWidget(c.time_label)
+        playback_layout.addWidget(c.timeline_container, 1)
         # Fixe le maxHeight au sizeHint pour que l'animation parte d'une valeur reelle
         # (sinon maximumHeight == "inf" et l'anim ne se voit presque pas).
         c.playback_height_hint = c.playback_container.sizeHint().height()
@@ -380,12 +429,16 @@ class SampleCardUIBuilder:
             QSlider::groove:horizontal {
                 height: 6px;
                 background: #2f2f2f;
+                margin: 0px;
+                border-radius: 3px;
             }
             QSlider::sub-page:horizontal {
                 background: #8e8e8e;
+                border-radius: 3px;
             }
-            QSlider::groove:horizontal:add-page {
+            QSlider::add-page:horizontal {
                 background: #2f2f2f;
+                border-radius: 3px;
             }
             QSlider::handle:horizontal {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b0b0b0, stop:1 #7e7e7e);
