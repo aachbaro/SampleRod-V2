@@ -17,6 +17,7 @@ class SampleCardWaveform:
     def __init__(self, card):
         self.card = card
         self._anim: QPropertyAnimation | None = None
+        self._fade: QPropertyAnimation | None = None
 
     def toggle(self):
         c = self.card
@@ -31,12 +32,15 @@ class SampleCardWaveform:
         c = self.card
 
         # Stoppe toute animation en cours pour repartir proprement.
-        if self._anim is not None:
+        for anim in (self._anim, self._fade):
+            if anim is None:
+                continue
             try:
-                self._anim.stop()
+                anim.stop()
             except Exception:
                 pass
         self._anim = None
+        self._fade = None
 
         try:
             c.app_context.audio_player.clear_audio()
@@ -56,22 +60,63 @@ class SampleCardWaveform:
             self._hide_playback()
             return
 
+        # Prepare le fade-in du waveform AVANT de l'afficher pour eviter un flash.
+        wave_fx = getattr(c, "waveform_opacity_effect", None)
+        if wave_fx is not None:
+            try:
+                wave_fx.setOpacity(0.0)
+            except Exception:
+                pass
+
         start_h = self._editor_current_height()
         editor.setMaximumHeight(start_h)
         stack.setCurrentWidget(c.waveform_container)
 
         target_h = self._target_height()
-        self._anim = self._animate_max_height(editor, to_height=target_h)
+        self._anim = self._animate_max_height(
+            editor,
+            to_height=target_h,
+            on_finished=self._on_expand_finished,
+        )
+
+        # Fade-in du waveform (leger, pour adoucir la transition)
+        if wave_fx is not None:
+            self._fade = self._animate_opacity(
+                wave_fx,
+                to_opacity=1.0,
+                duration_ms=140,
+                easing=QEasingCurve.Type.OutCubic,
+            )
+
+    def _on_expand_finished(self):
+        """
+        Apres l'animation d'ouverture, on "libere" la hauteur max de l'editor
+        pour que des changements internes (ex: apparition de la liste de markers)
+        puissent agrandir le widget sans overflow.
+        """
+        c = self.card
+        editor = getattr(c, "editor_container", None)
+        stack = getattr(c, "editor_stack", None)
+        if editor is None or stack is None:
+            return
+        if not getattr(c, "showWaveform", False):
+            return
+        if stack.currentWidget() is not c.waveform_container:
+            return
+        editor.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX
 
     def _close_waveform(self):
         c = self.card
 
-        if self._anim is not None:
+        for anim in (self._anim, self._fade):
+            if anim is None:
+                continue
             try:
-                self._anim.stop()
+                anim.stop()
             except Exception:
                 pass
         self._anim = None
+        self._fade = None
 
         editor = getattr(c, "editor_container", None)
         stack = getattr(c, "editor_stack", None)
@@ -83,6 +128,16 @@ class SampleCardWaveform:
         # Stoppe l'audio / timer tout de suite, mais garde le widget visible
         # pendant l'animation de fermeture.
         self._stop_waveform_runtime()
+
+        # Fade-out du waveform pendant la fermeture.
+        wave_fx = getattr(c, "waveform_opacity_effect", None)
+        if wave_fx is not None:
+            self._fade = self._animate_opacity(
+                wave_fx,
+                to_opacity=0.0,
+                duration_ms=120,
+                easing=QEasingCurve.Type.InCubic,
+            )
 
         start_h = self._editor_current_height()
         editor.setMaximumHeight(start_h)
@@ -98,7 +153,23 @@ class SampleCardWaveform:
         editor = getattr(c, "editor_container", None)
         stack = getattr(c, "editor_stack", None)
         if editor is not None and stack is not None:
+            # Prepare fade-in playback avant le switch (evite flash).
+            pb_fx = getattr(c, "playback_opacity_effect", None)
+            if pb_fx is not None:
+                try:
+                    pb_fx.setOpacity(0.0)
+                except Exception:
+                    pass
             stack.setCurrentWidget(c.playback_container)
+
+            # Fade-in playback (petit, mais rend le retour plus doux)
+            if pb_fx is not None:
+                self._fade = self._animate_opacity(
+                    pb_fx,
+                    to_opacity=1.0,
+                    duration_ms=140,
+                    easing=QEasingCurve.Type.OutCubic,
+                )
         self._cleanup_waveform()
         self._show_playback()
 
@@ -168,6 +239,29 @@ class SampleCardWaveform:
         anim.setEndValue(int(to_height))
         if on_finished is not None:
             anim.finished.connect(on_finished)
+        anim.start()
+        return anim
+
+    def _animate_opacity(
+        self,
+        opacity_effect,
+        to_opacity: float,
+        duration_ms: int,
+        easing: QEasingCurve.Type,
+    ) -> QPropertyAnimation:
+        """
+        Anime l'opacite d'un QGraphicsOpacityEffect.
+        L'animation doit rester courte pour ne pas "ralentir" l'UI.
+        """
+        anim = QPropertyAnimation(opacity_effect, b"opacity", opacity_effect)
+        anim.setDuration(int(duration_ms))
+        anim.setEasingCurve(easing)
+        try:
+            start = float(opacity_effect.opacity())
+        except Exception:
+            start = 1.0
+        anim.setStartValue(start)
+        anim.setEndValue(float(to_opacity))
         anim.start()
         return anim
 

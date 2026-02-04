@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QStackedLayout,
+    QGraphicsOpacityEffect,
     QSizePolicy,
     QLineEdit,
     QComboBox,
@@ -396,6 +397,15 @@ class SampleCardUIBuilder:
         # (sinon maximumHeight == "inf" et l'anim ne se voit presque pas).
         c.playback_height_hint = c.playback_container.sizeHint().height()
         c.playback_container.setMaximumHeight(c.playback_height_hint)
+
+        # Opacity effects (utilises par SampleCardWaveform pour des fades doux)
+        c.playback_opacity_effect = QGraphicsOpacityEffect(c.playback_container)
+        c.playback_opacity_effect.setOpacity(1.0)
+        c.playback_container.setGraphicsEffect(c.playback_opacity_effect)
+
+        c.waveform_opacity_effect = QGraphicsOpacityEffect(c.waveform_container)
+        c.waveform_opacity_effect.setOpacity(1.0)
+        c.waveform_container.setGraphicsEffect(c.waveform_opacity_effect)
         # Espace "editor" (ligne 3) : un seul bloc qui affiche soit le playback,
         # soit le waveform editor. On animera la hauteur de ce bloc pour que les
         # 2 premieres lignes ne bougent jamais.
