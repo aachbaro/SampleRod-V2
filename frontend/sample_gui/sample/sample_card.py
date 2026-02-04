@@ -24,7 +24,7 @@ Controleurs utilises
 
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QWidget, QAbstractButton, QLineEdit, QComboBox, QSlider
 import logging
 import os
 
@@ -125,6 +125,23 @@ class SampleCard(QWidget):
         if self.interactions.mouse_move(event):
             return
         super().mouseMoveEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        # Double-clic uniquement si la cible n'est pas interactive
+        # (boutons, slider, selecteurs, inputs).
+        child = self.childAt(event.position().toPoint())
+        excluded_types = (QAbstractButton, QLineEdit, QComboBox, QSlider)
+
+        # Remonte la hierarchy pour detecter si on est dans un widget interactif.
+        w = child
+        while w is not None and w is not self:
+            if isinstance(w, excluded_types):
+                super().mouseDoubleClickEvent(event)
+                return
+            w = w.parent()
+
+        self.toggleWaveform()
+        event.accept()
 
     def keyPressEvent(self, event):
         # Echappement pour annuler un renommage en cours
