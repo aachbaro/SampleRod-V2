@@ -36,6 +36,11 @@
 # backend/models/recorder_worker.py
 
 import soundcard as sc
+import warnings
+try:
+    from soundcard.mediafoundation import SoundcardRuntimeWarning
+except Exception:  # pragma: no cover - platform dependent
+    SoundcardRuntimeWarning = None
 import soundfile as sf
 import numpy as np
 import os
@@ -45,6 +50,20 @@ from collections import deque
 from backend.models.sample import Sample
 import logging
 logger = logging.getLogger("recorder_worker")
+
+# Custom warning formatting for dev: keep it spammy but cleaner in logs
+if SoundcardRuntimeWarning is not None:
+    _orig_showwarning = warnings.showwarning
+
+    def _showwarning(message, category, filename, lineno, file=None, line=None):
+        if category is SoundcardRuntimeWarning:
+            logger.warning(
+                "[audio] discontinuite dans le flux d'enregistrement (buffer)."
+            )
+            return
+        _orig_showwarning(message, category, filename, lineno, file, line)
+
+    warnings.showwarning = _showwarning
 
 
 def _generate_unique_filename(folder: str, base_name: str, extension: str) -> str:

@@ -1,27 +1,20 @@
 from PyQt6.QtWidgets import (
     QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QScrollArea,
-    QToolBar,
-    QToolButton,
-    QPushButton,
-    QMenu,
     QFileDialog,
-    QLabel,
     QSizePolicy,
 )
 import logging
-logger = logging.getLogger("sample_list")
-from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QMessageBox
-from PyQt6.QtCore import pyqtSlot, QSize, Qt, QSettings
-import qtawesome as qta
-from frontend.sample_gui.sample_card import SampleCard
+from PyQt6.QtCore import pyqtSlot, QSettings
+from frontend.sample_gui.sample.sample_card import SampleCard
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
 import os
 from backend.models.normalize_worker import NormalizeWorker
+from frontend.sample_gui.sample.sample_list_ui import SampleListUIBuilder
+from frontend.sample_gui.sample.sample_list_pagination import SampleListPagination
+
+logger = logging.getLogger("sample_list")
 
 
 class SampleListWidget(QWidget):
@@ -59,196 +52,15 @@ class SampleListWidget(QWidget):
 
         # 3) création de l’UI
         self.init_ui()
+        self.pagination = SampleListPagination(self)
 
         # 4) initialisation de la liste avec le cache actuel
         self.onSamplesChanged(self.sample_store.get_cached())
 
     def init_ui(self):
-        """
-        Construit l’UI, comprenant en haut une barre de 'bulk actions' 
-        (boutons Supprimer, Déplacer, Normaliser la sélection),
-        puis la zone scrollable des cartes.
-        """
-        self.setObjectName("SampleListRoot")
-        self.setStyleSheet("""
-            QWidget#SampleListRoot {
-                background-color: #121212;
-            }
-            QToolBar#SampleToolbar {
-                background-color: #181818;
-                border: 1px solid #262626;
-                border-radius: 8px;
-                spacing: 6px;
-                padding: 6px;
-            }
-            QToolBar#SampleToolbar QToolButton {
-                color: #eaeaea;
-                background: #202020;
-                border: 1px solid #2f2f2f;
-                border-radius: 6px;
-                padding: 4px 8px;
-            }
-            QToolBar#SampleToolbar QToolButton:hover {
-                background: #2a2a2a;
-            }
-            QToolBar#SampleToolbar QToolButton:disabled {
-                color: #777777;
-                background: #1a1a1a;
-                border-color: #262626;
-            }
-            QToolBar#SampleToolbar::separator {
-                background: #2a2a2a;
-                width: 1px;
-                margin: 0 6px;
-            }
-            QScrollArea#SampleScroll {
-                background: #141414;
-                border: 1px solid #222222;
-                border-radius: 10px;
-            }
-            QWidget#SampleListContent {
-                background: #141414;
-            }
-            QLabel#PaginationLabel {
-                color: #cfcfcf;
-            }
-            QPushButton[role="pagination"] {
-                background: #202020;
-                color: #eaeaea;
-                border: 1px solid #2f2f2f;
-                border-radius: 6px;
-                padding: 4px 10px;
-            }
-            QPushButton[role="pagination"]:hover {
-                background: #2a2a2a;
-            }
-            QPushButton[role="pagination"]:disabled {
-                color: #777777;
-                background: #1a1a1a;
-                border-color: #262626;
-            }
-            QMenu {
-                background: #1b1b1b;
-                color: #eaeaea;
-                border: 1px solid #2a2a2a;
-            }
-            QMenu::item:selected {
-                background: #2a2a2a;
-            }
-            QScrollBar:vertical {
-                background: #141414;
-                width: 10px;
-                margin: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: #2b2b2b;
-                border-radius: 4px;
-                min-height: 20px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #3a3a3a;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
-
-        main_layout = QVBoxLayout(self)
-
-        # ─── Zone 'Bulk Actions' ───
-
-        self.toolbar = QToolBar("Bulk Actions")
-        self.toolbar.setObjectName("SampleToolbar")
-        self.toolbar.setIconSize(QSize(24, 24))
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        main_layout.addWidget(self.toolbar)
-
-        # Action principale : ajout de fichiers
-        self.add_files_act = QAction(qta.icon('fa5s.folder-open'), "Ajouter fichiers…", self)
-        self.add_files_act.setToolTip("Ajouter un ou plusieurs fichiers audio")
-        self.add_files_act.triggered.connect(self.onAddFiles)
-        self.toolbar.addAction(self.add_files_act)
-
-        self.select_all_act   = QAction(qta.icon('fa5s.check-double'), "Tout cocher", self)
-        self.deselect_all_act = QAction(qta.icon('fa5s.times-circle'), "Tout décocher", self)
-        self.select_all_act.triggered.connect(self.onSelectAll)
-        self.deselect_all_act.triggered.connect(self.onDeselectAll)
-        self.toolbar.addAction(self.select_all_act)
-        self.toolbar.addAction(self.deselect_all_act)
-
-        self.toolbar.addSeparator()
-
-        # Actions sur la sélection
-        self.bulk_archive_act = QAction(qta.icon('fa5s.times-circle', color='lightgray'), "Retirer de l’historique", self)
-        self.bulk_archive_act.setEnabled(False)
-        self.bulk_archive_act.triggered.connect(self.bulkRemoveFromHistory)
-
-        self.bulk_delete_act = QAction(qta.icon('fa5s.trash-alt', color='red'), "Supprimer", self)
-        self.bulk_delete_act.setEnabled(False)
-        self.bulk_delete_act.triggered.connect(self.bulkDelete)
-
-        self.bulk_move_act = QAction(qta.icon('fa5s.folder', color='lightgray'), "Déplacer…", self)
-        self.bulk_move_act.setEnabled(False)
-        self.bulk_move_act.triggered.connect(self.bulkMove)
-
-        self.bulk_normalize_act = QAction(qta.icon('fa5s.bolt', color='orange'), "Normaliser", self)
-        self.bulk_normalize_act.setEnabled(False)
-        self.bulk_normalize_act.triggered.connect(self.bulkNormalize)
-
-        self.actions_menu = QMenu(self)
-        self.actions_menu.addAction(self.bulk_archive_act)
-        self.actions_menu.addAction(self.bulk_delete_act)
-        self.actions_menu.addAction(self.bulk_move_act)
-        self.actions_menu.addAction(self.bulk_normalize_act)
-
-        self.actions_btn = QToolButton(self)
-        self.actions_btn.setText("Actions sélection")
-        self.actions_btn.setIcon(qta.icon('fa5s.list'))
-        self.actions_btn.setMenu(self.actions_menu)
-        self.actions_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.actions_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.toolbar.addWidget(self.actions_btn)
-
-         # ─── Autoriser le glisser-déposer de fichiers ───
-        self.setAcceptDrops(True)
-
-        # ─── Zone scrollable des SampleCard ───
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setObjectName("SampleScroll")
-        self.scroll_area.setWidgetResizable(True)
-        self.content_widget = QWidget()
-        self.content_widget.setObjectName("SampleListContent")
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setSpacing(10)
-        self.content_layout.setContentsMargins(10, 10, 10, 10)
-        self.scroll_area.setWidget(self.content_widget)
-        main_layout.addWidget(self.scroll_area)
-
-        # ─── Zone de pagination ───
-        self.pagination_layout = QHBoxLayout()
-        self.pagination_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.pagination_label = QLabel("0 - 0 / 0")
-        self.pagination_label.setObjectName("PaginationLabel")
-        self.pagination_layout.addWidget(self.pagination_label)
-
-        self.prev_button = QPushButton("Précédent")
-        self.prev_button.setProperty("role", "pagination")
-        self.next_button = QPushButton("Suivant")
-        self.next_button.setProperty("role", "pagination")
-        self.prev_button.clicked.connect(self._prev_page)
-        self.next_button.clicked.connect(self._next_page)
-
-        self.pagination_layout.addWidget(self.prev_button)
-        self.pagination_layout.addWidget(self.next_button)
-
-        main_layout.addLayout(self.pagination_layout)
-        self.refreshList()
+        """Construit l'UI (toolbar, scroll, pagination)."""
+        self.ui_builder = SampleListUIBuilder(self)
+        self.ui_builder.build()
 
     @pyqtSlot(list)
     def onSamplesChanged(self, samples: list):
@@ -763,58 +575,24 @@ class SampleListWidget(QWidget):
 
     def updatePaginationLabel(self, start_idx: int, end_idx: int, total_samples: int):
         """Met à jour le label de pagination."""
-        self.pagination_label.setText(f"{start_idx} - {end_idx} / {total_samples}")
+        self.pagination.update_label(start_idx, end_idx, total_samples)
 
     @pyqtSlot(int)
     def onSamplesPerPageChanged(self, count: int):
         """Slot appelé lorsque le paramètre de pagination change."""
-        self.samples_per_page = count
-        self.setCurrentPage(1)
+        self.pagination.on_samples_per_page_changed(count)
 
     def setCurrentPage(self, page: int):
         """Change la page actuelle et rafraîchit la liste."""
-        if page < 1:
-            page = 1
-        self.current_page = page
-        self.refreshList()
+        self.pagination.set_current_page(page)
 
     def change_page(self, page: int):
-        """Gère le changement de page et arrête la lecture si nécessaire."""
-        # Calcul des IDs de la nouvelle page
-        ordered = sorted(self.samples, key=lambda s: s.created_at, reverse=True)
-        start = (page - 1) * self.samples_per_page
-        end = start + self.samples_per_page
-        ids_page = {s.id for s in ordered[start:end]}
-
-        # 1) Vérifie la lecture via WaveformWidget
-        for sid, card in list(self._card_widgets.items()):
-            if sid not in ids_page and card.wave_edition_widget:
-                try:
-                    card.wave_edition_widget.stop_audio()
-                except Exception:
-                    pass
-                try:
-                    card.wave_edition_widget.timer.stop()
-                except Exception:
-                    pass
-
-        # 2) Vérifie la lecture via l'AudioPlayer global
-        current_id = self.app_context.audio_player.current_sample_id
-        if current_id != -1 and current_id not in ids_page:
-            player = self.app_context.audio_player
-            if hasattr(player, "stop_playback"):
-                try:
-                    player.stop_playback()
-                except Exception:
-                    pass
-
-        self.setCurrentPage(page)
+        """Gere le changement de page et arrete la lecture si necessaire."""
+        self.pagination.change_page(page)
 
     def _prev_page(self):
-        if self.current_page > 1:
-            self.change_page(self.current_page - 1)
+        self.pagination.prev_page()
 
     def _next_page(self):
-        max_pages = (len(self.samples) - 1) // self.samples_per_page + 1
-        if self.current_page < max_pages:
-            self.change_page(self.current_page + 1)
+        self.pagination.next_page()
+

@@ -21,7 +21,7 @@ import qtawesome as qta
 from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
 from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
-from frontend.sample_gui.sample_list import SampleListWidget
+from frontend.sample_gui.sample.sample_list import SampleListWidget
 from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
