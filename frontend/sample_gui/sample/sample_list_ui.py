@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 )
 import qtawesome as qta
 
+from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 
 class SampleListUIBuilder:
     def __init__(self, widget):
@@ -28,33 +29,25 @@ class SampleListUIBuilder:
 
     def build(self):
         w = self.widget
+        # Global container for the list area + header.
         w.setObjectName("SampleListRoot")
         w.setStyleSheet(
             """
             QWidget#SampleListRoot {
                 background-color: #121212;
             }
+            /* Unified panel that wraps toolbar + list + pagination */
+            QWidget#SampleListPanel {
+                background-color: #1b1b1b;
+                border: 1px solid #2a2a2a;
+                border-radius: 10px;
+            }
+            /* Toolbar lives inside the panel and should feel like a header */
             QToolBar#SampleToolbar {
-                background-color: #181818;
-                border: 1px solid #262626;
-                border-radius: 8px;
+                background: transparent;
+                border: none;
                 spacing: 6px;
-                padding: 6px;
-            }
-            QToolBar#SampleToolbar QToolButton {
-                color: #eaeaea;
-                background: #202020;
-                border: 1px solid #2f2f2f;
-                border-radius: 6px;
-                padding: 4px 8px;
-            }
-            QToolBar#SampleToolbar QToolButton:hover {
-                background: #2a2a2a;
-            }
-            QToolBar#SampleToolbar QToolButton:disabled {
-                color: #777777;
-                background: #1a1a1a;
-                border-color: #262626;
+                padding: 6px 8px 4px 8px;
             }
             QToolBar#SampleToolbar::separator {
                 background: #2a2a2a;
@@ -62,30 +55,14 @@ class SampleListUIBuilder:
                 margin: 0 6px;
             }
             QScrollArea#SampleScroll {
-                background: #141414;
-                border: 1px solid #222222;
-                border-radius: 10px;
+                background: transparent;
+                border: none;
             }
             QWidget#SampleListContent {
-                background: #141414;
+                background: transparent;
             }
             QLabel#PaginationLabel {
                 color: #cfcfcf;
-            }
-            QPushButton[role="pagination"] {
-                background: #202020;
-                color: #eaeaea;
-                border: 1px solid #2f2f2f;
-                border-radius: 6px;
-                padding: 4px 10px;
-            }
-            QPushButton[role="pagination"]:hover {
-                background: #2a2a2a;
-            }
-            QPushButton[role="pagination"]:disabled {
-                color: #777777;
-                background: #1a1a1a;
-                border-color: #262626;
             }
             QMenu {
                 background: #1b1b1b;
@@ -120,45 +97,56 @@ class SampleListUIBuilder:
         )
 
         main_layout = QVBoxLayout(w)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+
+        # Panel = one block (header + list) to avoid the "two separate blocks" feel.
+        w.panel = QWidget()
+        w.panel.setObjectName("SampleListPanel")
+        panel_layout = QVBoxLayout(w.panel)
+        panel_layout.setContentsMargins(8, 8, 8, 8)
+        panel_layout.setSpacing(6)
+        main_layout.addWidget(w.panel)
 
         # ---- Toolbar
         w.toolbar = QToolBar("Bulk Actions")
         w.toolbar.setObjectName("SampleToolbar")
-        w.toolbar.setIconSize(QSize(24, 24))
-        w.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        main_layout.addWidget(w.toolbar)
+        w.toolbar.setIconSize(QSize(10, 10))
+        w.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        panel_layout.addWidget(w.toolbar)
 
-        w.add_files_act = QAction(qta.icon("fa5s.folder-open"), "Ajouter fichiers...", w)
-        w.add_files_act.setToolTip("Ajouter un ou plusieurs fichiers audio")
-        w.add_files_act.triggered.connect(w.onAddFiles)
-        w.toolbar.addAction(w.add_files_act)
+        w.add_files_btn = self._make_round_btn(
+            "fa5s.folder-open",
+            "Ajouter un ou plusieurs fichiers audio",
+        )
+        w.add_files_btn.clicked.connect(w.onAddFiles)
+        w.toolbar.addWidget(w.add_files_btn)
 
-        w.select_all_act = QAction(qta.icon("fa5s.check-double"), "Tout cocher", w)
-        w.deselect_all_act = QAction(qta.icon("fa5s.times-circle"), "Tout decocher", w)
-        w.select_all_act.triggered.connect(w.onSelectAll)
-        w.deselect_all_act.triggered.connect(w.onDeselectAll)
-        w.toolbar.addAction(w.select_all_act)
-        w.toolbar.addAction(w.deselect_all_act)
+        w.select_all_btn = self._make_round_btn("fa5s.check-double", "Tout cocher")
+        w.deselect_all_btn = self._make_round_btn("fa5s.times-circle", "Tout decocher")
+        w.select_all_btn.clicked.connect(w.onSelectAll)
+        w.deselect_all_btn.clicked.connect(w.onDeselectAll)
+        w.toolbar.addWidget(w.select_all_btn)
+        w.toolbar.addWidget(w.deselect_all_btn)
 
         w.toolbar.addSeparator()
 
         w.bulk_archive_act = QAction(
-            qta.icon("fa5s.times-circle", color="lightgray"),
+            qta.icon("fa5s.times-circle", color="#bdbdbd"),
             "Retirer de l'historique",
             w,
         )
         w.bulk_archive_act.setEnabled(False)
         w.bulk_archive_act.triggered.connect(w.bulkRemoveFromHistory)
 
-        w.bulk_delete_act = QAction(qta.icon("fa5s.trash-alt", color="red"), "Supprimer", w)
+        w.bulk_delete_act = QAction(qta.icon("fa5s.trash-alt", color="#c06a6a"), "Supprimer", w)
         w.bulk_delete_act.setEnabled(False)
         w.bulk_delete_act.triggered.connect(w.bulkDelete)
 
-        w.bulk_move_act = QAction(qta.icon("fa5s.folder", color="lightgray"), "Deplacer...", w)
+        w.bulk_move_act = QAction(qta.icon("fa5s.folder", color="#bdbdbd"), "Deplacer...", w)
         w.bulk_move_act.setEnabled(False)
         w.bulk_move_act.triggered.connect(w.bulkMove)
 
-        w.bulk_normalize_act = QAction(qta.icon("fa5s.bolt", color="orange"), "Normaliser", w)
+        w.bulk_normalize_act = QAction(qta.icon("fa5s.bolt", color="#c9a75a"), "Normaliser", w)
         w.bulk_normalize_act.setEnabled(False)
         w.bulk_normalize_act.triggered.connect(w.bulkNormalize)
 
@@ -168,12 +156,9 @@ class SampleListUIBuilder:
         w.actions_menu.addAction(w.bulk_move_act)
         w.actions_menu.addAction(w.bulk_normalize_act)
 
-        w.actions_btn = QToolButton(w)
-        w.actions_btn.setText("Actions selection")
-        w.actions_btn.setIcon(qta.icon("fa5s.list"))
+        w.actions_btn = self._make_round_btn("fa5s.list", "Actions selection")
         w.actions_btn.setMenu(w.actions_menu)
         w.actions_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        w.actions_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         w.toolbar.addWidget(w.actions_btn)
 
         # ---- Drag & drop enabled
@@ -189,7 +174,7 @@ class SampleListUIBuilder:
         w.content_layout.setSpacing(10)
         w.content_layout.setContentsMargins(10, 10, 10, 10)
         w.scroll_area.setWidget(w.content_widget)
-        main_layout.addWidget(w.scroll_area)
+        panel_layout.addWidget(w.scroll_area)
 
         # ---- Pagination
         w.pagination_layout = QHBoxLayout()
@@ -199,13 +184,26 @@ class SampleListUIBuilder:
         w.pagination_label.setObjectName("PaginationLabel")
         w.pagination_layout.addWidget(w.pagination_label)
 
-        w.prev_button = QPushButton("Precedent")
-        w.prev_button.setProperty("role", "pagination")
-        w.next_button = QPushButton("Suivant")
-        w.next_button.setProperty("role", "pagination")
+        w.prev_button = self._make_round_btn("fa5s.chevron-left", "Page precedente")
+        w.next_button = self._make_round_btn("fa5s.chevron-right", "Page suivante")
         w.prev_button.clicked.connect(w._prev_page)
         w.next_button.clicked.connect(w._next_page)
 
         w.pagination_layout.addWidget(w.prev_button)
         w.pagination_layout.addWidget(w.next_button)
-        main_layout.addLayout(w.pagination_layout)
+        panel_layout.addLayout(w.pagination_layout)
+
+    def _make_round_btn(self, icon_name: str, tooltip: str) -> HoverIconButton:
+        # Round 24px button with 10px icon, same style as waveform UI.
+        btn = HoverIconButton(
+            icon_name=icon_name,
+            size=24,
+            icon_size=10,
+            icon_color_normal="#cfcfcf",
+            icon_color_hover="#121212",
+            border_color="#2a2a2a",
+            parent=self.widget.toolbar,
+        )
+        btn.setToolTip(tooltip)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        return btn
