@@ -47,7 +47,7 @@ class MainWindow(QMainWindow):
     def _setup_window(self):
         """Configure la fenêtre principale"""
         self.setWindowTitle("SampleRod")
-        self.setGeometry(500, 200, 800, 600)
+        self.setGeometry(300, 200, 1200, 600)
 
     def _build_ui(self):
         """Construit l'interface utilisateur"""

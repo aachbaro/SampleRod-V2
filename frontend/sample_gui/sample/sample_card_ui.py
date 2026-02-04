@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QHBoxLayout,
     QVBoxLayout,
+    QStackedLayout,
     QSizePolicy,
     QLineEdit,
     QComboBox,
@@ -61,7 +62,8 @@ class SampleCardUIBuilder:
             border-color: #3a3a3a;
         }
         SampleCard[focused="true"] {
-            border: 2px solid #f2c94c;
+            /* Garder la meme epaisseur de bordure pour eviter les "sauts" de layout */
+            border: 1px solid #f2c94c;
         }
         SampleCard[checked="true"] {
             background-color: #232a33;
@@ -263,8 +265,16 @@ class SampleCardUIBuilder:
         c.time_label.setFixedSize(90, 24)
         c.time_label.setObjectName("TimeLabel")
 
-        # Waveform container (rempli dynamiquement)
-        c.waveform_layout = QHBoxLayout()
+        # Waveform container (rempli dynamiquement).
+        # Il sera affiche via un QStackedLayout dans l'espace "editor" (ligne 3).
+        c.waveform_container = QWidget()
+        c.waveform_container.setObjectName("WaveformContainer")
+        c.waveform_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        c.waveform_layout = QHBoxLayout(c.waveform_container)
+        c.waveform_layout.setContentsMargins(0, 0, 0, 0)
+        c.waveform_layout.setSpacing(0)
 
         # ---- Layouts
         main_layout = QVBoxLayout(c)
@@ -319,15 +329,44 @@ class SampleCardUIBuilder:
         info_layout.addWidget(right_box, 1)
         main_layout.addLayout(info_layout)
 
-        playback_layout = QHBoxLayout()
+        # Playback container : on l'anime (maxHeight) en meme temps que le waveform
+        # pour eviter l'effet "la card remonte puis redescend".
+        c.playback_container = QWidget()
+        c.playback_container.setObjectName("PlaybackContainer")
+        c.playback_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        playback_layout = QHBoxLayout(c.playback_container)
+        playback_layout.setContentsMargins(0, 0, 0, 0)
         playback_layout.setSpacing(8)
         playback_layout.addWidget(c.play_button)
         c.playback_slider.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         playback_layout.addWidget(c.playback_slider, 1)
         playback_layout.addWidget(c.time_label)
-        main_layout.addLayout(playback_layout)
+        # Fixe le maxHeight au sizeHint pour que l'animation parte d'une valeur reelle
+        # (sinon maximumHeight == "inf" et l'anim ne se voit presque pas).
+        c.playback_height_hint = c.playback_container.sizeHint().height()
+        c.playback_container.setMaximumHeight(c.playback_height_hint)
+        # Espace "editor" (ligne 3) : un seul bloc qui affiche soit le playback,
+        # soit le waveform editor. On animera la hauteur de ce bloc pour que les
+        # 2 premieres lignes ne bougent jamais.
+        c.editor_container = QWidget()
+        c.editor_container.setObjectName("EditorContainer")
+        c.editor_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        c.editor_stack = QStackedLayout(c.editor_container)
+        c.editor_stack.setContentsMargins(0, 0, 0, 0)
+        c.editor_stack.setSpacing(0)
+        c.editor_stack.addWidget(c.playback_container)
+        c.editor_stack.addWidget(c.waveform_container)
+        c.editor_stack.setCurrentWidget(c.playback_container)
+        c.editor_container.setMaximumHeight(c.playback_height_hint)
+        main_layout.addWidget(c.editor_container)
 
-        main_layout.addLayout(c.waveform_layout)
+        # Si la carte obtient temporairement plus de hauteur (ex: pendant une anim),
+        # cette stretch absorbe l'extra en bas et evite que les lignes 1/2 "flottent".
+        main_layout.addStretch(1)
 
         # Masquer les champs de renommage par defaut
         c.rename_input.setVisible(False)
