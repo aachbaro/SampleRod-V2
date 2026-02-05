@@ -31,7 +31,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
-    QPushButton,
     QLabel,
     QLineEdit,
 )
@@ -41,8 +40,6 @@ from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from .directory_list_widget import DirectoryListWidget
 
 # ----------------------------------------------------------------------------- tokens
-CHOOSE_FOLDER_TEXT = "Choose folder"
-
 # Palette (coherente avec SampleCard / Waveform)
 BG_PANEL = "#1b1b1b"
 BG_PANEL_HOVER = "#202020"
@@ -67,10 +64,11 @@ def build_directory_widget_ui(widget) -> None:
     """
     Construit l'UI de base du DirectoryWidget.
 
-    Le widget doit exposer:
-    - _on_choose() : handler du bouton
-    - list_widget : sera cree par le DirectoryWidget (DirectoryListWidget)
-      (on le cree ici pour garder toute la construction UI a un seul endroit)
+    Convention:
+    - On cree ici les sous-widgets (label de chemin + liste) pour garder toute la
+      construction UI dans un seul fichier.
+    - Le "choix du dossier" se fait dans MainWindow (Add directory -> QFileDialog),
+      donc DirectoryWidget n'embarque pas de bouton "Choose folder".
     """
     # Container style / tokens
     widget.setObjectName("DirectoryWidget")
@@ -80,18 +78,32 @@ def build_directory_widget_ui(widget) -> None:
     layout.setContentsMargins(10, 10, 10, 10)
     layout.setSpacing(8)
 
-    widget.choose_btn = QPushButton(CHOOSE_FOLDER_TEXT)
-    widget.choose_btn.setObjectName("DirectoryChooseButton")
-    widget.choose_btn.clicked.connect(widget._on_choose)
+    # On n'a plus de bouton "Choose folder" ici: l'ajout d'un onglet directory
+    # se fait directement depuis MainWindow (Add directory -> QFileDialog).
+    widget.path_label = QLabel("")
+    widget.path_label.setObjectName("DirectoryPathLabel")
 
     widget.list_widget = DirectoryListWidget(widget)
     widget.list_widget.setObjectName("DirectoryList")
     widget.list_widget.setSpacing(6)
 
-    layout.addWidget(widget.choose_btn)
+    layout.addWidget(widget.path_label)
     layout.addWidget(widget.list_widget)
 
     apply_styles(widget)
+
+
+def set_directory_path(widget, path: str) -> None:
+    """
+    Met a jour le label de chemin, si present.
+    (Le label vit dans l'UI, mais la valeur vient de la logique du widget.)
+    """
+    lbl = getattr(widget, "path_label", None)
+    if lbl is None:
+        return
+    # Affichage compact: basename, avec tooltip full path.
+    lbl.setText(os.path.basename(path) or path)
+    lbl.setToolTip(path)
 
 
 def build_directory_item_ui(
@@ -193,20 +205,10 @@ def apply_styles(widget) -> None:
             border-radius: 10px;
         }}
 
-        QPushButton#DirectoryChooseButton {{
-            background-color: #222222;
-            color: #e6e6e6;
-            border: 1px solid {BORDER_PANEL};
-            border-radius: 8px;
-            padding: 6px 10px;
-            text-align: left;
-        }}
-        QPushButton#DirectoryChooseButton:hover {{
-            background-color: {BG_PANEL_HOVER};
-            border-color: {BORDER_PANEL_HOVER};
-        }}
-        QPushButton#DirectoryChooseButton:pressed {{
-            background-color: #242424;
+        QLabel#DirectoryPathLabel {{
+            color: {TEXT_MUTED};
+            font-size: 11px;
+            padding: 2px 2px 0px 2px;
         }}
 
         QListWidget#DirectoryList {{

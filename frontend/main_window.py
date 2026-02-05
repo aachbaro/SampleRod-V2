@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QFileDialog,
     QSizePolicy,
     QSplitter,
     QGroupBox,
@@ -274,11 +275,29 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Directories
     def _add_directory_tab(self, path: str | None = None):
+        # UX: le bouton "Add directory" ouvre directement un QFileDialog,
+        # on ne garde pas de "Choose folder" a l'interieur du DirectoryWidget.
+        if not path:
+            qs = QSettings("SampleRod", "Main")
+            start_dir = qs.value("last_directory", "", type=str) or os.path.expanduser("~")
+            selected = QFileDialog.getExistingDirectory(self, "Choisir un dossier", start_dir)
+            if not selected:
+                return  # Annule -> pas d'onglet cree
+            path = selected
+
+        # Evite d'ouvrir deux onglets sur le meme dossier.
+        for i in range(self.dir_tab_widget.count()):
+            existing = self.dir_tab_widget.widget(i)
+            if getattr(existing, "current_dir", None) == path:
+                self.dir_tab_widget.setCurrentIndex(i)
+                return
+
         widget = DirectoryWidget(self.directory_service, self.app_context, path=path)
         widget.directoryChanged.connect(
             lambda path, w=widget: self._update_dir_tab_text(w, path)
         )
-        index = self.dir_tab_widget.addTab(widget, "New directory")
+        tab_name = os.path.basename(path) or path
+        index = self.dir_tab_widget.addTab(widget, tab_name)
         self.dir_tab_widget.setCurrentIndex(index)
         if path:
             self._update_dir_tab_text(widget, path)

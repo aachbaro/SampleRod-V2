@@ -9,7 +9,8 @@ dossier de samples et d'y importer du contenu via drag & drop.
 
 Fonctionnalites principales
 ---------------------------
-- Choisir un dossier cible (QFileDialog) + persister l'historique (QSettings).
+- Ouvrir un dossier cible (selectionne dans MainWindow via QFileDialog) + persister
+  l'historique (QSettings).
 - Lister les fichiers audio presents dans le dossier.
 - Importer des elements par drag & drop (MIME types custom) :
   - application/x-sample-slice-data : slice depuis le MarkerManager (audio_data+sr)
@@ -41,12 +42,7 @@ Ce decoupage prepare l'arrivee d'autres outils dans le Right Panel (ex: Sample C
 ------------------------------------------------------------------------------
 """
 
-from PyQt6.QtWidgets import (
-    QWidget,
-    QFileDialog,
-    QSizePolicy,
-    QListWidgetItem,
-)
+from PyQt6.QtWidgets import QWidget, QSizePolicy, QListWidgetItem
 from PyQt6.QtCore import pyqtSignal, QSettings
 import wave
 
@@ -88,27 +84,21 @@ class DirectoryWidget(QWidget):
         self.setMinimumWidth(100)
         logger.info("[DirectoryWidget] Initialisation")
 
-        if path:
-            self.open_directory(path)
+        # Si un dossier est connu a l'init (path explicite ou dernier dossier en memoire),
+        # on l'ouvre directement. (Sinon le widget reste vide.)
+        if self.current_dir:
+            self.open_directory(self.current_dir)
 
     def _build_ui(self):
         # Construction UI centralisee dans directory_ui.py (layout + widgets).
         directory_ui.build_directory_widget_ui(self)
-
-    def _on_choose(self):
-        start_dir = self.current_dir or os.path.expanduser("~")
-        d = QFileDialog.getExistingDirectory(self, "Choose folder", start_dir)
-        if d:
-            self.open_directory(d)
-            logger.info(f"[DirectoryWidget] Dossier sélectionné : {d}")
-        else:
-            logger.info("[DirectoryWidget] Sélection de dossier annulée")
 
     def open_directory(self, path: str) -> None:
         """Set current directory, refresh list and update history."""
         if not path:
             return
         self.current_dir = path
+        directory_ui.set_directory_path(self, path)
         self.history.set_last_directory(path)
         self.history.add_recent_directory(path)
         self.refresh_list()
