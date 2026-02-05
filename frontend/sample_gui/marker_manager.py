@@ -1,6 +1,6 @@
-from PyQt6.QtCore import Qt, QMimeData
+from PyQt6.QtCore import Qt, QMimeData, QVariantAnimation, QEasingCurve, QEvent, QRectF
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem
-from PyQt6.QtGui import QDrag
+from PyQt6.QtGui import QDrag, QPainter, QPen, QColor
 import pyqtgraph as pg
 import numpy as np
 import bisect
@@ -17,6 +17,39 @@ class MarkerListWidget(QListWidget):
         self.editor = editor
         self.setDragEnabled(True)
 
+        # UI: animation douce du contour (utilise pour indiquer que "Marker mode" est actif).
+        self._active_border_t = 0.0  # 0..1
+        self._active_border_anim = QVariantAnimation(self)
+        self._active_border_anim.setDuration(160)
+        self._active_border_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._active_border_anim.valueChanged.connect(self._on_active_border_anim_value)
+
+    def set_active_border(self, active: bool):
+        """
+        Active/desactive un "highlight" de contour (blanc) avec transition.
+        On l'utilise pour donner un feedback visuel quand le mode marker est ON.
+        """
+        target = 1.0 if active else 0.0
+        if abs(self._active_border_t - target) < 1e-6:
+            return
+
+        self._active_border_anim.stop()
+        self._active_border_anim.setStartValue(float(self._active_border_t))
+        self._active_border_anim.setEndValue(float(target))
+        self._active_border_anim.start()
+
+    def _on_active_border_anim_value(self, value):
+        try:
+            self._active_border_t = float(value)
+        except Exception:
+            self._active_border_t = 0.0
+        # Le rendu des items d'un QListWidget se fait sur le viewport() (QAbstractScrollArea).
+        # Pour etre sur que notre overlay se repaint, on force l'update du viewport.
+        try:
+            self.viewport().update()
+        except Exception:
+            self.update()
+
     def wheelEvent(self, event):
         """
         Important UX:
@@ -29,6 +62,47 @@ class MarkerListWidget(QListWidget):
         """
         super().wheelEvent(event)
         event.accept()
+
+    def viewportEvent(self, event):
+        """
+        Pour un QAbstractScrollArea (QListWidget), le contenu est peint sur le viewport().
+        Si on dessine dans paintEvent() du widget parent, le viewport peut recouvrir
+        notre dessin (d'où "ça ne marche pas").
+
+        Ici on laisse Qt peindre normalement, puis on dessine notre contour "actif"
+        par-dessus, directement sur le viewport.
+        """
+        res = super().viewportEvent(event)
+
+        if event.type() == QEvent.Type.Paint:
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+            # Bordure base (gris) -> bordure active (blanc) avec interpolation.
+            t = max(0.0, min(1.0, float(self._active_border_t)))
+            base = QColor(0x2A, 0x2A, 0x2A)
+            active = QColor(255, 255, 255)
+            color = QColor(
+                int(base.red() + (active.red() - base.red()) * t),
+                int(base.green() + (active.green() - base.green()) * t),
+                int(base.blue() + (active.blue() - base.blue()) * t),
+            )
+
+            pen_w = 2.0
+            pen = QPen(color, pen_w)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
+            # Inset pour eviter le clipping du stroke (surtout en 2px + antialiasing).
+            rect = QRectF(self.viewport().rect())
+            inset = pen_w / 2.0
+            rect.adjust(inset, inset, -inset, -inset)
+            r = rect.width() / 2.0  # "pill" radius
+            painter.drawRoundedRect(rect, r, r)
+
+        return res
 
     def startDrag(self, supportedActions):
         item = self.currentItem()
@@ -99,7 +173,11 @@ class MarkerManager:
             s1 = int(end_t * sr)
             slice_array = data[s0:s1].astype("float32") if data is not None else np.array([], dtype="float32")
             duration = end_t - t
-            item = QListWidgetItem(f"M{i+1} — {t:.3f}s ({duration:.2f}s)")
+            # UI: colonne fine -> texte tres court (1, 2, 3...).
+            # Les details restent accessibles au hover via le tooltip.
+            item = QListWidgetItem(f"{i+1}")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setToolTip(f"M{i+1} — {t:.3f}s ({duration:.2f}s)")
             payload = {
                 "time": t,
                 "audio_data": slice_array,

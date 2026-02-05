@@ -1,4 +1,4 @@
-# RoadToDev - Overview
+# SampleRod - Overview
 
 Ce document decrit l'objectif du projet, son architecture generale, et une
 liste des prochaines evolutions a faire. Il sert de point d'entree pour
@@ -45,6 +45,7 @@ Application audio desktop avec:
 - ajouter echape pour annuler le renaming dans le directory widget
 - faire un loader pour la fermeture de l'application
 - Problème: Lorsque je click gauche sur la waveform pendant le playback apres la barre de lecture en mode loop enabled, ça deplace la tete de lecture apres le marqueur de selection, comme si ça faisait playstart + temps de lecture en cours
+- ajouter une animation sur lajout et le retrait de sample dans la liste
 
 ## Faits
 - Clic droit sur la waveform pour lancer la lecture a cet endroit.

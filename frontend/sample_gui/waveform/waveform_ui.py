@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QToolButton,
     QFrame,
+    QWidget,
 )
 import pyqtgraph as pg
 import qtawesome as qta
@@ -220,10 +221,11 @@ class WaveformUIBuilder:
 
         editor_layout.addLayout(toolbar_layout)
 
-        # ----- Waveform plot (zone centrale)
+        # ----- Waveform plot (zone centrale) + colonne markers (droite)
         # — Waveform plot
+        plot_height = 158
         w.plot = pg.PlotWidget(viewBox=self.viewbox_cls())
-        w.plot.setFixedHeight(158)
+        w.plot.setFixedHeight(plot_height)
         w.plot.showGrid(x=True, y=True, alpha=0.15)
         w.plot.setBackground("#1B1B1B")
         w.plot.hideAxis("left")
@@ -243,7 +245,31 @@ class WaveformUIBuilder:
         vb = w.plot.getViewBox()
         vb.sigXRangeChanged.connect(w._on_view_range_changed)
 
-        editor_layout.addWidget(w.plot)
+        # Layout horizontal: waveform a gauche, colonne markers a droite.
+        plot_row = QWidget()
+        plot_row.setObjectName("WaveformPlotRow")
+        plot_row_layout = QHBoxLayout(plot_row)
+        plot_row_layout.setContentsMargins(0, 0, 0, 0)
+        plot_row_layout.setSpacing(6)
+        plot_row_layout.addWidget(w.plot, 1)
+
+        # Colonne markers (fine, a droite).
+        w.marker_list = MarkerListWidget(w)
+        w.marker_list.setObjectName("MarkerList")
+        w.marker_list.setFrameShape(QFrame.Shape.NoFrame)
+        # La colonne doit "matcher" les boutons ronds (24px).
+        # On affiche uniquement l'index numerique du marker (1,2,3...) en petit.
+        w.marker_list.setFixedWidth(24)
+        w.marker_list.setFixedHeight(plot_height)
+        w.marker_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        w.marker_list.itemClicked.connect(w.on_marker_list_clicked)
+        w.marker_list.itemDoubleClicked.connect(w.on_marker_list_double_clicked)
+        w.marker_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Scrollbar cachee -> colonne plus clean (le wheel scroll fonctionne quand meme).
+        w.marker_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        plot_row_layout.addWidget(w.marker_list, 0, alignment=Qt.AlignmentFlag.AlignTop)
+
+        editor_layout.addWidget(plot_row)
 
         # ----- Barre de controles (play/pause/stop/loop + toggles)
         # — Contrôles
@@ -337,18 +363,6 @@ class WaveformUIBuilder:
         w.stop_timer_signal.connect(w.timer.stop)
         w.timer.start(5)
 
-        # ----- Liste des markers (en bas)
-        # — Liste des marqueurs (visibilité gérée après instanciation de marker_manager)
-        w.marker_list = MarkerListWidget(w)
-        w.marker_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        w.marker_list.itemClicked.connect(w.on_marker_list_clicked)
-        w.marker_list.itemDoubleClicked.connect(w.on_marker_list_double_clicked)
-        # Par défaut on la garde "pliée" : elle s'animera quand un marker existe.
-        w.marker_list.setVisible(False)
-        w.marker_list.setMinimumHeight(0)
-        w.marker_list.setMaximumHeight(0)
-        editor_layout.addWidget(w.marker_list)
-
         # ----- EventFilter pour les interactions (clic / drag / raccourcis)
         # — Install filter une seule fois
         w.plot.getViewBox().scene().installEventFilter(w)
@@ -375,9 +389,23 @@ class WaveformUIBuilder:
                 padding: 4px;
                 color: #D6D6D6;
             }
+            /* Colonne markers: padding plus faible + items centres */
+            QListWidget#MarkerList {
+                border-radius: 12px;
+                padding: 0px;
+                font-size: 10px;
+                font-weight: 600;
+                /* Bordure dessinee en custom paint (pour animation) */
+                border: none;
+            }
             QListWidget::item {
                 padding: 4px 6px;
                 border-radius: 6px;
+            }
+            QListWidget#MarkerList::item {
+                padding: 0px;
+                margin: 2px 2px;
+                min-height: 16px;
             }
             QListWidget::item:selected {
                 background: #262626;
