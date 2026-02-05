@@ -1,0 +1,190 @@
+"""
+------------------------------------------------------------------------------
+Directory Widget (Right Panel Tool)
+------------------------------------------------------------------------------
+Role / intention
+----------------
+Ce module implemente le "DirectoryWidget" : un outil UI qui permet de gerer un
+dossier de samples et d'y importer du contenu via drag & drop.
+
+Fonctionnalites principales
+---------------------------
+- Choisir un dossier cible (QFileDialog) + persister l'historique (QSettings).
+- Lister les fichiers audio presents dans le dossier.
+- Importer des elements par drag & drop (MIME types custom) :
+  - application/x-sample-slice-data : slice depuis le MarkerManager (audio_data+sr)
+  - application/x-sample-card       : sample entier depuis une SampleCard (sample_id)
+- Pre-ecoute rapide (play/pause) via l'audio_player partage (AppContext).
+- Renommer inline et supprimer un fichier (via sample_store).
+- Se synchroniser avec le reste de l'app via les signaux du sample_store
+  (rename/delete/move) pour garder la liste a jour.
+
+Position dans l'architecture
+----------------------------
+- UI (ce fichier) : interactions utilisateur + rendu widgets.
+- DirectoryService (backend) : logique "import depuis drop" + copy/save.
+- AppContext : fournit sample_store (DB/cache) et audio_player (preview).
+
+Notes / refactor (en cours)
+---------------------------
+On est en train de decouper ce module (meme approche que waveform.py / sample_card.py).
+Premiere extraction deja faite:
+- DirectoryListItemWidget -> directory_item_widget.py
+
+Prochaines extractions probables:
+- DnD: fait -> directory_list_widget.py + directory_dnd.py (un seul drop target).
+- Preview: fait -> directory_preview.py (un seul item en lecture a la fois).
+- Store sync + historique QSettings: fait -> directory_store_sync.py + directory_history.py
+- UI: fait -> directory_ui.py (construction layout + row widget)
+
+Ce decoupage prepare l'arrivee d'autres outils dans le Right Panel (ex: Sample Composer).
+------------------------------------------------------------------------------
+"""
+
+from PyQt6.QtWidgets import (
+    QWidget,
+    QFileDialog,
+    QSizePolicy,
+    QListWidgetItem,
+)
+from PyQt6.QtCore import pyqtSignal, QSettings
+import wave
+
+from backend.services.directory_service import DirectoryService
+from backend.models.AppContext import AppContext
+from .directory_item_widget import DirectoryListItemWidget
+from .directory_history import DirectoryHistory
+from .directory_preview import DirectoryPreviewController
+from .directory_store_sync import DirectoryStoreSync
+from . import directory_ui
+
+import os
+import logging
+logger = logging.getLogger("directory_widget")
+
+class DirectoryWidget(QWidget):
+    """Widget UI pour importer / pre-ecouter / renommer / supprimer des samples dans un dossier."""
+    # Signal émis quand on change de dossier
+    directoryChanged = pyqtSignal(str)
+
+    def __init__(self, service: DirectoryService, app_context: AppContext, parent=None, path: str | None = None):
+        super().__init__(parent)
+        self.service = service
+        self.app_context = app_context
+        # Controller: gere la logique de preview (un seul item en lecture a la fois).
+        self.preview = DirectoryPreviewController(
+            audio_player=self.app_context.audio_player,
+            duration_provider=self._get_duration,
+        )
+        self._items_by_id = {}
+        self._qs = QSettings("SampleRod", "Main")
+        self.history = DirectoryHistory(self._qs)
+        self.current_dir = path or self.history.get_last_directory()
+        self._build_ui()
+
+        # Synchro store -> UI (rename/delete/move) via un QObject parented a ce widget.
+        self.store_sync = DirectoryStoreSync(self, self.app_context.sample_store)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.setMinimumWidth(100)
+        logger.info("[DirectoryWidget] Initialisation")
+
+        if path:
+            self.open_directory(path)
+
+    def _build_ui(self):
+        # Construction UI centralisee dans directory_ui.py (layout + widgets).
+        directory_ui.build_directory_widget_ui(self)
+
+    def _on_choose(self):
+        start_dir = self.current_dir or os.path.expanduser("~")
+        d = QFileDialog.getExistingDirectory(self, "Choose folder", start_dir)
+        if d:
+            self.open_directory(d)
+            logger.info(f"[DirectoryWidget] Dossier sélectionné : {d}")
+        else:
+            logger.info("[DirectoryWidget] Sélection de dossier annulée")
+
+    def open_directory(self, path: str) -> None:
+        """Set current directory, refresh list and update history."""
+        if not path:
+            return
+        self.current_dir = path
+        self.history.set_last_directory(path)
+        self.history.add_recent_directory(path)
+        self.refresh_list()
+        self.directoryChanged.emit(path)
+
+    def _get_duration(self, path: str) -> float:
+        """Return duration of a wav file in seconds."""
+        try:
+            with wave.open(path, 'rb') as w:
+                return w.getnframes() / w.getframerate()
+        except Exception:
+            return 0.0
+
+    def toggle_preview(self, item_widget: 'DirectoryListItemWidget') -> None:
+        """Toggle playback (delegue au DirectoryPreviewController)."""
+        self.preview.toggle(item_widget)
+
+    def refresh_list(self):
+        # Evite de garder une reference vers un widget Qt qui va etre detruit par clear().
+        self.preview.detach_current_widget()
+        self.list_widget.clear()
+        self._items_by_id.clear()
+        if self.current_dir:
+            files = self.service.list_samples(self.current_dir)
+            logger.info(
+                f"[DirectoryWidget] Rafraîchissement de la liste ({len(files)} fichiers)"
+            )
+            cache = {
+                s.path: s.id
+                for s in self.app_context.sample_store.get_cached()
+            }
+            for name in files:
+                path = os.path.join(self.current_dir, name)
+                sample_id = cache.get(path)
+                self._add_row(path, sample_id)
+
+    # ------------------------------------------------------------------ list ops (used by store sync)
+    def _add_row(self, path: str, sample_id: int | None) -> None:
+        item_widget = DirectoryListItemWidget(path, self, sample_id)
+        list_item = QListWidgetItem(self.list_widget)
+        list_item.setSizeHint(item_widget.sizeHint())
+        self.list_widget.addItem(list_item)
+        self.list_widget.setItemWidget(list_item, item_widget)
+        if sample_id is not None:
+            self._items_by_id[sample_id] = (list_item, item_widget)
+
+    def _update_row(self, sample_id: int, new_path: str) -> None:
+        item = self._items_by_id.get(sample_id)
+        if not item:
+            return
+        _, widget = item
+        widget.file_path = new_path
+        widget.name_label.setText(os.path.basename(new_path))
+        base = os.path.splitext(os.path.basename(new_path))[0]
+        widget.rename_input.setText(base)
+
+    def _remove_row(self, sample_id: int) -> None:
+        item = self._items_by_id.get(sample_id)
+        if not item:
+            return
+        _, widget = item
+        self._remove_widget(widget)
+
+    def _remove_widget(self, widget: 'DirectoryListItemWidget') -> None:
+        # IMPORTANT: si le widget etait en preview, on detache/stoppe proprement avant destruction.
+        self.preview.on_widget_removed(widget)
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if self.list_widget.itemWidget(item) is widget:
+                self.list_widget.takeItem(i)
+                widget.deleteLater()
+                break
+        if widget.sample_id is not None:
+            self._items_by_id.pop(widget.sample_id, None)
+
+    @staticmethod
+    def remove_from_history(path: str) -> None:
+        """Remove a directory from the stored history."""
+        DirectoryHistory.remove_from_history(path)

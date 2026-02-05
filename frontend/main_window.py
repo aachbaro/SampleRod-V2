@@ -26,7 +26,7 @@ from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
-from frontend.directory_widget import DirectoryWidget
+from frontend.right_panel.directory.directory_widget import DirectoryWidget
 
 from backend.services.directory_service import DirectoryService
 

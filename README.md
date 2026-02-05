@@ -32,11 +32,8 @@ Application audio desktop avec:
 - Waveform Editor: [README_WAVEFORM_EDITOR.md](README_WAVEFORM_EDITOR.md)
 
 ## Trucs a faire (backlog)
-- Refonte UI du Waveform Editor (ergonomie + outils visibles).
 - Refonte UI du Directory Widget (lisibilite + actions rapides).
-- Refactor `sample_card.py` et `sample_list.py` (alleger + organiser comme Waveform).
 - Refactor `record_widget.py` (separer UI / logique comme les autres).
-- Revoir l'arborescence `frontend/` (regrouper widgets / views / controllers).
 - Refactor les fichiers trop gros
 - Concateneur de samples
 - Modifier l'ui pour le record widget
@@ -46,6 +43,12 @@ Application audio desktop avec:
 - faire un loader pour la fermeture de l'application
 - Problème: Lorsque je click gauche sur la waveform pendant le playback apres la barre de lecture en mode loop enabled, ça deplace la tete de lecture apres le marqueur de selection, comme si ça faisait playstart + temps de lecture en cours
 - ajouter une animation sur lajout et le retrait de sample dans la liste
+- il semble y avoir un probleme sur le sample focus quand je suis entrain d'editer le nom d'un sample, si jen focus un autre il y a deux sample avec la bordure jaune
+- peut etre un ajouteur de prefix sur selection, genre la jai une succession de sample qui sont a peu pres pareils, je pourrais les selectionner et mettre un nom commun et leurs nom initiaux apres
+
 
 ## Faits
 - Clic droit sur la waveform pour lancer la lecture a cet endroit.
+- Refonte UI du Waveform Editor (ergonomie + outils visibles).
+- Refactor `sample_card.py` et `sample_list.py` (alleger + organiser comme Waveform).
+- Revoir l'arborescence `frontend/` (regrouper widgets / views / controllers).
