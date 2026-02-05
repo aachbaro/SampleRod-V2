@@ -32,7 +32,6 @@ Application audio desktop avec:
 - Waveform Editor: [README_WAVEFORM_EDITOR.md](README_WAVEFORM_EDITOR.md)
 
 ## Trucs a faire (backlog)
-- Refonte UI du Directory Widget (lisibilite + actions rapides).
 - Refactor `record_widget.py` (separer UI / logique comme les autres).
 - Refactor les fichiers trop gros
 - Concateneur de samples
@@ -52,3 +51,4 @@ Application audio desktop avec:
 - Refonte UI du Waveform Editor (ergonomie + outils visibles).
 - Refactor `sample_card.py` et `sample_list.py` (alleger + organiser comme Waveform).
 - Revoir l'arborescence `frontend/` (regrouper widgets / views / controllers).
+- Refonte UI du Directory Widget (lisibilite + actions rapides).

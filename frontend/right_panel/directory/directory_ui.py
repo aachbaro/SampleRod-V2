@@ -28,12 +28,7 @@ import os
 
 import qtawesome as qta
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-)
+from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 
@@ -78,16 +73,10 @@ def build_directory_widget_ui(widget) -> None:
     layout.setContentsMargins(10, 10, 10, 10)
     layout.setSpacing(8)
 
-    # On n'a plus de bouton "Choose folder" ici: l'ajout d'un onglet directory
-    # se fait directement depuis MainWindow (Add directory -> QFileDialog).
-    widget.path_label = QLabel("")
-    widget.path_label.setObjectName("DirectoryPathLabel")
-
     widget.list_widget = DirectoryListWidget(widget)
     widget.list_widget.setObjectName("DirectoryList")
     widget.list_widget.setSpacing(6)
 
-    layout.addWidget(widget.path_label)
     layout.addWidget(widget.list_widget)
 
     apply_styles(widget)
@@ -203,12 +192,6 @@ def apply_styles(widget) -> None:
             background-color: {BG_PANEL};
             border: 1px solid {BORDER_PANEL};
             border-radius: 10px;
-        }}
-
-        QLabel#DirectoryPathLabel {{
-            color: {TEXT_MUTED};
-            font-size: 11px;
-            padding: 2px 2px 0px 2px;
         }}
 
         QListWidget#DirectoryList {{

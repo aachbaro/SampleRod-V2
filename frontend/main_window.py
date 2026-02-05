@@ -28,6 +28,7 @@ from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.right_panel.directory.directory_widget import DirectoryWidget
+from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 
 from backend.services.directory_service import DirectoryService
 
@@ -54,6 +55,25 @@ class MainWindow(QMainWindow):
         """Construit l'interface utilisateur"""
         # Conteneur d'onglets
         self.tab_widget = QTabWidget(self)
+        self.tab_widget.setObjectName("MainTabWidget")
+        # Theme global (fond) : on veut que les "gaps" autour des widgets (marges, splitters,
+        # etc.) soient coherents avec le reste (SampleCard / SampleList / Waveform).
+        # On limite volontairement le scope via des objectName pour eviter des effets de bord.
+        self.setObjectName("MainWindow")
+        self.setStyleSheet(
+            """
+            QMainWindow#MainWindow {
+                background-color: #121212;
+            }
+            QTabWidget#MainTabWidget {
+                background-color: #121212;
+            }
+            QTabWidget#MainTabWidget::pane {
+                border: none;
+                background-color: #121212;
+            }
+            """
+        )
         self.setCentralWidget(self.tab_widget)
 
         # --- Onglet 'Enregistrement' (pop-up flottant)
@@ -71,13 +91,39 @@ class MainWindow(QMainWindow):
         # ---- Panel directory tabs ----
         dir_panel = QWidget()
         dir_layout = QVBoxLayout(dir_panel)
-        self.add_dir_btn = QPushButton("Add directory")
-        self.add_dir_btn.clicked.connect(self._add_directory_tab)
         self.dir_tab_widget = QTabWidget()
+        # Important pour un bouton "corner" type Chrome:
+        # - setExpanding(False) laisse de la place au coin droit (sinon les tabs
+        #   prennent toute la largeur et le bouton peut se retrouver mal place / coupe).
+        # - setUsesScrollButtons(True) permet de scroller les tabs quand il y en a beaucoup,
+        #   au lieu de les compresser a l'infini.
+        self.dir_tab_widget.setDocumentMode(True)
+        dir_tab_bar = self.dir_tab_widget.tabBar()
+        dir_tab_bar.setExpanding(False)
+        dir_tab_bar.setUsesScrollButtons(True)
+        dir_tab_bar.setMovable(True)
         self.dir_tab_widget.setTabsClosable(True)
         self.dir_tab_widget.tabCloseRequested.connect(self._close_directory_tab)
-        dir_layout.addWidget(self.add_dir_btn)
         dir_layout.addWidget(self.dir_tab_widget)
+
+        # Bouton + en bas a droite (plus discret, laisse la tab bar "native").
+        dir_footer = QHBoxLayout()
+        dir_footer.setContentsMargins(0, 0, 0, 0)
+        dir_footer.addStretch(1)
+        self.add_dir_btn = HoverIconButton(
+            icon_name="fa5s.plus",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#cfcfcf",
+            icon_color_hover="#121212",
+            border_color="#2a2a2a",
+            parent=dir_panel,
+        )
+        self.add_dir_btn.setToolTip("Ajouter un dossier")
+        self.add_dir_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_dir_btn.clicked.connect(self._add_directory_tab)
+        dir_footer.addWidget(self.add_dir_btn)
+        dir_layout.addLayout(dir_footer)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.sample_list_widget)
