@@ -79,6 +79,7 @@ class HoverCloseTabBar(QTabBar):
         btn.setEnabled(False)
 
         self.setTabButton(index, QTabBar.ButtonPosition.RightSide, btn)
+        self._style_scroll_buttons()
 
     def tabRemoved(self, index: int) -> None:  # noqa: N802 (Qt API)
         super().tabRemoved(index)
@@ -87,6 +88,7 @@ class HoverCloseTabBar(QTabBar):
             self._hover_index = -1
         elif self._hover_index > index:
             self._hover_index -= 1
+        self._style_scroll_buttons()
 
     def _on_close_clicked(self) -> None:
         btn = self.sender()
@@ -109,6 +111,36 @@ class HoverCloseTabBar(QTabBar):
     def leaveEvent(self, ev):  # noqa: ANN001 (Qt signature)
         self._set_hover_tab(-1)
         super().leaveEvent(ev)
+        self._style_scroll_buttons()
+
+    def showEvent(self, ev):  # noqa: ANN001 (Qt signature)
+        super().showEvent(ev)
+        self._style_scroll_buttons()
+
+    def resizeEvent(self, ev):  # noqa: ANN001 (Qt signature)
+        super().resizeEvent(ev)
+        self._style_scroll_buttons()
+
+    def wheelEvent(self, ev):  # noqa: ANN001 (Qt signature)
+        """
+        Navigation sans fleches:
+        la molette passe a l'onglet suivant/precedent et Qt fait defiler la tab bar
+        pour rendre l'onglet courant visible (si usesScrollButtons=True).
+        """
+        delta_y = ev.angleDelta().y()
+        delta_x = ev.angleDelta().x()
+        delta = delta_y if delta_y != 0 else delta_x
+        if delta == 0 or self.count() == 0:
+            super().wheelEvent(ev)
+            return
+
+        idx = self.currentIndex()
+        if delta < 0:
+            idx = min(self.count() - 1, idx + 1)
+        else:
+            idx = max(0, idx - 1)
+        self.setCurrentIndex(idx)
+        ev.accept()
 
     def eventFilter(self, obj, ev):  # noqa: ANN001 (Qt signature)
         # Make the close icon a bit stronger when hovering the X itself.
@@ -118,6 +150,24 @@ class HoverCloseTabBar(QTabBar):
             elif ev.type() == QEvent.Type.Leave:
                 obj.setIcon(self._icon_close)
         return super().eventFilter(obj, ev)
+
+    def _style_scroll_buttons(self) -> None:
+        """
+        Retire l'affichage des fleches de navigation du QTabBar (scroll-left/right),
+        tout en gardant le "scroll mode" actif (sinon Qt compresse les onglets).
+
+        Note: on ne doit PAS faire `hide()` / taille 0, sinon la tab bar peut repasser
+        en mode "fit" (onglets qui retrecissent + elide). On les rend juste invisibles.
+        """
+        for btn in self.findChildren(QToolButton):
+            # Les scroll buttons utilisent arrowType (Left/Right) alors que nos croix
+            # utilisent une icone (arrowType = NoArrow).
+            if btn.arrowType() in (Qt.ArrowType.LeftArrow, Qt.ArrowType.RightArrow):
+                # Visible mais "invisible": garde le layout/scroll mode stable.
+                btn.setArrowType(Qt.ArrowType.NoArrow)
+                btn.setFixedSize(1, 1)
+                btn.setStyleSheet("QToolButton { border: none; background: transparent; padding: 0; margin: 0; }")
+                btn.show()
 
     def _set_hover_tab(self, idx: int) -> None:
         # Hide previous

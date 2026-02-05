@@ -135,8 +135,15 @@ class RightToolsPanel(QWidget):
                 margin-right: 0px;
             }
             QTabWidget#DirectoryTabs QTabBar::tab:selected {
-                background: #202020;
-                border-color: #3a3a3a;
+                /* L'onglet actif doit donner l'impression d'etre "ouvert" (pas encapsule). */
+                background: transparent;
+                border: 1px solid transparent; /* garde la meme taille sans bordure visible */
+                color: #f5f5f5;
+                font-weight: 600;
+            }
+            QTabWidget#DirectoryTabs QTabBar::tab:selected:hover {
+                background: transparent;
+                border: 1px solid transparent;
                 color: #f5f5f5;
             }
             QTabWidget#DirectoryTabs QTabBar::tab:hover {

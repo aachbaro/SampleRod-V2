@@ -77,14 +77,16 @@ class DirectoryToolWidget(QWidget):
 
         self.dir_tab_widget = QTabWidget()
         self.dir_tab_widget.setObjectName("DirectoryTabs")
+        # On veut un "overflow" des onglets (chips taille stable) au lieu de compresser.
+        # On garde donc le mode scroll, mais on masque les fleches via HoverCloseTabBar.
+        self.dir_tab_widget.setUsesScrollButtons(True)
 
         # Tabs UX: quand il y en a beaucoup, on prefere scroller plutot que compresser.
         tab_bar = HoverCloseTabBar()
         tab_bar.closeRequested.connect(self._close_directory_tab)
         self.dir_tab_widget.setTabBar(tab_bar)
-        self.dir_tab_widget.setUsesScrollButtons(False)
         tab_bar.setMovable(True)
-        tab_bar.setUsesScrollButtons(False)  # pas de fleches
+        tab_bar.setUsesScrollButtons(True)  # overflow scroll (fleches masquees)
         tab_bar.setExpanding(False)
         tab_bar.setElideMode(Qt.TextElideMode.ElideRight)
 
