@@ -44,6 +44,7 @@ Application audio desktop avec:
 - ajouter une animation sur lajout et le retrait de sample dans la liste
 - il semble y avoir un probleme sur le sample focus quand je suis entrain d'editer le nom d'un sample, si jen focus un autre il y a deux sample avec la bordure jaune
 - peut etre un ajouteur de prefix sur selection, genre la jai une succession de sample qui sont a peu pres pareils, je pourrais les selectionner et mettre un nom commun et leurs nom initiaux apres
+- faire une fonction qui prend l'id d'un sample et temmene vers ce sample dans la liste, pour pouvoir double cliquer sur une notif ou un sample dans 
 
 
 ## Faits

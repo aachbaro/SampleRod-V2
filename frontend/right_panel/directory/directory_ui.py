@@ -189,9 +189,10 @@ def apply_styles(widget) -> None:
     widget.setStyleSheet(
         f"""
         QWidget#DirectoryWidget {{
-            background-color: {BG_PANEL};
-            border: 1px solid {BORDER_PANEL};
-            border-radius: 10px;
+            /* Le "cadre" global est porte par RightToolsPanel (carte globale).
+               Ici on garde le contenu transparent pour eviter d'empiler les bordures. */
+            background: transparent;
+            border: none;
         }}
 
         QListWidget#DirectoryList {{

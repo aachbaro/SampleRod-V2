@@ -6,14 +6,11 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QFileDialog,
-    QSizePolicy,
     QSplitter,
     QGroupBox,
     QScrollArea,
 )
-from PyQt6.QtCore import Qt, QSettings
-import os
+from PyQt6.QtCore import Qt
 import logging
 logger = logging.getLogger("main_window")
 
@@ -27,12 +24,10 @@ from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
-from frontend.right_panel.directory.directory_widget import DirectoryWidget
-from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
+from frontend.right_panel.tools_panel import RightToolsPanel
 
 from backend.services.directory_service import DirectoryService
 
-from backend.models.sample import Sample
 from backend.models.AppContext import AppContext
 
 class MainWindow(QMainWindow):
@@ -88,46 +83,15 @@ class MainWindow(QMainWindow):
             app_context=self.app_context
         )
 
-        # ---- Panel directory tabs ----
-        dir_panel = QWidget()
-        dir_layout = QVBoxLayout(dir_panel)
-        self.dir_tab_widget = QTabWidget()
-        # Important pour un bouton "corner" type Chrome:
-        # - setExpanding(False) laisse de la place au coin droit (sinon les tabs
-        #   prennent toute la largeur et le bouton peut se retrouver mal place / coupe).
-        # - setUsesScrollButtons(True) permet de scroller les tabs quand il y en a beaucoup,
-        #   au lieu de les compresser a l'infini.
-        self.dir_tab_widget.setDocumentMode(True)
-        dir_tab_bar = self.dir_tab_widget.tabBar()
-        dir_tab_bar.setExpanding(False)
-        dir_tab_bar.setUsesScrollButtons(True)
-        dir_tab_bar.setMovable(True)
-        self.dir_tab_widget.setTabsClosable(True)
-        self.dir_tab_widget.tabCloseRequested.connect(self._close_directory_tab)
-        dir_layout.addWidget(self.dir_tab_widget)
-
-        # Bouton + en bas a droite (plus discret, laisse la tab bar "native").
-        dir_footer = QHBoxLayout()
-        dir_footer.setContentsMargins(0, 0, 0, 0)
-        dir_footer.addStretch(1)
-        self.add_dir_btn = HoverIconButton(
-            icon_name="fa5s.plus",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#cfcfcf",
-            icon_color_hover="#121212",
-            border_color="#2a2a2a",
-            parent=dir_panel,
+        # ---- Right tools panel (Directory + future tools like Sample Composer) ----
+        self.right_tools_panel = RightToolsPanel(
+            directory_service=self.directory_service,
+            app_context=self.app_context,
         )
-        self.add_dir_btn.setToolTip("Ajouter un dossier")
-        self.add_dir_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_dir_btn.clicked.connect(self._add_directory_tab)
-        dir_footer.addWidget(self.add_dir_btn)
-        dir_layout.addLayout(dir_footer)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.sample_list_widget)
-        splitter.addWidget(dir_panel)
+        splitter.addWidget(self.right_tools_panel)
         splitter.setSizes([300, 150])
 
         samples_layout.addWidget(splitter)
@@ -245,8 +209,6 @@ class MainWindow(QMainWindow):
 
         self.app_context.notifications.notificationAdded.connect(self._increment_badge)
 
-        self._restore_directories()
-
     def _init_signals(self):
         """Connecte les signaux entre composants"""
         # Quand un nouvel échantillon est enregistré, on l'ajoute à la liste
@@ -298,19 +260,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(widget)
         return group
 
-    def _restore_directories(self):
-        """Reopen directories stored in settings if they still exist."""
-        qs = QSettings("SampleRod", "Main")
-        dirs = qs.value("recent_directories", [], type=list)
-        missing = []
-        for path in dirs:
-            if os.path.exists(path):
-                self._add_directory_tab(path)
-            else:
-                missing.append(path)
-        if missing:
-            logger.info(f"[MainWindow] Dossiers introuvables: {missing}")
-
     def _on_notif_button_clicked(self):
         # on inverse la visibilité du centre
         visible = not self.notif_center.isVisible()
@@ -318,46 +267,3 @@ class MainWindow(QMainWindow):
         # si on vient de l'ouvrir, on remet le badge à zéro
         if visible:
             self._clear_badge()
-
-    # ------------------------------------------------------------------ Directories
-    def _add_directory_tab(self, path: str | None = None):
-        # UX: le bouton "Add directory" ouvre directement un QFileDialog,
-        # on ne garde pas de "Choose folder" a l'interieur du DirectoryWidget.
-        if not path:
-            qs = QSettings("SampleRod", "Main")
-            start_dir = qs.value("last_directory", "", type=str) or os.path.expanduser("~")
-            selected = QFileDialog.getExistingDirectory(self, "Choisir un dossier", start_dir)
-            if not selected:
-                return  # Annule -> pas d'onglet cree
-            path = selected
-
-        # Evite d'ouvrir deux onglets sur le meme dossier.
-        for i in range(self.dir_tab_widget.count()):
-            existing = self.dir_tab_widget.widget(i)
-            if getattr(existing, "current_dir", None) == path:
-                self.dir_tab_widget.setCurrentIndex(i)
-                return
-
-        widget = DirectoryWidget(self.directory_service, self.app_context, path=path)
-        widget.directoryChanged.connect(
-            lambda path, w=widget: self._update_dir_tab_text(w, path)
-        )
-        tab_name = os.path.basename(path) or path
-        index = self.dir_tab_widget.addTab(widget, tab_name)
-        self.dir_tab_widget.setCurrentIndex(index)
-        if path:
-            self._update_dir_tab_text(widget, path)
-
-    def _update_dir_tab_text(self, widget: DirectoryWidget, path: str):
-        name = os.path.basename(path) or path
-        idx = self.dir_tab_widget.indexOf(widget)
-        if idx != -1:
-            self.dir_tab_widget.setTabText(idx, name)
-
-    def _close_directory_tab(self, index: int):
-        w = self.dir_tab_widget.widget(index)
-        if w:
-            if getattr(w, "current_dir", None):
-                DirectoryWidget.remove_from_history(w.current_dir)
-            w.deleteLater()
-        self.dir_tab_widget.removeTab(index)

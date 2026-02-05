@@ -9,7 +9,7 @@ dossier de samples et d'y importer du contenu via drag & drop.
 
 Fonctionnalites principales
 ---------------------------
-- Ouvrir un dossier cible (selectionne dans MainWindow via QFileDialog) + persister
+- Ouvrir un dossier cible (via l'outil "Directory" du Right Panel) + persister
   l'historique (QSettings).
 - Lister les fichiers audio presents dans le dossier.
 - Importer des elements par drag & drop (MIME types custom) :
