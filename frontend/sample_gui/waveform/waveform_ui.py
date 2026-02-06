@@ -233,7 +233,7 @@ class WaveformUIBuilder:
 
         # Courbes pour chaque canal (gauche et droite)
         w.curve_left = pg.PlotDataItem(pen=pg.mkPen("#E6E6E6", width=1))
-        w.curve_right = pg.PlotDataItem(pen=pg.mkPen("#B0B0B0", width=1))
+        w.curve_right = pg.PlotDataItem(pen=pg.mkPen("#DAA520", width=1))
         w.plot.addItem(w.curve_right)
         w.plot.addItem(w.curve_left)
 

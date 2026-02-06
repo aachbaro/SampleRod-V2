@@ -19,7 +19,7 @@ cycle de vie. Les regrouper ici permet:
 Contenu
 -------
 - Onglet "Dossiers" : DirectoryToolWidget (multi-onglets de dossiers)
-- Onglet "Compositeur" : SampleComposerWidget (placeholder pour le moment)
+- Onglet "Compositeur" : SampleComposerWidget (MVP: drop de slices + preview)
 ------------------------------------------------------------------------------
 """
 
