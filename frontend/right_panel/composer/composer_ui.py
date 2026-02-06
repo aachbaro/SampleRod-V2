@@ -92,16 +92,17 @@ def build_composer_widget_ui(widget) -> None:
 
     layout.addLayout(header)
 
-    # ---------------- preview row (plot + clip column)
-    row = QWidget()
-    row.setObjectName("ComposerPreviewRow")
-    row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-    row_layout = QHBoxLayout(row)
-    row_layout.setContentsMargins(0, 0, 0, 0)
-    row_layout.setSpacing(6)
+    # ---------------- preview stack (plot + list underneath)
+    preview = QWidget()
+    preview.setObjectName("ComposerPreviewStack")
+    preview.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    preview_layout = QVBoxLayout(preview)
+    preview_layout.setContentsMargins(0, 0, 0, 0)
+    preview_layout.setSpacing(8)
 
     widget.plot = pg.PlotWidget()
     widget.plot.setObjectName("ComposerPlot")
+    widget.plot.setFixedHeight(158)  # alignement avec Waveform Editor
     widget.plot.showGrid(x=True, y=True, alpha=0.15)
     widget.plot.setBackground(BG_PANEL)
     widget.plot.hideAxis("left")
@@ -116,18 +117,23 @@ def build_composer_widget_ui(widget) -> None:
     widget.plot.addItem(widget.curve_left)
     widget.plot.addItem(widget.curve)
 
-    row_layout.addWidget(widget.plot, 1)
+    preview_layout.addWidget(widget.plot, 0)
+
+    widget.time_label = QLabel("Durée: 0.00s")
+    widget.time_label.setObjectName("ComposerTimeLabel")
+    widget.time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+    preview_layout.addWidget(widget.time_label, 0)
 
     widget.clip_list = ComposerClipListWidget()
     widget.clip_list.setObjectName("ComposerClipList")
     widget.clip_list.setFrameShape(QFrame.Shape.NoFrame)
-    widget.clip_list.setFixedWidth(24)  # align avec les boutons 24px
-    widget.clip_list.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+    widget.clip_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    widget.clip_list.setFixedHeight(220)
     widget.clip_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    widget.clip_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-    row_layout.addWidget(widget.clip_list, 0)
+    widget.clip_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    preview_layout.addWidget(widget.clip_list, 0)
 
-    layout.addWidget(row, 1)
+    layout.addWidget(preview, 1)
 
     apply_styles(widget)
 
@@ -138,22 +144,27 @@ def apply_styles(widget) -> None:
         QLabel#ComposerInfoLabel {{
             font-size: 11px;
         }}
+        QLabel#ComposerTimeLabel {{
+            color: {TEXT_MUTED};
+            font-size: 10px;
+        }}
 
         /* Clip list = colonne fine type "markers" */
         QListWidget#ComposerClipList {{
             background: {BG_PANEL};
             border: 1px solid {BORDER};
             border-radius: 12px;
-            padding: 0px;
+            padding: 4px;
             color: #D6D6D6;
-            font-size: 10px;
-            font-weight: 600;
+            font-size: 11px;
+            font-weight: 500;
             outline: none;
         }}
         QListWidget#ComposerClipList::item {{
-            padding: 0px;
+            padding: 6px 8px;
             margin: 2px 2px;
-            min-height: 16px;
+            min-height: 20px;
+            border-radius: 8px;
         }}
         QListWidget#ComposerClipList::item:selected {{
             background: #262626;

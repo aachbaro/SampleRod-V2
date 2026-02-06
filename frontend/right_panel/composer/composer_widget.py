@@ -37,8 +37,11 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QListWidgetItem
+
+from frontend.sample_gui.waveform.waveform_renderer import compute_envelope
 
 from .composer_model import ComposerModel
 from .composer_ui import build_composer_widget_ui
@@ -56,6 +59,7 @@ class SampleComposerWidget(QWidget):
 
         self.model = ComposerModel(self)
         self._syncing_view = False
+        self._boundary_lines: list[pg.InfiniteLine] = []
 
         build_composer_widget_ui(self)
         self._wire_events()
@@ -152,11 +156,10 @@ class SampleComposerWidget(QWidget):
         try:
             self.clip_list.clear()
             for idx, clip in enumerate(self.model.clips):
-                item = QListWidgetItem(str(idx + 1))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item = QListWidgetItem(f"{idx + 1} — {clip.label}")
                 item.setData(Qt.ItemDataRole.UserRole, int(clip.clip_id))
 
-                tip = f"{clip.label} - {clip.duration_s:.2f}s"
+                tip = f"{clip.label} • {clip.duration_s:.2f}s • {clip.sr} Hz"
                 item.setToolTip(tip)
                 self.clip_list.addItem(item)
 
@@ -186,10 +189,17 @@ class SampleComposerWidget(QWidget):
             self.curve_right.setData([], [])
             self.plot.setXRange(0, 1, padding=0)
             self.plot.setYRange(-1, 1, padding=0.1)
+            self._clear_boundary_lines()
+            if hasattr(self, "time_label"):
+                self.time_label.setText("Durée: 0.00s")
             return
 
-        # Downsample pour garder le plot fluide.
-        x, y_left, y_right, y_mono = self._make_preview_series(audio, sr)
+        # Enveloppe (min/max) pour un rendu "waveform editor".
+        x, y_left, y_right, y_mono = self._make_envelope_series(
+            audio,
+            sr,
+            width_px=self.plot.width() or 800,
+        )
 
         if ch == 2 and y_left is not None and y_right is not None:
             self.curve_left.setData(x, y_left)
@@ -200,18 +210,26 @@ class SampleComposerWidget(QWidget):
             self.curve_left.setData([], [])
             self.curve_right.setData([], [])
 
-        self.plot.setXRange(float(x[0]), float(x[-1]), padding=0.0)
+        # x est un polygon (xs + xs[::-1]) -> x[-1] revient a 0.
+        # Pour eviter un range ecrase, on force 0 -> duration.
+        duration_s = float(audio.shape[0]) / float(sr) if sr > 0 else 1.0
+        if duration_s <= 0:
+            duration_s = 1.0
+        self.plot.setXRange(0.0, duration_s, padding=0.0)
         self.plot.setYRange(-1.0, 1.0, padding=0.08)
+        self._update_boundary_lines()
+        if hasattr(self, "time_label"):
+            self.time_label.setText(f"Durée: {duration_s:.2f}s")
 
     # ------------------------------------------------------------------ preview helpers
-    def _make_preview_series(
-        self, audio: np.ndarray, sr: int, *, max_points: int = 4000
+    def _make_envelope_series(
+        self, audio: np.ndarray, sr: int, *, width_px: int = 800
     ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
         """
-        Construit des series downsamplees pour le plot:
+        Construit une enveloppe min/max (polygon) pour le plot:
         - x: temps (s)
-        - y_left/y_right si stereo
-        - y_mono si mono
+        - y_left/y_right si stereo (polygon)
+        - y_mono si mono (polygon)
         """
         n_samples = int(audio.shape[0])
         if n_samples <= 1:
@@ -220,15 +238,68 @@ class SampleComposerWidget(QWidget):
                 return x, np.array([0.0], dtype=np.float32), np.array([0.0], dtype=np.float32), None
             return x, None, None, np.array([0.0], dtype=np.float32)
 
-        step = max(1, n_samples // int(max_points))
-        idx = np.arange(0, n_samples, step, dtype=np.int64)
-        x = (idx / float(sr)).astype(np.float32, copy=False)
-
+        # Utilise compute_envelope (waveform_renderer.py) pour garantir le meme rendu.
         if audio.ndim == 2 and audio.shape[1] == 2:
-            y_left = audio[idx, 0]
-            y_right = audio[idx, 1]
-            return x, y_left, y_right, None
+            x_poly, y_left = compute_envelope(
+                audio[:, 0],
+                sample_rate=sr,
+                start_index=0,
+                end_index=n_samples,
+                width_px=width_px,
+            )
+            _, y_right = compute_envelope(
+                audio[:, 1],
+                sample_rate=sr,
+                start_index=0,
+                end_index=n_samples,
+                width_px=width_px,
+            )
+            return x_poly, y_left, y_right, None
 
-        y = audio[idx] if audio.ndim == 1 else audio[idx, 0]
-        return x, None, None, y
+        x_poly, y_mono = compute_envelope(
+            audio if audio.ndim == 1 else audio[:, 0],
+            sample_rate=sr,
+            start_index=0,
+            end_index=n_samples,
+            width_px=width_px,
+        )
+        return x_poly, None, None, y_mono
 
+    # ------------------------------------------------------------------ boundaries
+    def _clear_boundary_lines(self) -> None:
+        if not self._boundary_lines:
+            return
+        for line in self._boundary_lines:
+            try:
+                self.plot.removeItem(line)
+            except Exception:
+                pass
+        self._boundary_lines = []
+
+    def _update_boundary_lines(self) -> None:
+        """
+        Affiche des lignes verticales (jaunes) entre les clips.
+        """
+        # Nettoie avant de reposer les lignes.
+        self._clear_boundary_lines()
+
+        if self.model.is_empty():
+            return
+
+        # On place une ligne a chaque frontiere entre clips (cumul des durées).
+        t = 0.0
+        clips = self.model.clips
+        if len(clips) <= 1:
+            return
+
+        for clip in clips[:-1]:
+            t += float(clip.duration_s)
+            line = pg.InfiniteLine(
+                pos=t,
+                angle=90,
+                pen=pg.mkPen("#DAA520", width=1),
+            )
+            line.setMovable(False)
+            line.setZValue(20)
+            self.plot.addItem(line)
+            self._boundary_lines.append(line)
