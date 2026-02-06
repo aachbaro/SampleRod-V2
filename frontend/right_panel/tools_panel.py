@@ -58,7 +58,7 @@ class RightToolsPanel(QWidget):
             directory_service=self.directory_service,
             app_context=self.app_context,
         )
-        self.composer_tool = SampleComposerWidget()
+        self.composer_tool = SampleComposerWidget(self.app_context)
 
         self.tools_tabs.addTab(self.directory_tool, "Dossiers")
         self.tools_tabs.addTab(self.composer_tool, "Compositeur")

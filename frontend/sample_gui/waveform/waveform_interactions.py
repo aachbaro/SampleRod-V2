@@ -50,6 +50,8 @@ class WaveformInteractionsController:
         w = self.widget
         region_cls = self.region_cls
         vb = w.plot.getViewBox()
+        disable_region = getattr(w, "disable_region_interactions", False)
+        disable_marker_add = getattr(w, "disable_marker_add", False)
 
         # --- 0) Clic molette: place la selection + lance la lecture
         if event.type() == QEvent.GraphicsSceneMousePress \
@@ -70,7 +72,7 @@ class WaveformInteractionsController:
             return True
 
         # --- 0) En mode marker, Ctrl+clic simple → sélection de la région ---
-        if w.marker_mode \
+        if (not disable_region) and w.marker_mode \
            and event.type() == QEvent.GraphicsSceneMousePress \
            and event.button() == Qt.MouseButton.LeftButton \
            and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
@@ -89,7 +91,7 @@ class WaveformInteractionsController:
 
         # 1) Ctrl + double-clic → délégation à la méthode dédiée
 
-        if (event.type() == QEvent.GraphicsSceneMouseDoubleClick and
+        if (not disable_region) and (event.type() == QEvent.GraphicsSceneMouseDoubleClick and
             event.button() == Qt.MouseButton.LeftButton and
             (event.modifiers() & Qt.KeyboardModifier.ControlModifier)):
 
@@ -105,7 +107,7 @@ class WaveformInteractionsController:
             return True
 
         # 0) Maj + clic gauche DANS le corps (pas sur les handles) → début du déplacement
-        if event.type() == QEvent.GraphicsSceneMousePress \
+        if (not disable_region) and event.type() == QEvent.GraphicsSceneMousePress \
         and event.button() == Qt.MouseButton.LeftButton \
         and event.modifiers() & Qt.KeyboardModifier.ShiftModifier \
         and w.region:
@@ -129,7 +131,7 @@ class WaveformInteractionsController:
             return True
 
         # 1) déplacement pendant Maj+glissé
-        if event.type() == QEvent.GraphicsSceneMouseMove \
+        if (not disable_region) and event.type() == QEvent.GraphicsSceneMouseMove \
         and w._shifting:
 
             pos = event.scenePos()
@@ -148,7 +150,7 @@ class WaveformInteractionsController:
             return True
 
         # 2) fin du déplacement
-        if event.type() == QEvent.GraphicsSceneMouseRelease \
+        if (not disable_region) and event.type() == QEvent.GraphicsSceneMouseRelease \
         and event.button() == Qt.MouseButton.LeftButton \
         and w._shifting:
 
@@ -168,6 +170,8 @@ class WaveformInteractionsController:
 
         # 1) En mode marker, on intercepte seulement les clics hors des lignes existantes
         if w.marker_mode:
+            if disable_marker_add:
+                return False
             if event.type() == QEvent.GraphicsSceneMousePress \
                and event.button() == Qt.MouseButton.LeftButton:
                 pos = event.scenePos()
@@ -182,7 +186,7 @@ class WaveformInteractionsController:
             return False
 
         # 2) Sinon, on est en mode region : clic-drag → création/redimensionnement
-        if event.type() == QEvent.GraphicsSceneMousePress \
+        if (not disable_region) and event.type() == QEvent.GraphicsSceneMousePress \
         and event.button() == Qt.MouseButton.LeftButton:
 
             pos_scene = event.scenePos()
@@ -233,7 +237,7 @@ class WaveformInteractionsController:
             return True
 
         # 2) Redimensionnement **durant** le drag de création
-        elif event.type() == QEvent.GraphicsSceneMouseMove \
+        elif (not disable_region) and event.type() == QEvent.GraphicsSceneMouseMove \
             and w._dragging and w._creating \
             and w.region is not None:
 
@@ -244,7 +248,7 @@ class WaveformInteractionsController:
             return True
 
         # 3) Fin du drag (Release) → région validée ou simple clic
-        elif event.type() == QEvent.GraphicsSceneMouseRelease \
+        elif (not disable_region) and event.type() == QEvent.GraphicsSceneMouseRelease \
              and event.button() == Qt.MouseButton.LeftButton \
              and w._creating:
 

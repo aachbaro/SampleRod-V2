@@ -75,11 +75,11 @@ class WaveformWidget(QWidget):
 # -- Construction & état (core)
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
 
-    def __init__(self, audio_file_path, app_context: AppContext):
+    def __init__(self, audio_file_path: str | None, app_context: AppContext, *, auto_load: bool = True):
         super().__init__()
 
         self.app_context = app_context
-        self.audio_file_path = audio_file_path
+        self.audio_file_path = audio_file_path or ""
         # → playback
         self.stream = None
         self.current_time = 0.0
@@ -102,6 +102,11 @@ class WaveformWidget(QWidget):
 
         # → marqueurs (clic en mode marker)
         self.marker_mode = False
+        # Flags d'interaction (utile pour des modes "preview")
+        self.disable_region_interactions = False
+        self.disable_marker_add = False
+        # Autorise ou non les actions destructives (cut/export)
+        self.allow_cut_export = True
 
         # → données
         self.waveform_data = None
@@ -135,7 +140,8 @@ class WaveformWidget(QWidget):
         self.marker_controller = WaveformMarkersController(self, ContextMenuLinearRegionItem)
         # UI: la liste de markers est une colonne a droite du plot, toujours presente.
         # S'il n'y a pas de markers, elle est simplement vide.
-        self._load_audio(audio_file_path)
+        if auto_load and audio_file_path:
+            self._load_audio(audio_file_path)
         self.positionUpdated.connect(lambda t: self.read_head.setPos(t))
 
     # -- Proxies MarkerManager (marker_manager.py)
@@ -253,6 +259,8 @@ class WaveformWidget(QWidget):
 
 
     def _cut_region(self, start, end):
+        if not getattr(self, "allow_cut_export", True):
+            return
         self.region_controller._cut_region(start, end)
 
     def _do_cut(self, start, end):
@@ -265,6 +273,8 @@ class WaveformWidget(QWidget):
         self.marker_controller._create_marker_line(t)
 
     def _export_region(self, start, end):
+        if not getattr(self, "allow_cut_export", True):
+            return
         self.region_controller._export_region(start, end)
 
     # -- Drag & drop (local)

@@ -15,7 +15,6 @@ logique (modele, concat, drag & drop).
 
 from __future__ import annotations
 
-import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy
 
@@ -48,6 +47,7 @@ def build_composer_widget_ui(widget) -> None:
     # Note: le widget parent est la "tool card" (objectName=ComposerToolCard)
     # stylisee depuis RightToolsPanel. Ici, on ne touche pas a cet objectName.
     widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    widget.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(10, 10, 10, 10)
@@ -100,24 +100,13 @@ def build_composer_widget_ui(widget) -> None:
     preview_layout.setContentsMargins(0, 0, 0, 0)
     preview_layout.setSpacing(8)
 
-    widget.plot = pg.PlotWidget()
-    widget.plot.setObjectName("ComposerPlot")
-    widget.plot.setFixedHeight(158)  # alignement avec Waveform Editor
-    widget.plot.showGrid(x=True, y=True, alpha=0.15)
-    widget.plot.setBackground(BG_PANEL)
-    widget.plot.hideAxis("left")
-    widget.plot.hideAxis("bottom")
-    widget.plot.setMouseEnabled(x=False, y=False)
-
-    # Courbes: meme convention que WaveformWidget (mono + stereo).
-    widget.curve_left = pg.PlotDataItem(pen=pg.mkPen("#E6E6E6", width=1))
-    widget.curve_right = pg.PlotDataItem(pen=pg.mkPen("#DAA520", width=1))
-    widget.curve = pg.PlotDataItem(pen=pg.mkPen("#E6E6E6", width=1))
-    widget.plot.addItem(widget.curve_right)
-    widget.plot.addItem(widget.curve_left)
-    widget.plot.addItem(widget.curve)
-
-    preview_layout.addWidget(widget.plot, 0)
+    # Conteneur pour le WaveformWidget (reutilise le vrai editor).
+    widget.waveform_container = QWidget()
+    widget.waveform_container.setObjectName("ComposerWaveformContainer")
+    widget.waveform_layout = QVBoxLayout(widget.waveform_container)
+    widget.waveform_layout.setContentsMargins(0, 0, 0, 0)
+    widget.waveform_layout.setSpacing(0)
+    preview_layout.addWidget(widget.waveform_container, 0)
 
     widget.time_label = QLabel("Durée: 0.00s")
     widget.time_label.setObjectName("ComposerTimeLabel")
@@ -147,6 +136,10 @@ def apply_styles(widget) -> None:
         QLabel#ComposerTimeLabel {{
             color: {TEXT_MUTED};
             font-size: 10px;
+        }}
+
+        QWidget#ComposerToolCard[focused="true"] {{
+            border: 1px solid #f2c94c;
         }}
 
         /* Clip list = colonne fine type "markers" */

@@ -36,12 +36,13 @@ from __future__ import annotations
 
 import logging
 
-import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QListWidgetItem
+from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtWidgets import QWidget, QListWidgetItem, QApplication
 
-from frontend.sample_gui.waveform.waveform_renderer import compute_envelope
+from frontend.sample_gui.wave_form import WaveformWidget
+from frontend.sample_gui.waveform.waveform_plot_helpers import ContextMenuLinearRegionItem
 
 from .composer_model import ComposerModel
 from .composer_ui import build_composer_widget_ui
@@ -50,19 +51,23 @@ logger = logging.getLogger("sample_composer_widget")
 
 
 class SampleComposerWidget(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, app_context, parent=None):
         super().__init__(parent)
 
         # Tool card: stylisee dans RightToolsPanel (tools_panel.py).
         self.setObjectName("ComposerToolCard")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
+        self.app_context = app_context
         self.model = ComposerModel(self)
         self._syncing_view = False
         self._boundary_lines: list[pg.InfiniteLine] = []
 
         build_composer_widget_ui(self)
+        self._build_waveform()
         self._wire_events()
+        self._build_shortcuts()
+        self._install_focus_filters()
         self._sync_all()
 
     # ------------------------------------------------------------------ wiring
@@ -73,6 +78,76 @@ class SampleComposerWidget(QWidget):
 
         self.clip_list.sliceDropped.connect(self._on_slice_dropped)
         self.clip_list.orderChanged.connect(self._on_order_changed)
+        self.clip_list.itemClicked.connect(self._on_clip_item_clicked)
+
+    def _build_shortcuts(self) -> None:
+        """
+        Raccourcis actifs seulement quand le compositeur (ou un enfant) a le focus.
+        On aligne les touches de playback sur celles du Waveform Editor.
+        """
+        for seq, handler in [
+            ("Ctrl+X", lambda: self._with_wave(lambda w: w._on_cut_shortcut())),
+            ("Ctrl+Z", lambda: self._with_wave(lambda w: w.undo())),
+            ("Ctrl+Shift+Z", lambda: self._with_wave(lambda w: w.redo())),
+            ("Ctrl+S", lambda: self._with_wave(lambda w: w.onSaveClicked())),
+            ("Ctrl+L", lambda: self._with_wave(lambda w: w.loop_button.toggle())),
+            ("Ctrl+G", lambda: self._with_wave(lambda w: w.toggle_marker_mode(not w.marker_mode))),
+            ("Space", lambda: self._with_wave(lambda w: w.pause_or_resume())),
+            ("Ctrl+Space", lambda: self._with_wave(lambda w: w.play_from_start())),
+            ("Alt+Space", lambda: self._with_wave(lambda w: w.stop_and_reset())),
+            ("Ctrl+E", lambda: self._with_wave(lambda w: w._on_export_shortcut())),
+            ("Ctrl+Shift+G", lambda: self._with_wave(lambda w: w.add_markers_to_region())),
+        ]:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(handler)
+
+    def _with_wave(self, fn):
+        if hasattr(self, "waveform") and self.waveform:
+            fn(self.waveform)
+
+    # ------------------------------------------------------------------ focus handling
+    def _install_focus_filters(self) -> None:
+        # Installer l'event filter sur tous les enfants pour gerer le focus visuel
+        for child in self.findChildren(QWidget):
+            child.installEventFilter(self)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress:
+            self.setFocus()
+        return False
+
+    def focusInEvent(self, event):
+        self.setProperty("focused", True)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self._clear_sample_card_focus()
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        fw = QApplication.focusWidget()
+        if fw and (fw is self or self.isAncestorOf(fw)):
+            return
+        self.setProperty("focused", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        super().focusOutEvent(event)
+
+    def _clear_sample_card_focus(self) -> None:
+        """
+        Retire l'etat "focused" de toutes les SampleCards.
+        (On ne touche pas a l'etat "checked" pour ne pas casser la selection.)
+        """
+        for w in QApplication.allWidgets():
+            try:
+                if w.objectName() != "SampleCard":
+                    continue
+                if w.property("focused"):
+                    w.setProperty("focused", False)
+                    w.style().unpolish(w)
+                    w.style().polish(w)
+            except Exception:
+                continue
 
         # model -> UI
         self.model.clipsChanged.connect(self._sync_clip_list)
@@ -184,86 +259,31 @@ class SampleComposerWidget(QWidget):
 
         # Clear
         if sr <= 0 or audio is None or audio.size == 0:
-            self.curve.setData([], [])
-            self.curve_left.setData([], [])
-            self.curve_right.setData([], [])
-            self.plot.setXRange(0, 1, padding=0)
-            self.plot.setYRange(-1, 1, padding=0.1)
+            self._clear_waveform()
             self._clear_boundary_lines()
             if hasattr(self, "time_label"):
                 self.time_label.setText("Durée: 0.00s")
             return
 
-        # Enveloppe (min/max) pour un rendu "waveform editor".
-        x, y_left, y_right, y_mono = self._make_envelope_series(
-            audio,
-            sr,
-            width_px=self.plot.width() or 800,
-        )
-
-        if ch == 2 and y_left is not None and y_right is not None:
-            self.curve_left.setData(x, y_left)
-            self.curve_right.setData(x, y_right)
-            self.curve.setData([], [])
-        else:
-            self.curve.setData(x, y_mono if y_mono is not None else [])
-            self.curve_left.setData([], [])
-            self.curve_right.setData([], [])
-
-        # x est un polygon (xs + xs[::-1]) -> x[-1] revient a 0.
-        # Pour eviter un range ecrase, on force 0 -> duration.
         duration_s = float(audio.shape[0]) / float(sr) if sr > 0 else 1.0
         if duration_s <= 0:
             duration_s = 1.0
-        self.plot.setXRange(0.0, duration_s, padding=0.0)
-        self.plot.setYRange(-1.0, 1.0, padding=0.08)
+        # Alimente le vrai WaveformWidget (meme rendu que l'editor).
+        # WaveformWidget attend un format "channel-first" (n_channels, n_samples)
+        # car il transpose en interne pour obtenir (n_samples, n_channels).
+        audio_for_widget = audio
+        if audio is not None and getattr(audio, "ndim", 0) == 2:
+            # audio est normalement (n_samples, 2) -> on transpose pour correspondre
+            # a l'attente du WaveformWidget.
+            if audio.shape[1] == 2:
+                audio_for_widget = audio.T
+        self.waveform.set_waveform_data(audio_for_widget, sr, duration_s)
+        # Assure un playback "plein buffer" par defaut
+        self.waveform.play_start = 0.0
+        self.waveform.play_end = float(duration_s)
         self._update_boundary_lines()
         if hasattr(self, "time_label"):
             self.time_label.setText(f"Durée: {duration_s:.2f}s")
-
-    # ------------------------------------------------------------------ preview helpers
-    def _make_envelope_series(
-        self, audio: np.ndarray, sr: int, *, width_px: int = 800
-    ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
-        """
-        Construit une enveloppe min/max (polygon) pour le plot:
-        - x: temps (s)
-        - y_left/y_right si stereo (polygon)
-        - y_mono si mono (polygon)
-        """
-        n_samples = int(audio.shape[0])
-        if n_samples <= 1:
-            x = np.array([0.0], dtype=np.float32)
-            if audio.ndim == 2 and audio.shape[1] == 2:
-                return x, np.array([0.0], dtype=np.float32), np.array([0.0], dtype=np.float32), None
-            return x, None, None, np.array([0.0], dtype=np.float32)
-
-        # Utilise compute_envelope (waveform_renderer.py) pour garantir le meme rendu.
-        if audio.ndim == 2 and audio.shape[1] == 2:
-            x_poly, y_left = compute_envelope(
-                audio[:, 0],
-                sample_rate=sr,
-                start_index=0,
-                end_index=n_samples,
-                width_px=width_px,
-            )
-            _, y_right = compute_envelope(
-                audio[:, 1],
-                sample_rate=sr,
-                start_index=0,
-                end_index=n_samples,
-                width_px=width_px,
-            )
-            return x_poly, y_left, y_right, None
-
-        x_poly, y_mono = compute_envelope(
-            audio if audio.ndim == 1 else audio[:, 0],
-            sample_rate=sr,
-            start_index=0,
-            end_index=n_samples,
-            width_px=width_px,
-        )
-        return x_poly, None, None, y_mono
 
     # ------------------------------------------------------------------ boundaries
     def _clear_boundary_lines(self) -> None:
@@ -271,7 +291,7 @@ class SampleComposerWidget(QWidget):
             return
         for line in self._boundary_lines:
             try:
-                self.plot.removeItem(line)
+                self.waveform.plot.removeItem(line)
             except Exception:
                 pass
         self._boundary_lines = []
@@ -301,5 +321,95 @@ class SampleComposerWidget(QWidget):
             )
             line.setMovable(False)
             line.setZValue(20)
-            self.plot.addItem(line)
+            self.waveform.plot.addItem(line)
             self._boundary_lines.append(line)
+
+    # ------------------------------------------------------------------ waveform integration
+    def _build_waveform(self) -> None:
+        # Reutilise le vrai WaveformWidget (sans auto-load).
+        self.waveform = WaveformWidget(None, self.app_context, auto_load=False)
+        self.waveform_layout.addWidget(self.waveform)
+
+        # On garde les interactions classiques (selection / play start),
+        # mais on bloque les actions destructives (cut/export).
+        self.waveform.disable_region_interactions = False
+        self.waveform.disable_marker_add = False
+        self.waveform.allow_cut_export = False
+        # Pas de region active au depart -> playback doit lire tout le buffer.
+        self.waveform.play_start = 0.0
+        self.waveform.play_end = 0.0
+
+        # Masque des actions non pertinentes en mode compositeur.
+        for btn_name in ("save_button", "undo_button", "redo_button", "marker_mode_button"):
+            btn = getattr(self.waveform, btn_name, None)
+            if btn is not None:
+                btn.setVisible(False)
+
+        # Cache la colonne de markers a droite (on utilise la liste en dessous).
+        marker_list = getattr(self.waveform, "marker_list", None)
+        if marker_list is not None:
+            marker_list.setVisible(False)
+            marker_list.setFixedWidth(0)
+            marker_list.setMaximumWidth(0)
+
+    def _clear_waveform(self) -> None:
+        w = self.waveform
+        try:
+            w.waveform_data = None
+            w.sample_rate = None
+            w.duration = 0.0
+            w.curve.setData([], [])
+            w.curve_left.setData([], [])
+            w.curve_right.setData([], [])
+            w.plot.setXRange(0, 1, padding=0)
+            w.plot.setYRange(-1, 1, padding=0.1)
+        except Exception:
+            pass
+
+    def _on_clip_item_clicked(self, item: QListWidgetItem) -> None:
+        """
+        Selectionne la region correspondant au clip (start/end).
+        """
+        try:
+            row = self.clip_list.row(item)
+        except Exception:
+            return
+        clips = self.model.clips
+        if row < 0 or row >= len(clips):
+            return
+
+        start = 0.0
+        for c in clips[:row]:
+            start += float(c.duration_s)
+        end = start + float(clips[row].duration_s)
+        self._set_waveform_region(start, end)
+
+    def _set_waveform_region(self, start: float, end: float) -> None:
+        w = self.waveform
+        if w is None:
+            return
+        if end < start:
+            start, end = end, start
+
+        # Supprime l'ancienne region si elle existe
+        if getattr(w, "region", None) is not None:
+            try:
+                w.plot.removeItem(w.region)
+            except Exception:
+                pass
+            w.region = None
+
+        # Cree une region "selection" simple (comme dans WaveformMarkersController)
+        w.region = ContextMenuLinearRegionItem(
+            [start, end],
+            brush=pg.mkBrush(255, 255, 255, 40),
+            pen=pg.mkPen("c", width=1),
+        )
+        w.region.setZValue(1)
+        w.region.setBounds([0, w.duration])
+        w.region.sigRegionChangeFinished.connect(w.on_region_changed)
+        w.region._parent = w
+        w.plot.addItem(w.region)
+
+        w.play_start, w.play_end = start, end
+        w.read_head.setPos(start)
