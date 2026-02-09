@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 
 import pyqtgraph as pg
+import librosa
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget, QListWidgetItem, QApplication
@@ -79,6 +80,7 @@ class SampleComposerWidget(QWidget):
         self.clip_list.sliceDropped.connect(self._on_slice_dropped)
         self.clip_list.orderChanged.connect(self._on_order_changed)
         self.clip_list.itemClicked.connect(self._on_clip_item_clicked)
+        self.clip_list.sampleCardDropped.connect(self._on_sample_card_dropped)
 
     def _build_shortcuts(self) -> None:
         """
@@ -191,6 +193,43 @@ class SampleComposerWidget(QWidget):
         except Exception:
             return
         self.model.remove_clip(clip_id)
+
+    def _on_sample_card_dropped(self, payload: dict) -> None:
+        """
+        Drop d'une SampleCard -> charge le fichier audio et ajoute un clip entier.
+        """
+        try:
+            sample_id = int(payload.get("sample_id"))
+        except Exception:
+            logger.info("[Composer] sample-card drop invalide")
+            return
+
+        # Récupère le sample en cache
+        sample = next(
+            (s for s in self.app_context.sample_store.get_cached() if getattr(s, "id", None) == sample_id),
+            None,
+        )
+        if not sample:
+            self.info_label.setText("Sample introuvable dans le cache")
+            return
+
+        try:
+            y, sr = librosa.load(sample.path, sr=None, mono=False)
+        except Exception as e:
+            logger.exception("[Composer] Echec de chargement audio")
+            self.info_label.setText(f"Erreur chargement sample: {e}")
+            return
+
+        try:
+            self.model.add_slice(
+                audio=y,
+                sample_rate=sr,
+                label=sample.name,
+                source={"sample_id": sample_id, "path": sample.path},
+            )
+        except Exception as e:
+            logger.exception("[Composer] Failed to add sample card")
+            self.info_label.setText(f"Drop refuse: {e}")
 
     # ------------------------------------------------------------------ sync UI
     def _sync_all(self) -> None:

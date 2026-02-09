@@ -37,10 +37,15 @@ from PyQt6.QtCore import QMimeData
 logger = logging.getLogger("sample_composer_dnd")
 
 MIME_SAMPLE_SLICE = "application/x-sample-slice-data"
+MIME_SAMPLE_CARD = "application/x-sample-card"
 
 
 def has_slice(mime: QMimeData) -> bool:
     return mime.hasFormat(MIME_SAMPLE_SLICE)
+
+
+def has_sample_card(mime: QMimeData) -> bool:
+    return mime.hasFormat(MIME_SAMPLE_CARD)
 
 
 def parse_slice_mime(mime: QMimeData) -> dict[str, Any]:
@@ -88,3 +93,21 @@ def parse_slice_mime(mime: QMimeData) -> dict[str, Any]:
         "source": source,
     }
 
+
+def parse_sample_card_mime(mime: QMimeData) -> dict[str, Any]:
+    """
+    Decode le payload du MIME sample-card.
+    Payload attendue (pickle dict): { "sample_id": int }
+    """
+    raw_bytes = bytes(mime.data(MIME_SAMPLE_CARD))
+    payload = pickle.loads(raw_bytes)
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid sample-card payload: expected dict.")
+
+    sample_id = payload.get("sample_id")
+    try:
+        sample_id = int(sample_id)
+    except Exception as e:
+        raise ValueError(f"Invalid sample-card payload: sample_id={sample_id!r}") from e
+
+    return {"sample_id": sample_id, "source": dict(payload)}

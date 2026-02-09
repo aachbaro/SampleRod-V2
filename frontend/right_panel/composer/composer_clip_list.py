@@ -24,13 +24,14 @@ import logging
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QListWidget
 
-from .composer_dnd import has_slice, parse_slice_mime
+from .composer_dnd import has_slice, has_sample_card, parse_slice_mime, parse_sample_card_mime
 
 logger = logging.getLogger("sample_composer_clip_list")
 
 
 class ComposerClipListWidget(QListWidget):
     sliceDropped = pyqtSignal(object)  # dict payload normalise
+    sampleCardDropped = pyqtSignal(object)  # dict payload (sample_id)
     orderChanged = pyqtSignal(object)  # list[int] clip_ids
 
     def __init__(self, parent=None):
@@ -47,14 +48,14 @@ class ComposerClipListWidget(QListWidget):
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
-        if has_slice(event.mimeData()):
+        if has_slice(event.mimeData()) or has_sample_card(event.mimeData()):
             event.setDropAction(Qt.DropAction.CopyAction)
             event.accept()
             return
         super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
-        if has_slice(event.mimeData()):
+        if has_slice(event.mimeData()) or has_sample_card(event.mimeData()):
             event.setDropAction(Qt.DropAction.CopyAction)
             event.accept()
             return
@@ -75,6 +76,20 @@ class ComposerClipListWidget(QListWidget):
             event.accept()
             return
 
+        # Drop externe: sample card
+        if has_sample_card(event.mimeData()):
+            try:
+                payload = parse_sample_card_mime(event.mimeData())
+            except Exception:
+                logger.exception("[Composer] Invalid sample-card drop")
+                event.ignore()
+                return
+
+            self.sampleCardDropped.emit(payload)
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+            return
+
         # Drop interne (reorder):
         super().dropEvent(event)
         self._emit_order_changed()
@@ -90,4 +105,3 @@ class ComposerClipListWidget(QListWidget):
                 continue
             ids.append(cid)
         self.orderChanged.emit(ids)
-
