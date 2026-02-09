@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import pickle
 
+import logging
+
 from PyQt6.QtCore import Qt, QEvent, QMimeData
 from PyQt6.QtGui import QDrag
 from PyQt6.QtWidgets import QApplication
+
+logger = logging.getLogger("sample_card_dnd")
 
 
 class SampleCardInteractions:
@@ -39,6 +43,8 @@ class SampleCardInteractions:
         return False
 
     def _start_drag(self):
+        sample_id = getattr(self.card.sample, "id", None)
+        logger.info("[SampleCard] drag start (sample_id=%s)", sample_id)
         drag = QDrag(self.card)
         mime = QMimeData()
         payload = {"sample_id": self.card.sample.id}
@@ -47,7 +53,8 @@ class SampleCardInteractions:
             pickle.dumps(payload),
         )
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.CopyAction)
+        result = drag.exec(Qt.DropAction.CopyAction)
+        logger.info("[SampleCard] drag end (result=%s)", result)
 
     # ---- Focus
     def focus_in(self, event):

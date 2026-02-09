@@ -65,6 +65,7 @@ class DirectoryWidget(QWidget):
 
     def __init__(self, service: DirectoryService, app_context: AppContext, parent=None, path: str | None = None):
         super().__init__(parent)
+        logger.info("[DirectoryWidget] Initialisation (start)")
         self.service = service
         self.app_context = app_context
         # Controller: gere la logique de preview (un seul item en lecture a la fois).
@@ -76,18 +77,21 @@ class DirectoryWidget(QWidget):
         self._qs = QSettings("SampleRod", "Main")
         self.history = DirectoryHistory(self._qs)
         self.current_dir = path or self.history.get_last_directory()
+        logger.info("[DirectoryWidget] UI build (start)")
         self._build_ui()
+        logger.info("[DirectoryWidget] UI build (done)")
 
         # Synchro store -> UI (rename/delete/move) via un QObject parented a ce widget.
         self.store_sync = DirectoryStoreSync(self, self.app_context.sample_store)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         self.setMinimumWidth(100)
-        logger.info("[DirectoryWidget] Initialisation")
+        logger.info("[DirectoryWidget] Initialisation (core ready)")
 
         # Si un dossier est connu a l'init (path explicite ou dernier dossier en memoire),
         # on l'ouvre directement. (Sinon le widget reste vide.)
         if self.current_dir:
             self.open_directory(self.current_dir)
+        logger.info("[DirectoryWidget] Initialisation (ready)")
 
     def _build_ui(self):
         # Construction UI centralisee dans directory_ui.py (layout + widgets).

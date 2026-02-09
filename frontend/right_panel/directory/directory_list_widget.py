@@ -19,9 +19,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import logging
+
 from PyQt6.QtWidgets import QListWidget
 
 from . import directory_dnd
+
+logger = logging.getLogger("directory_list_widget")
 
 
 class DirectoryListWidget(QListWidget):
@@ -37,10 +41,16 @@ class DirectoryListWidget(QListWidget):
     def __init__(self, parent_widget: Any):
         super().__init__(parent_widget)
         self.parent_widget = parent_widget
+        logger.info("[DirectoryListWidget] Initialisation DnD (start)")
         self.setAcceptDrops(True)
+        logger.info("[DirectoryListWidget] DnD target ready (acceptDrops=True)")
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
+        logger.info(
+            "[DirectoryListWidget] dragEnter (formats=%s)",
+            list(event.mimeData().formats()),
+        )
         if directory_dnd.accepts(event.mimeData()):
             event.acceptProposedAction()
         else:
@@ -50,8 +60,11 @@ class DirectoryListWidget(QListWidget):
         self.dragEnterEvent(event)
 
     def dropEvent(self, event):
+        logger.info(
+            "[DirectoryListWidget] drop (formats=%s)",
+            list(event.mimeData().formats()),
+        )
         if directory_dnd.handle_drop(self.parent_widget, event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
-

@@ -118,14 +118,15 @@ class MarkerListWidget(QListWidget):
         sr    = payload.get("sample_rate")
         name  = payload.get("name")
 
-        # 1) Pour afficher la forme générale du tableau
-        print(f"[DEBUG] Slice '{name}': shape={audio.shape}, dtype={audio.dtype}, sample_rate={sr}")
-
-        # 2) Pour afficher les premières valeurs seulement (évite trop de logs)
-        print("  valeurs audio sample[0:10] =", audio[:10])
-
-        # 3) Si vraiment tu veux tout imprimer (attention, ça peut être énorme) :
-        # print(audio)
+        logger.info("[MarkerManager] drag start (name=%s, sr=%s)", name, sr)
+        try:
+            logger.debug(
+                "[MarkerManager] slice details shape=%s dtype=%s",
+                getattr(audio, "shape", None),
+                getattr(audio, "dtype", None),
+            )
+        except Exception:
+            pass
 
         # --- puis ton drag d’origine ---
         mime = QMimeData()
@@ -139,7 +140,8 @@ class MarkerListWidget(QListWidget):
         )
         drag = QDrag(self)
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.CopyAction)
+        result = drag.exec(Qt.DropAction.CopyAction)
+        logger.info("[MarkerManager] drag end (result=%s)", result)
 
 class ClickableMarkerLine(pg.InfiniteLine):
     """Line capable of removing itself on double-click."""

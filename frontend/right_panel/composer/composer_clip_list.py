@@ -36,12 +36,14 @@ class ComposerClipListWidget(QListWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        logger.info("[ComposerClipList] Initialisation DnD (start)")
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
         self.setDropIndicatorShown(True)
         # DragDrop: permet a la fois les drops externes (Copy) et le reorder interne (Move).
         self.setDragDropMode(QListWidget.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        logger.info("[ComposerClipList] DnD list ready (acceptDrops=True, dragEnabled=True)")
 
         # Pour un widget "colonne", on ne veut pas de focus outline.
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)

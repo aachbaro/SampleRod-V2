@@ -37,8 +37,7 @@ from __future__ import annotations
 import logging
 
 import pyqtgraph as pg
-import librosa
-from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtCore import Qt, QEvent, QThread, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget, QListWidgetItem, QApplication
 
@@ -47,6 +46,7 @@ from frontend.sample_gui.waveform.waveform_plot_helpers import ContextMenuLinear
 
 from .composer_model import ComposerModel
 from .composer_ui import build_composer_widget_ui
+from .composer_dnd import has_slice, has_sample_card, parse_slice_mime, parse_sample_card_mime
 
 logger = logging.getLogger("sample_composer_widget")
 
@@ -54,6 +54,7 @@ logger = logging.getLogger("sample_composer_widget")
 class SampleComposerWidget(QWidget):
     def __init__(self, app_context, parent=None):
         super().__init__(parent)
+        logger.info("[Composer] Initialisation (start)")
 
         # Tool card: stylisee dans RightToolsPanel (tools_panel.py).
         self.setObjectName("ComposerToolCard")
@@ -63,13 +64,19 @@ class SampleComposerWidget(QWidget):
         self.model = ComposerModel(self)
         self._syncing_view = False
         self._boundary_lines: list[pg.InfiniteLine] = []
+        self._load_threads: dict[int, _ComposerSampleLoader] = {}
 
+        logger.info("[Composer] UI build (start)")
         build_composer_widget_ui(self)
+        logger.info("[Composer] UI build (done)")
         self._build_waveform()
         self._wire_events()
         self._build_shortcuts()
         self._install_focus_filters()
         self._sync_all()
+        self.setAcceptDrops(True)
+        logger.info("[Composer] DnD target ready (acceptDrops=True)")
+        logger.info("[Composer] Initialisation (ready)")
 
     # ------------------------------------------------------------------ wiring
     def _wire_events(self) -> None:
@@ -81,6 +88,12 @@ class SampleComposerWidget(QWidget):
         self.clip_list.orderChanged.connect(self._on_order_changed)
         self.clip_list.itemClicked.connect(self._on_clip_item_clicked)
         self.clip_list.sampleCardDropped.connect(self._on_sample_card_dropped)
+
+        # model -> UI
+        self.model.clipsChanged.connect(self._sync_clip_list)
+        self.model.previewChanged.connect(self._sync_preview_plot)
+        self.model.formatChanged.connect(self._sync_info_label)
+        self.clip_list.itemSelectionChanged.connect(self._sync_delete_button_state)
 
     def _build_shortcuts(self) -> None:
         """
@@ -117,6 +130,15 @@ class SampleComposerWidget(QWidget):
     def eventFilter(self, watched, event) -> bool:
         if event.type() == QEvent.Type.MouseButtonPress:
             self.setFocus()
+        if event.type() == QEvent.Type.DragLeave:
+            self._set_drop_active(False)
+            return False
+        if event.type() in (
+            QEvent.Type.DragEnter,
+            QEvent.Type.DragMove,
+            QEvent.Type.Drop,
+        ):
+            return self._handle_drag_event(event)
         return False
 
     def focusInEvent(self, event):
@@ -135,6 +157,59 @@ class SampleComposerWidget(QWidget):
         self.style().polish(self)
         super().focusOutEvent(event)
 
+    # ------------------------------------------------------------------ drag & drop (global)
+    def dragEnterEvent(self, event):
+        self._handle_drag_event(event)
+
+    def dragMoveEvent(self, event):
+        self._handle_drag_event(event)
+
+    def dragLeaveEvent(self, event):
+        self._set_drop_active(False)
+        event.accept()
+
+    def dropEvent(self, event):
+        self._handle_drag_event(event)
+
+    def _handle_drag_event(self, event) -> bool:
+        mime = event.mimeData()
+        if event.type() in (QEvent.Type.DragEnter, QEvent.Type.Drop):
+            logger.info(
+                "[Composer] dragEvent=%s formats=%s",
+                event.type().name if hasattr(event.type(), "name") else str(event.type()),
+                list(mime.formats()),
+            )
+        if has_slice(mime) or has_sample_card(mime):
+            if event.type() == QEvent.Type.Drop:
+                if has_slice(mime):
+                    try:
+                        payload = parse_slice_mime(mime)
+                        self._on_slice_dropped(payload)
+                    except Exception:
+                        logger.exception("[Composer] Invalid slice drop")
+                elif has_sample_card(mime):
+                    try:
+                        payload = parse_sample_card_mime(mime)
+                        self._on_sample_card_dropped(payload)
+                    except Exception:
+                        logger.exception("[Composer] Invalid sample-card drop")
+                self._set_drop_active(False)
+            else:
+                self._set_drop_active(True)
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+            return True
+
+        event.ignore()
+        return False
+
+    def _set_drop_active(self, active: bool) -> None:
+        if self.property("dropActive") == active:
+            return
+        self.setProperty("dropActive", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def _clear_sample_card_focus(self) -> None:
         """
         Retire l'etat "focused" de toutes les SampleCards.
@@ -150,6 +225,7 @@ class SampleComposerWidget(QWidget):
                     w.style().polish(w)
             except Exception:
                 continue
+
 
         # model -> UI
         self.model.clipsChanged.connect(self._sync_clip_list)
@@ -213,23 +289,32 @@ class SampleComposerWidget(QWidget):
             self.info_label.setText("Sample introuvable dans le cache")
             return
 
-        try:
-            y, sr = librosa.load(sample.path, sr=None, mono=False)
-        except Exception as e:
-            logger.exception("[Composer] Echec de chargement audio")
-            self.info_label.setText(f"Erreur chargement sample: {e}")
+        # Charge en thread pour eviter de bloquer l'UI.
+        if sample_id in self._load_threads:
             return
+        self.info_label.setText(f"Chargement: {sample.name}...")
+        loader = _ComposerSampleLoader(sample_id, sample.path, sample.name, self)
+        loader.loaded.connect(self._on_sample_loaded)
+        loader.failed.connect(self._on_sample_load_failed)
+        loader.finished.connect(lambda: self._load_threads.pop(sample_id, None))
+        self._load_threads[sample_id] = loader
+        loader.start()
 
+    def _on_sample_loaded(self, sample_id: int, audio, sr: int, name: str, source: dict) -> None:
         try:
             self.model.add_slice(
-                audio=y,
+                audio=audio,
                 sample_rate=sr,
-                label=sample.name,
-                source={"sample_id": sample_id, "path": sample.path},
+                label=name,
+                source=source,
             )
+            self.info_label.setText("Drop des slices (markers) pour composer un sample")
         except Exception as e:
             logger.exception("[Composer] Failed to add sample card")
             self.info_label.setText(f"Drop refuse: {e}")
+
+    def _on_sample_load_failed(self, sample_id: int, message: str) -> None:
+        self.info_label.setText(f"Erreur chargement sample: {message}")
 
     # ------------------------------------------------------------------ sync UI
     def _sync_all(self) -> None:
@@ -452,3 +537,29 @@ class SampleComposerWidget(QWidget):
 
         w.play_start, w.play_end = start, end
         w.read_head.setPos(start)
+
+
+class _ComposerSampleLoader(QThread):
+    loaded = pyqtSignal(int, object, int, str, dict)
+    failed = pyqtSignal(int, str)
+
+    def __init__(self, sample_id: int, path: str, name: str, parent=None):
+        super().__init__(parent)
+        self.sample_id = sample_id
+        self.path = path
+        self.name = name
+
+    def run(self):
+        try:
+            import librosa
+
+            y, sr = librosa.load(self.path, sr=None, mono=False)
+            self.loaded.emit(
+                int(self.sample_id),
+                y,
+                int(sr),
+                self.name,
+                {"sample_id": int(self.sample_id), "path": self.path},
+            )
+        except Exception as e:
+            self.failed.emit(int(self.sample_id), str(e))

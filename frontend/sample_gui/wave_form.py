@@ -43,6 +43,7 @@
 
 import os
 import pickle
+import logging
 
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtGui import QDrag
@@ -66,6 +67,8 @@ from .waveform.waveform_save import WaveformSaveController
 from .waveform.waveform_shortcuts import WaveformShortcutsController
 from .waveform.waveform_navigation import WaveformNavigationController
 from .waveform.waveform_plot_helpers import ContextMenuLinearRegionItem, NoLeftDragViewBox
+
+logger = logging.getLogger("waveform_widget")
 
 class WaveformWidget(QWidget):
     stop_timer_signal = pyqtSignal()
@@ -280,6 +283,12 @@ class WaveformWidget(QWidget):
     # -- Drag & drop (local)
     def start_slice_drag(self, start: float, end: float):
         """Initie un glisser-déposer pour la portion [start,end]."""
+        logger.info(
+            "[Waveform] drag start (start=%.3f end=%.3f sr=%s)",
+            float(start),
+            float(end),
+            self.sample_rate,
+        )
         s0 = int(start * self.sample_rate)
         s1 = int(end * self.sample_rate)
         if s1 <= s0:
@@ -298,7 +307,8 @@ class WaveformWidget(QWidget):
         )
         drag = QDrag(self)
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.CopyAction)
+        result = drag.exec(Qt.DropAction.CopyAction)
+        logger.info("[Waveform] drag end (result=%s)", result)
 
     # -- Playback (waveform_playback.py)
     def play_from_start(self):

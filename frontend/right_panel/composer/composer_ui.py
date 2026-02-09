@@ -141,6 +141,10 @@ def apply_styles(widget) -> None:
         QWidget#ComposerToolCard[focused="true"] {{
             border: 1px solid #f2c94c;
         }}
+        QWidget#ComposerToolCard[dropActive="true"] {{
+            border: 1px solid #f2c94c;
+            background-color: #202020;
+        }}
 
         /* Clip list = colonne fine type "markers" */
         QListWidget#ComposerClipList {{
