@@ -5,7 +5,7 @@
 #   - ViewBox qui bloque le drag gauche.
 #
 # CE QUI EST COUVERT
-# - ContextMenuLinearRegionItem: actions Cut / Export / Drag / Markers.
+# - ContextMenuLinearRegionItem: actions Cut / Export / Markers.
 # - NoLeftDragViewBox: empêche le drag gauche (réserve le geste à la sélection).
 #
 # RESPONSABILITES TECHNIQUES
@@ -39,7 +39,6 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
 
         cut = menu.addAction("Cut                      Ctrl + X")
         export = menu.addAction("Export Selection         Ctrl + E")
-        drag_act = menu.addAction("Drag Selection")
         add_markers_action = menu.addAction("Add markers at edges     Ctrl + Shift + G")
 
         # place ici tes autres actions...
@@ -55,8 +54,6 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
         elif action is export:
             # on appelle la méthode _export_region sur le parent (n’écrase pas la waveform en mémoire)
             self._parent._export_region(start, end)
-        elif action is drag_act:
-            self._parent.start_slice_drag(start, end)
         elif action is add_markers_action:
             # on ajoute des marqueurs aux bords de la région
             if end > start:

@@ -47,10 +47,6 @@ class DirectoryListWidget(QListWidget):
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
-        logger.info(
-            "[DirectoryListWidget] dragEnter (formats=%s)",
-            list(event.mimeData().formats()),
-        )
         if directory_dnd.accepts(event.mimeData()):
             event.acceptProposedAction()
         else:
