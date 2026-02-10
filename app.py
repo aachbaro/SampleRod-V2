@@ -26,6 +26,16 @@ if __name__ == '__main__':
     create_database()
     app_context = AppContext()  # Initialisation du contexte de l'application
     gui = QApplication(sys.argv)
+    gui.setStyleSheet(
+        """
+        QToolTip {
+            background-color: #1e1e1e;
+            color: #f2f2f2;
+            border: 1px solid #3a3a3a;
+            padding: 4px 6px;
+        }
+        """
+    )
     main_window = MainWindow(app_context)
     main_window.show()
     sys.exit(gui.exec())

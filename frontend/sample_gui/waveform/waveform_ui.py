@@ -56,6 +56,7 @@ class HoverIconButton(QToolButton):
         icon_color_normal: str,
         icon_color_hover: str,
         border_color: str = "#2A2A2A",
+        border_color_hover: str = "#FFFFFF",
         parent=None,
     ):
         super().__init__(parent)
@@ -68,7 +69,9 @@ class HoverIconButton(QToolButton):
         self._icon_color_hover = icon_color_hover
         self._icon_normal = qta.icon(icon_name, color=self._icon_color_normal)
         self._icon_hover = qta.icon(icon_name, color=self._icon_color_hover)
-        self._border_color = border_color
+        self._border_color_normal = border_color
+        self._border_color_hover = border_color_hover
+        self._border_color_current = border_color
         self._bg_normal = QColor(255, 255, 255, 0)
         self._bg_hover = QColor(255, 255, 255, 255)
         self._current_bg = QColor(self._bg_normal)
@@ -104,14 +107,18 @@ class HoverIconButton(QToolButton):
         # Au hover: icone plus sombre + fond blanc (animation)
         if not self.isChecked():
             self.setIcon(self._icon_hover)
+            self._border_color_current = self._border_color_hover
             self._animate(True)
+            self._apply_style()
         super().enterEvent(ev)
 
     def leaveEvent(self, ev):
         # Quand la souris sort: retour au fond transparent + icone claire
         if not self.isChecked():
             self.setIcon(self._icon_normal)
+            self._border_color_current = self._border_color_normal
             self._animate(False)
+            self._apply_style()
         super().leaveEvent(ev)
 
     def _on_toggled(self, checked: bool):
@@ -119,9 +126,11 @@ class HoverIconButton(QToolButton):
         if checked:
             self._current_bg = QColor(self._bg_hover)
             self.setIcon(self._icon_hover)
+            self._border_color_current = self._border_color_hover
         else:
             self._current_bg = QColor(self._bg_normal)
             self.setIcon(self._icon_normal)
+            self._border_color_current = self._border_color_normal
         self._apply_style()
 
     def _animate(self, hover: bool):
@@ -139,7 +148,7 @@ class HoverIconButton(QToolButton):
     def _apply_style(self):
         # Applique le style (bordure + background + rayon)
         bg = self._current_bg if not self.isChecked() else self._bg_hover
-        border = self._border_color
+        border = self._border_color_current
         rgba = f"rgba({bg.red()}, {bg.green()}, {bg.blue()}, {bg.alpha()})"
         self.setStyleSheet(
             "border: 1px solid %s; border-radius: %dpx; background: %s; padding: 0; margin: 0;"
@@ -369,49 +378,4 @@ class WaveformUIBuilder:
 
         # ----- Styles globaux de l'editor
         w.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        w.setStyleSheet("""
-            QWidget#WaveformWidget {
-                background: transparent;
-                border: none;
-            }
-            QFrame#WaveformEditor {
-                background: #1B1B1B;
-                border: 1px solid #2A2A2A;
-                border-radius: 12px;
-            }
-            WaveformWidget[focused="true"] QFrame#WaveformEditor {
-                border: 1px solid #3A3A3A;
-            }
-            QListWidget {
-                background: #1B1B1B;
-                border: 1px solid #2A2A2A;
-                border-radius: 8px;
-                padding: 4px;
-                color: #D6D6D6;
-            }
-            /* Colonne markers: padding plus faible + items centres */
-            QListWidget#MarkerList {
-                border-radius: 12px;
-                padding: 0px;
-                font-size: 10px;
-                font-weight: 600;
-                /* Bordure dessinee en custom paint (pour animation) */
-                border: none;
-            }
-            QListWidget::item {
-                padding: 4px 6px;
-                border-radius: 6px;
-            }
-            QListWidget#MarkerList::item {
-                padding: 0px;
-                margin: 2px 2px;
-                min-height: 16px;
-            }
-            QListWidget::item:selected {
-                background: #262626;
-                color: #FFFFFF;
-            }
-            QListWidget::item:focus {
-                outline: none;
-            }
-        """)
+        # Styles globaux via `frontend/styles/theme.qss`

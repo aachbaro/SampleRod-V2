@@ -261,6 +261,44 @@ class ComposerModel(QObject):
         self.changed.emit()
         return clip
 
+    def insert_silence_after(self, clip_id: int, duration_s: float = 1.0) -> ComposerClip:
+        """
+        Insere un segment de silence apres un clip existant.
+        """
+        if self.target_sr is None or self.target_channels is None:
+            raise ValueError("Format cible non defini (aucun clip).")
+
+        try:
+            idx = next(i for i, c in enumerate(self._clips) if c.clip_id == clip_id)
+        except StopIteration as e:
+            raise ValueError(f"Clip introuvable: {clip_id}") from e
+
+        dur = max(0.0, float(duration_s))
+        n_samples = max(1, int(dur * self.target_sr))
+        if self.target_channels == 1:
+            audio = np.zeros((n_samples,), dtype=np.float32)
+        else:
+            audio = np.zeros((n_samples, self.target_channels), dtype=np.float32)
+
+        clip = ComposerClip(
+            clip_id=self._next_clip_id,
+            label=f"silence {dur:.0f}s",
+            audio=audio,
+            sr=int(self.target_sr),
+            channels=int(self.target_channels),
+            duration_s=float(n_samples / float(self.target_sr)),
+            source={"type": "silence", "duration_s": dur},
+        )
+        self._next_clip_id += 1
+
+        self._clips.insert(idx + 1, clip)
+        self._preview_dirty = True
+
+        self.clipsChanged.emit()
+        self.previewChanged.emit()
+        self.changed.emit()
+        return clip
+
     def remove_clip(self, clip_id: int) -> None:
         before = len(self._clips)
         self._clips = [c for c in self._clips if c.clip_id != clip_id]

@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 
 from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation
+from PyQt6.QtGui import QPainter, QColor, QPen
 from PyQt6.QtWidgets import (
     QListWidget,
     QWidget,
@@ -126,23 +127,38 @@ class ComposerClipRow(QWidget):
     """
 
     playRequested = pyqtSignal(int)
+    silenceRequested = pyqtSignal(int)
     removeRequested = pyqtSignal(int)
     clicked = pyqtSignal()
 
     def __init__(self, clip_id: int, label: str, parent=None):
         super().__init__(parent)
+        # ------------------------------------------------------------------
+        # DIMENSIONS / "TAILLE DE CARTE"
+        # - setMinimumHeight(...) : hauteur mini de la row (impacte la rondeur).
+        # - Marges du layout : padding interne (haut/bas/gauche/droite).
+        # - Spacing : espace entre label et boutons.
+        # ------------------------------------------------------------------
         self.clip_id = int(clip_id)
         self.setObjectName("ComposerClipRow")
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumHeight(32)
+        # Permet au QSS (background/border) de s'appliquer correctement.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._hovered = False
 
         layout = QHBoxLayout(self)
         # Marges/spacing calques sur DirectoryRow pour un rendu identique.
-        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setContentsMargins(10, 2, 10, 2)
         layout.setSpacing(8)
         layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
+        # ------------------------------------------------------------------
+        # CONTENU TEXTE
+        # - QLabel : texte visible.
+        # - MinimumWidth(0) : permet l'elipsis automatique si besoin.
+        # ------------------------------------------------------------------
         self.label = QLabel(label)
         self.label.setObjectName("ComposerClipLabel")
         self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -150,6 +166,11 @@ class ComposerClipRow(QWidget):
         # Laisse les clics passer au row (pour selectionner l'item).
         self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
 
+        # ------------------------------------------------------------------
+        # ZONE ACTIONS (BOUTONS)
+        # - actions_wrap : conteneur des boutons a droite.
+        # - play / silence / delete : actions visibles au survol.
+        # ------------------------------------------------------------------
         self.actions_wrap = QWidget(self)
         actions_layout = QHBoxLayout(self.actions_wrap)
         actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -161,10 +182,21 @@ class ComposerClipRow(QWidget):
             icon_size=10,
             icon_color_normal="#cfcfcf",
             icon_color_hover="#121212",
-            border_color="#2A2A2A",
+            # border_color="#2A2A2A",
             parent=self.actions_wrap,
         )
-        self.play_btn.setToolTip("")
+        self.play_btn.setToolTip("Lire ce segment")
+
+        self.silence_btn = HoverIconButton(
+            "fa5s.plus",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#cfcfcf",
+            icon_color_hover="#121212",
+            # border_color="#2A2A2A",
+            parent=self.actions_wrap,
+        )
+        self.silence_btn.setToolTip("Ajouter 1s de silence après ce segment")
 
         self.delete_btn = HoverIconButton(
             "fa5s.trash-alt",
@@ -172,31 +204,39 @@ class ComposerClipRow(QWidget):
             icon_size=10,
             icon_color_normal="#d77a7a",
             icon_color_hover="#121212",
-            border_color="#2A2A2A",
+            # border_color="#2A2A2A",
             parent=self.actions_wrap,
         )
-        self.delete_btn.setToolTip("")
+        self.delete_btn.setToolTip("Supprimer ce segment")
 
         actions_layout.addWidget(self.play_btn)
+        actions_layout.addWidget(self.silence_btn)
         actions_layout.addWidget(self.delete_btn)
 
         layout.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.actions_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        # Fade hover pour apparition douce des boutons
+        # ------------------------------------------------------------------
+        # VISIBILITE / ANIMATION (HOVER)
+        # - Opacite 0 -> boutons caches.
+        # - Animation courte pour l'apparition au survol.
+        # ------------------------------------------------------------------
         self._actions_fx = QGraphicsOpacityEffect(self.actions_wrap)
         self._actions_fx.setOpacity(0.0)
         self.actions_wrap.setGraphicsEffect(self._actions_fx)
         self.play_btn.setEnabled(False)
+        self.silence_btn.setEnabled(False)
         self.delete_btn.setEnabled(False)
         self._actions_anim = QPropertyAnimation(self._actions_fx, b"opacity", self)
         self._actions_anim.setDuration(140)
 
         self.play_btn.clicked.connect(lambda: self.playRequested.emit(self.clip_id))
+        self.silence_btn.clicked.connect(lambda: self.silenceRequested.emit(self.clip_id))
         self.delete_btn.clicked.connect(lambda: self.removeRequested.emit(self.clip_id))
 
     # ------------------------------------------------------------------ state
     def set_selected(self, selected: bool) -> None:
+        # Flag "selected" pilote la couleur de fond dans paintEvent.
         if self.property("selected") == selected:
             return
         self.setProperty("selected", selected)
@@ -210,10 +250,16 @@ class ComposerClipRow(QWidget):
         super().mousePressEvent(event)
 
     def enterEvent(self, event):
+        # Survol: boutons visibles + repaint pour le pill.
+        self._hovered = True
+        self.update()
         self._set_actions_visible(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        # Sortie: boutons caches + repaint pour le pill.
+        self._hovered = False
+        self.update()
         self._set_actions_visible(False)
         super().leaveEvent(event)
 
@@ -223,4 +269,35 @@ class ComposerClipRow(QWidget):
         self._actions_anim.setEndValue(1.0 if visible else 0.0)
         self._actions_anim.start()
         self.play_btn.setEnabled(visible)
+        self.silence_btn.setEnabled(visible)
         self.delete_btn.setEnabled(visible)
+
+    def paintEvent(self, event):
+        """
+        Dessin manuel pour garantir un rendu "pill" (coins parfaitement ronds)
+        quel que soit le moteur QSS/Qt.
+        """
+        # ------------------------------------------------------------------
+        # RENDU "PILL"
+        # - radius = hauteur / 2 => capsule parfaite.
+        # - Couleurs dependant de l'etat (hover / selected).
+        # ------------------------------------------------------------------
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        radius = rect.height() / 2.0
+
+        # Couleurs (harmonisees avec composer_ui.py)
+        bg = QColor(0, 0, 0, 0)  # transparent
+        border = QColor(0, 0, 0, 0)
+        if self.property("selected"):
+            bg = QColor(0x2b, 0x2b, 0x2b)
+            border = QColor(0x3a, 0x3a, 0x3a)
+        elif self._hovered:
+            bg = QColor(0x23, 0x23, 0x23)
+            border = QColor(0x3a, 0x3a, 0x3a)
+
+        painter.setBrush(bg)
+        painter.setPen(QPen(border, 1))
+        painter.drawRoundedRect(rect, radius, radius)

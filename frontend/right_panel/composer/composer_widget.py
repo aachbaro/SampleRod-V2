@@ -35,11 +35,12 @@ Notes UI
 from __future__ import annotations
 
 import logging
+import os
 
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QEvent, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QEvent, QThread, pyqtSignal, QSettings
 from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QWidget, QListWidgetItem, QApplication
+from PyQt6.QtWidgets import QWidget, QListWidgetItem, QApplication, QFileDialog
 
 from frontend.sample_gui.wave_form import WaveformWidget
 from frontend.sample_gui.waveform.waveform_plot_helpers import ContextMenuLinearRegionItem
@@ -83,7 +84,7 @@ class SampleComposerWidget(QWidget):
     def _wire_events(self) -> None:
         # UI -> model
         self.clear_btn.clicked.connect(self.model.clear)
-        self.delete_clip_btn.clicked.connect(self._delete_selected_clip)
+        self.save_comp_btn.clicked.connect(self._save_composition)
 
         self.clip_list.sliceDropped.connect(self._on_slice_dropped)
         self.clip_list.orderChanged.connect(self._on_order_changed)
@@ -94,7 +95,7 @@ class SampleComposerWidget(QWidget):
         self.model.clipsChanged.connect(self._sync_clip_list)
         self.model.previewChanged.connect(self._sync_preview_plot)
         self.model.formatChanged.connect(self._sync_info_label)
-        self.clip_list.itemSelectionChanged.connect(self._sync_delete_button_state)
+        self.clip_list.itemSelectionChanged.connect(self._sync_save_button_state)
 
     def _build_shortcuts(self) -> None:
         """
@@ -231,7 +232,7 @@ class SampleComposerWidget(QWidget):
         self.model.clipsChanged.connect(self._sync_clip_list)
         self.model.previewChanged.connect(self._sync_preview_plot)
         self.model.formatChanged.connect(self._sync_info_label)
-        self.clip_list.itemSelectionChanged.connect(self._sync_delete_button_state)
+        self.clip_list.itemSelectionChanged.connect(self._sync_save_button_state)
 
     # ------------------------------------------------------------------ actions
     def _on_slice_dropped(self, payload: dict) -> None:
@@ -275,6 +276,16 @@ class SampleComposerWidget(QWidget):
             self.model.remove_clip(int(clip_id))
         except Exception:
             logger.exception("[Composer] Failed to remove clip")
+
+    def _add_silence_after(self, clip_id: int) -> None:
+        try:
+            self.model.insert_silence_after(int(clip_id), duration_s=1.0)
+        except Exception as e:
+            logger.exception("[Composer] Failed to insert silence")
+            try:
+                self.info_label.setText(f"Impossible d'ajouter un blanc: {e}")
+            except Exception:
+                pass
 
     def _play_clip_by_id(self, clip_id: int) -> None:
         # Selection visuelle sur la ligne correspondante
@@ -354,11 +365,12 @@ class SampleComposerWidget(QWidget):
         self._sync_clip_list()
         self._sync_preview_plot()
         self._sync_info_label()
-        self._sync_delete_button_state()
+        self._sync_save_button_state()
 
-    def _sync_delete_button_state(self) -> None:
-        has_selection = self.clip_list.currentItem() is not None
-        self.delete_clip_btn.setEnabled(has_selection)
+    def _sync_save_button_state(self) -> None:
+        # Active le bouton save uniquement s'il y a au moins un clip.
+        has_clips = len(self.model.clips) > 0
+        self.save_comp_btn.setEnabled(has_clips)
         self._sync_clip_row_selection()
 
     def _sync_clip_row_selection(self) -> None:
@@ -408,6 +420,7 @@ class SampleComposerWidget(QWidget):
                 row = ComposerClipRow(int(clip.clip_id), label, parent=self.clip_list)
                 row.removeRequested.connect(self._remove_clip_by_id)
                 row.playRequested.connect(self._play_clip_by_id)
+                row.silenceRequested.connect(self._add_silence_after)
                 row.clicked.connect(lambda _=None, it=item: self.clip_list.setCurrentItem(it))
                 item.setSizeHint(row.sizeHint())
                 self.clip_list.setItemWidget(item, row)
@@ -426,7 +439,109 @@ class SampleComposerWidget(QWidget):
         finally:
             self._syncing_view = False
 
-        self._sync_delete_button_state()
+        self._sync_save_button_state()
+
+    # ------------------------------------------------------------------ export (UI)
+    def _save_composition(self) -> None:
+        """
+        Ouvre un QFileDialog pour choisir un dossier de sauvegarde.
+        Le dernier dossier est memorise via QSettings.
+        """
+        # Rien a sauver
+        audio, sr, ch = self.model.render_preview()
+        if sr <= 0 or audio is None or audio.size == 0:
+            try:
+                self.info_label.setText("Aucune composition a sauvegarder")
+            except Exception:
+                pass
+            return
+
+        default_dir = self._get_default_export_dir()
+        directory = QFileDialog.getExistingDirectory(
+            self,
+            "Choisir un dossier de sauvegarde",
+            default_dir,
+        )
+        if not directory:
+            return
+
+        # Persiste le dernier dossier choisi
+        try:
+            qs = QSettings("SampleRod", "Main")
+            qs.setValue("composer_last_export_dir", directory)
+        except Exception:
+            pass
+
+        # Ecriture du fichier WAV + ajout dans la DB via SampleService
+        try:
+            import soundfile as sf
+            from backend.models.sample import Sample as DBSample
+            from backend.services.notification_service import NotificationType
+
+            base_name = f"SMPL_{DBSample.get_next_id():04d}"
+            target = self._unique_export_path(directory, base_name, ".wav")
+
+            sf.write(target, audio, sr)
+            # Cree le nouveau sample (FS+DB) + notification standard
+            self.app_context.sample_store.add(target)
+            # Feedback court
+            self.app_context.notifications.notify(
+                title="✅ Composition sauvegardee",
+                message=os.path.basename(target),
+                type=NotificationType.SUCCESS,
+            )
+        except Exception as e:
+            try:
+                from backend.services.notification_service import NotificationType
+                self.app_context.notifications.notify(
+                    title="❌ Erreur sauvegarde",
+                    message=str(e),
+                    type=NotificationType.ERROR,
+                )
+            except Exception:
+                pass
+
+    def _get_default_export_dir(self) -> str:
+        """
+        Priorite:
+        1) Dernier dossier choisi (QSettings)
+        2) Premiere librairie de samples (SettingsService)
+        3) Dossier utilisateur
+        """
+        try:
+            qs = QSettings("SampleRod", "Main")
+            last = qs.value("composer_last_export_dir", "")
+            if last and isinstance(last, str) and os.path.isdir(last):
+                return last
+        except Exception:
+            pass
+
+        libs = getattr(self.app_context.settings, "libraries", []) or []
+        if libs:
+            try:
+                libs_sorted = sorted(libs, key=lambda lib: getattr(lib, "position", 0))
+                path = getattr(libs_sorted[0], "path", "")
+                if path and os.path.isdir(path):
+                    return path
+            except Exception:
+                pass
+
+        return os.path.expanduser("~")
+
+    @staticmethod
+    def _unique_export_path(folder: str, base: str, ext: str) -> str:
+        """
+        Genere un chemin unique (si le fichier existe deja).
+        """
+        candidate = os.path.join(folder, f"{base}{ext}")
+        if not os.path.exists(candidate):
+            return candidate
+        i = 2
+        while True:
+            candidate = os.path.join(folder, f"{base}_{i}{ext}")
+            if not os.path.exists(candidate):
+                return candidate
+            i += 1
 
     def _sync_preview_plot(self) -> None:
         audio, sr, ch = self.model.render_preview()
