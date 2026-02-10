@@ -173,10 +173,9 @@ class SampleComposerWidget(QWidget):
 
     def _handle_drag_event(self, event) -> bool:
         mime = event.mimeData()
-        if event.type() in (QEvent.Type.DragEnter, QEvent.Type.Drop):
+        if event.type() == QEvent.Type.Drop:
             logger.info(
-                "[Composer] dragEvent=%s formats=%s",
-                event.type().name if hasattr(event.type(), "name") else str(event.type()),
+                "[Composer] drop formats=%s",
                 list(mime.formats()),
             )
         if has_slice(mime) or has_sample_card(mime):

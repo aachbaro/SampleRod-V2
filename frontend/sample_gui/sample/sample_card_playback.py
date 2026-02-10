@@ -14,6 +14,15 @@ import qtawesome as qta
 class SampleCardPlayback:
     def __init__(self, card):
         self.card = card
+        self._alive = True
+        try:
+            self.card.destroyed.connect(self._on_card_destroyed)
+        except Exception:
+            # Si la carte est deja en cours de destruction, on bloque tout.
+            self._alive = False
+
+    def _on_card_destroyed(self, *_):
+        self._alive = False
 
     def bind(self):
         c = self.card
@@ -21,6 +30,8 @@ class SampleCardPlayback:
         c.playback_slider.sliderMoved.connect(self.seek_audio)
 
     def toggle_play(self):
+        if not self._alive:
+            return
         c = self.card
         c.playSample.emit(c.sample)
         is_playing = c.app_context.audio_player.toggle_play(
@@ -34,6 +45,8 @@ class SampleCardPlayback:
 
     def seek_audio(self, value: int):
         """Deplace la position de lecture lorsque l'utilisateur interagit avec le slider."""
+        if not self._alive:
+            return
         c = self.card
         new_position = int((value / 100) * (c.sample.duration * 1000))
         is_playing = c.app_context.audio_player.seek_position(
@@ -48,6 +61,8 @@ class SampleCardPlayback:
 
     def update_slider(self):
         """Met a jour la position du slider, le temps affiche et detecte la fin de lecture."""
+        if not self._alive:
+            return
         c = self.card
         position = int(c.app_context.audio_player.get_position())
         sample_id = c.app_context.audio_player.current_sample_id
@@ -71,15 +86,21 @@ class SampleCardPlayback:
             QTimer.singleShot(100, self.update_slider)
 
     def _apply_state(self, is_playing: bool):
+        if not self._alive:
+            return
         icon_name = "fa5s.pause" if is_playing else "fa5s.play"
-        if hasattr(self.card.play_button, "set_icon_pair"):
-            self.card.play_button.set_icon_pair(
-                icon_name,
-                icon_color_normal="#cfcfcf",
-                icon_color_hover="#121212",
-            )
-        else:
-            self.card.play_button.setIcon(qta.icon(icon_name, color="lightgray"))
+        try:
+            if hasattr(self.card.play_button, "set_icon_pair"):
+                self.card.play_button.set_icon_pair(
+                    icon_name,
+                    icon_color_normal="#cfcfcf",
+                    icon_color_hover="#121212",
+                )
+            else:
+                self.card.play_button.setIcon(qta.icon(icon_name, color="lightgray"))
+        except RuntimeError:
+            # Objet Qt deja detruit (deleteLater), on ignore.
+            self._alive = False
 
     def set_paused_icon(self):
         self._apply_state(False)

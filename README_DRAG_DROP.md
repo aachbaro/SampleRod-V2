@@ -22,8 +22,7 @@ utilise par la SampleList.
 
 **Point d'entree** :
 - `SampleCardInteractions.mouse_move(...)`
-- Quand la distance de drag depasse `QApplication.startDragDistance()` :
-  - `SampleCardInteractions._start_drag()`
+- Distance de drag > `QApplication.startDragDistance()` -> `SampleCardInteractions._start_drag()`
 
 **MIME**
 - `application/x-sample-card`
@@ -31,6 +30,18 @@ utilise par la SampleList.
 **Payload (pickle dict)**
 ```python
 {"sample_id": <int>}
+```
+
+**Extrait de code (source)**
+```python
+# frontend/sample_gui/sample/sample_card_interactions.py
+def _start_drag(self):
+    drag = QDrag(self.card)
+    mime = QMimeData()
+    payload = {"sample_id": self.card.sample.id}
+    mime.setData("application/x-sample-card", pickle.dumps(payload))
+    drag.setMimeData(mime)
+    drag.exec(Qt.DropAction.CopyAction)
 ```
 
 **Logs utiles**
@@ -58,9 +69,24 @@ Source unique : **MarkerManager** (liste de markers)
 }
 ```
 
+**Extrait de code (source)**
+```python
+# frontend/sample_gui/marker_manager.py
+mime = QMimeData()
+mime.setData(
+    "application/x-sample-slice-data",
+    pickle.dumps({"audio_data": audio, "sample_rate": sr, "name": name}),
+)
+drag = QDrag(self)
+drag.setMimeData(mime)
+drag.exec(Qt.DropAction.CopyAction)
+```
+
 **Logs**
 - `[marker_manager] [MarkerManager] drag start`
 - `[marker_manager] [MarkerManager] drag end`
+
+---
 
 ## 3) Drop target : Directory Tool
 **Fichier** : `frontend/right_panel/directory/directory_list_widget.py`
@@ -77,6 +103,20 @@ Source unique : **MarkerManager** (liste de markers)
 **MIME supportes**
 - `application/x-sample-card`
 - `application/x-sample-slice-data`
+
+**Extrait de code (target)**
+```python
+# frontend/right_panel/directory/directory_list_widget.py
+def dragEnterEvent(self, event):
+    if directory_dnd.accepts(event.mimeData()):
+        event.acceptProposedAction()
+    else:
+        event.ignore()
+
+def dropEvent(self, event):
+    if directory_dnd.handle_drop(self.parent_widget, event.mimeData()):
+        event.acceptProposedAction()
+```
 
 ---
 
@@ -99,6 +139,29 @@ Deux chemins :
 **Traitement**
 - `composer_dnd.parse_slice_mime` / `parse_sample_card_mime`
 - Ajout dans le `ComposerModel` (normalisation SR/canaux)
+
+**Extrait de code (target + parse)**
+```python
+# frontend/right_panel/composer/composer_widget.py
+def _handle_drag_event(self, event) -> bool:
+    mime = event.mimeData()
+    if has_slice(mime) or has_sample_card(mime):
+        if event.type() == QEvent.Type.Drop and has_slice(mime):
+            payload = parse_slice_mime(mime)
+            self._on_slice_dropped(payload)
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        return True
+    event.ignore()
+    return False
+```
+```python
+# frontend/right_panel/composer/composer_dnd.py
+def parse_slice_mime(mime: QMimeData) -> dict:
+    payload = pickle.loads(bytes(mime.data(MIME_SAMPLE_SLICE)))
+    audio = np.asarray(payload["audio_data"], dtype=np.float32)
+    return {"audio": audio, "sample_rate": int(payload["sample_rate"]), "label": payload.get("name")}
+```
 
 ---
 
@@ -131,14 +194,10 @@ Importer des fichiers audio externes directement dans la liste.
 ---
 
 ## Checklist pour debugger un drop qui ne fonctionne pas
-1. **Source**
-   - Le `drag start` est-il logge ?
-2. **Target**
-   - `dragEnter` / `drop` arrivent-ils au widget cible ?
-3. **MIME**
-   - Le format est-il correct (sample-card ou slice) ?
-4. **Conteneur**
-   - Le drop cible est-il bien dans la zone survolee ?
+1. **Source** — Le `drag start` est-il logge ?
+2. **Target** — `dragEnter` / `drop` arrivent-ils au widget cible ?
+3. **MIME** — Le format est-il correct (sample-card ou slice) ?
+4. **Conteneur** — Le drop cible est-il bien dans la zone survolee ?
 
 ---
 
