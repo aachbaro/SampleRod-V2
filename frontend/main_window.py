@@ -45,6 +45,8 @@ class MainWindow(QMainWindow):
         """Configure la fenêtre principale"""
         self.setWindowTitle("SampleRod")
         self.setGeometry(300, 200, 1200, 600)
+        # Démarrage en mode maximisé (barre de titre visible)
+        self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
 
     def _build_ui(self):
         """Construit l'interface utilisateur"""

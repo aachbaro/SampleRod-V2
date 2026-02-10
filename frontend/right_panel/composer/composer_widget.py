@@ -47,6 +47,7 @@ from frontend.sample_gui.waveform.waveform_plot_helpers import ContextMenuLinear
 from .composer_model import ComposerModel
 from .composer_ui import build_composer_widget_ui
 from .composer_dnd import has_slice, has_sample_card, parse_slice_mime, parse_sample_card_mime
+from .composer_clip_list import ComposerClipRow
 
 logger = logging.getLogger("sample_composer_widget")
 
@@ -269,6 +270,39 @@ class SampleComposerWidget(QWidget):
             return
         self.model.remove_clip(clip_id)
 
+    def _remove_clip_by_id(self, clip_id: int) -> None:
+        try:
+            self.model.remove_clip(int(clip_id))
+        except Exception:
+            logger.exception("[Composer] Failed to remove clip")
+
+    def _play_clip_by_id(self, clip_id: int) -> None:
+        # Selection visuelle sur la ligne correspondante
+        for i in range(self.clip_list.count()):
+            item = self.clip_list.item(i)
+            try:
+                cid = int(item.data(Qt.ItemDataRole.UserRole))
+            except Exception:
+                continue
+            if cid == int(clip_id):
+                self.clip_list.setCurrentItem(item)
+                break
+        rng = self._clip_time_range(clip_id)
+        if not rng:
+            return
+        start, end = rng
+        self._set_waveform_region(start, end)
+        self.waveform.play_from_start()
+
+    def _clip_time_range(self, clip_id: int) -> tuple[float, float] | None:
+        start = 0.0
+        for clip in self.model.clips:
+            end = start + float(clip.duration_s)
+            if int(clip.clip_id) == int(clip_id):
+                return start, end
+            start = end
+        return None
+
     def _on_sample_card_dropped(self, payload: dict) -> None:
         """
         Drop d'une SampleCard -> charge le fichier audio et ajoute un clip entier.
@@ -325,6 +359,16 @@ class SampleComposerWidget(QWidget):
     def _sync_delete_button_state(self) -> None:
         has_selection = self.clip_list.currentItem() is not None
         self.delete_clip_btn.setEnabled(has_selection)
+        self._sync_clip_row_selection()
+
+    def _sync_clip_row_selection(self) -> None:
+        cur = self.clip_list.currentItem()
+        for i in range(self.clip_list.count()):
+            item = self.clip_list.item(i)
+            row = self.clip_list.itemWidget(item)
+            if row is None or not hasattr(row, "set_selected"):
+                continue
+            row.set_selected(item is cur)
 
     def _sync_info_label(self) -> None:
         if self.model.is_empty():
@@ -354,12 +398,19 @@ class SampleComposerWidget(QWidget):
         try:
             self.clip_list.clear()
             for idx, clip in enumerate(self.model.clips):
-                item = QListWidgetItem(f"{idx + 1} — {clip.label}")
+                label = f"{idx + 1} — {clip.label}"
+                item = QListWidgetItem()
                 item.setData(Qt.ItemDataRole.UserRole, int(clip.clip_id))
 
                 tip = f"{clip.label} • {clip.duration_s:.2f}s • {clip.sr} Hz"
                 item.setToolTip(tip)
                 self.clip_list.addItem(item)
+                row = ComposerClipRow(int(clip.clip_id), label, parent=self.clip_list)
+                row.removeRequested.connect(self._remove_clip_by_id)
+                row.playRequested.connect(self._play_clip_by_id)
+                row.clicked.connect(lambda _=None, it=item: self.clip_list.setCurrentItem(it))
+                item.setSizeHint(row.sizeHint())
+                self.clip_list.setItemWidget(item, row)
 
             # Restore selection by clip_id
             if selected_id is not None:

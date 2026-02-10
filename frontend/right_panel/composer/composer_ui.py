@@ -146,29 +146,41 @@ def apply_styles(widget) -> None:
             background-color: #202020;
         }}
 
-        /* Clip list = colonne fine type "markers" */
+        /* Clip list = meme style que DirectoryWidget (rows custom) */
         QListWidget#ComposerClipList {{
-            background: {BG_PANEL};
-            border: 1px solid {BORDER};
-            border-radius: 12px;
-            padding: 4px;
-            color: #D6D6D6;
-            font-size: 11px;
-            font-weight: 500;
+            background: transparent;
+            border: none;
             outline: none;
         }}
         QListWidget#ComposerClipList::item {{
-            padding: 6px 8px;
-            margin: 2px 2px;
-            min-height: 20px;
-            border-radius: 8px;
+            border: none;
+            padding: 0px;
+            margin: 0px;
+            background: transparent;
         }}
         QListWidget#ComposerClipList::item:selected {{
-            background: #262626;
-            color: #FFFFFF;
+            background: transparent;
         }}
         QListWidget#ComposerClipList::item:focus {{
             outline: none;
+        }}
+
+        QWidget#ComposerClipRow {{
+            background-color: #1f1f1f;
+            border: 1px solid {BORDER};
+            border-radius: 10px;
+        }}
+        QWidget#ComposerClipRow:hover {{
+            background-color: #232323;
+            border-color: {BORDER_HOVER};
+        }}
+        QWidget#ComposerClipRow[selected="true"] {{
+            border-color: #f2c94c;
+        }}
+        QLabel#ComposerClipLabel {{
+            color: {TEXT_PRIMARY};
+            font-size: 12px;
+            font-weight: 600;
         }}
         """
     )

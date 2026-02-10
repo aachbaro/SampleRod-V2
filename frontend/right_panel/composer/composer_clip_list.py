@@ -21,9 +21,17 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QListWidget
+from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation
+from PyQt6.QtWidgets import (
+    QListWidget,
+    QWidget,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QGraphicsOpacityEffect,
+)
 
+from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from .composer_dnd import has_slice, has_sample_card, parse_slice_mime, parse_sample_card_mime
 
 logger = logging.getLogger("sample_composer_clip_list")
@@ -107,3 +115,112 @@ class ComposerClipListWidget(QListWidget):
                 continue
             ids.append(cid)
         self.orderChanged.emit(ids)
+
+
+class ComposerClipRow(QWidget):
+    """
+    Row custom affichee dans la liste:
+    - label (texte du clip)
+    - bouton play (lecture du segment)
+    - bouton delete (retire la slice du compositeur)
+    """
+
+    playRequested = pyqtSignal(int)
+    removeRequested = pyqtSignal(int)
+    clicked = pyqtSignal()
+
+    def __init__(self, clip_id: int, label: str, parent=None):
+        super().__init__(parent)
+        self.clip_id = int(clip_id)
+        self.setObjectName("ComposerClipRow")
+        self.setMouseTracking(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(32)
+
+        layout = QHBoxLayout(self)
+        # Marges/spacing calques sur DirectoryRow pour un rendu identique.
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self.label = QLabel(label)
+        self.label.setObjectName("ComposerClipLabel")
+        self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.label.setMinimumWidth(0)
+        # Laisse les clics passer au row (pour selectionner l'item).
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        self.actions_wrap = QWidget(self)
+        actions_layout = QHBoxLayout(self.actions_wrap)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(6)
+
+        self.play_btn = HoverIconButton(
+            "fa5s.play",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#cfcfcf",
+            icon_color_hover="#121212",
+            border_color="#2A2A2A",
+            parent=self.actions_wrap,
+        )
+        self.play_btn.setToolTip("")
+
+        self.delete_btn = HoverIconButton(
+            "fa5s.trash-alt",
+            size=24,
+            icon_size=10,
+            icon_color_normal="#d77a7a",
+            icon_color_hover="#121212",
+            border_color="#2A2A2A",
+            parent=self.actions_wrap,
+        )
+        self.delete_btn.setToolTip("")
+
+        actions_layout.addWidget(self.play_btn)
+        actions_layout.addWidget(self.delete_btn)
+
+        layout.addWidget(self.label, 1, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.actions_wrap, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        # Fade hover pour apparition douce des boutons
+        self._actions_fx = QGraphicsOpacityEffect(self.actions_wrap)
+        self._actions_fx.setOpacity(0.0)
+        self.actions_wrap.setGraphicsEffect(self._actions_fx)
+        self.play_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
+        self._actions_anim = QPropertyAnimation(self._actions_fx, b"opacity", self)
+        self._actions_anim.setDuration(140)
+
+        self.play_btn.clicked.connect(lambda: self.playRequested.emit(self.clip_id))
+        self.delete_btn.clicked.connect(lambda: self.removeRequested.emit(self.clip_id))
+
+    # ------------------------------------------------------------------ state
+    def set_selected(self, selected: bool) -> None:
+        if self.property("selected") == selected:
+            return
+        self.setProperty("selected", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    # ------------------------------------------------------------------ events
+    def mousePressEvent(self, event):
+        # Le clic sur la row notifie le parent pour selectionner l'item.
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        self._set_actions_visible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._set_actions_visible(False)
+        super().leaveEvent(event)
+
+    def _set_actions_visible(self, visible: bool) -> None:
+        self._actions_anim.stop()
+        self._actions_anim.setStartValue(self._actions_fx.opacity())
+        self._actions_anim.setEndValue(1.0 if visible else 0.0)
+        self._actions_anim.start()
+        self.play_btn.setEnabled(visible)
+        self.delete_btn.setEnabled(visible)
