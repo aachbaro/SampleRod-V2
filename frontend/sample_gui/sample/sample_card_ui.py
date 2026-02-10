@@ -50,6 +50,9 @@ class SampleCardUIBuilder:
         c.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         # Nom de l'objet pour cibler precisement en QSS
         c.setObjectName("SampleCard")
+        # Empêche l'étirement vertical quand il y a peu de cartes
+        # (la carte reste a sa taille naturelle, mais peut grandir si le waveform s'ouvre).
+        c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         # Style global de la carte
         c.setStyleSheet("""
@@ -421,6 +424,7 @@ class SampleCardUIBuilder:
         c.editor_stack.addWidget(c.waveform_container)
         c.editor_stack.setCurrentWidget(c.playback_container)
         c.editor_container.setMaximumHeight(c.playback_height_hint)
+        c.editor_container.setMinimumHeight(c.playback_height_hint)
         main_layout.addWidget(c.editor_container)
 
         # Si la carte obtient temporairement plus de hauteur (ex: pendant une anim),

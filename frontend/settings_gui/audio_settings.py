@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QComboBox, QPushButton, QFormLayout, QVBoxLayout, QHBoxLayout, QMessageBox, QCheckBox, QSpinBox
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, QTimer
 import sounddevice as sd
 
 from backend.services.settings_service import SettingsService
@@ -73,6 +73,13 @@ class AudioSettingsWidget(QWidget):
         self.lufs_spin.setValue(self.settings.getNormalizationLevel())
         self.lufs_spin.valueChanged.connect(self.settings.setNormalizationLevel)
 
+        # Etat du recorder worker (diagnostic)
+        self.worker_status = QLabel("—")
+        self.worker_status.setObjectName("RecorderStatusLabel")
+        self.worker_detail = QLabel("")
+        self.worker_detail.setObjectName("RecorderStatusDetail")
+        self.worker_detail.setWordWrap(True)
+
         # ─── Assemblage des layouts (addWidget / addLayout) ───
         main_layout = QVBoxLayout(self)
 
@@ -94,6 +101,13 @@ class AudioSettingsWidget(QWidget):
         # Ligne Cible LUFS
         form.addRow(QLabel("Cible LUFS :"), self.lufs_spin)
 
+        # Ligne Etat worker
+        status_box = QVBoxLayout()
+        status_box.setSpacing(2)
+        status_box.addWidget(self.worker_status)
+        status_box.addWidget(self.worker_detail)
+        form.addRow(QLabel("Recorder worker :"), status_box)
+
         # Ajout du formulaire au layout principal
         main_layout.addLayout(form)
 
@@ -102,6 +116,12 @@ class AudioSettingsWidget(QWidget):
 
         # Connexion pour recharger les devices lorsque le loopback change
         self.settings.loopbackDeviceChanged.connect(lambda dev: self._load_settings())
+
+        # Timer de diagnostic (mise a jour de l'etat worker)
+        self._status_timer = QTimer(self)
+        self._status_timer.timeout.connect(self._update_worker_status)
+        self._status_timer.start(1000)
+        self._update_worker_status()
 
     def _load_settings(self):
         # Charger sample rate
@@ -155,3 +175,26 @@ class AudioSettingsWidget(QWidget):
             # persiste et émet loopbackDeviceChanged
             self.settings.setLoopbackDevice(dev)
             logger.info(f"[AudioSettings] Loopback sélectionné : {dev.name if dev else 'None'}")
+
+    def _update_worker_status(self):
+        """Affiche l'etat du worker d'enregistrement pour debug."""
+        rec = getattr(self.app_context, "recorder", None)
+        if rec is None or getattr(rec, "worker", None) is None:
+            self.worker_status.setText("KO")
+            self.worker_status.setStyleSheet("color:#d77a7a;")
+            self.worker_detail.setText("Worker non initialisé.")
+            return
+
+        alive = rec.worker.is_alive()
+        exitcode = rec.worker.exitcode
+        if alive:
+            self.worker_status.setText("OK")
+            self.worker_status.setStyleSheet("color:#9bd18f;")
+            self.worker_detail.setText("Worker actif.")
+        else:
+            self.worker_status.setText("KO")
+            self.worker_status.setStyleSheet("color:#d77a7a;")
+            detail = "Worker arrêté."
+            if exitcode is not None:
+                detail += f" (exitcode={exitcode})"
+            self.worker_detail.setText(detail)

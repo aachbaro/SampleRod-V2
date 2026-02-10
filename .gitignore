@@ -15,6 +15,8 @@ __pycache__/
 dist/
 build/
 *.egg-info/
+*.spec
+*.nupkg
 
 # Ignorer les fichiers specifiques a l'IDE
 .vscode/
@@ -32,12 +34,17 @@ Thumbs.db
 # Ignorer les fichiers de cache de l'application
 .cache/
 sample.db
+logs/
 
 # Frontend React (remote UI)
 frontend/remote_ui/node_modules/
 frontend/remote_ui/dist/
 frontend/remote_ui/.env
 frontend/remote_ui/.env.local
+
+# Squirrel / packaging tools & outputs
+tools/
+Releases/
 
 # Logs npm/yarn/pnpm
 npm-debug.log*

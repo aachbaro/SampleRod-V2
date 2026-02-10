@@ -167,6 +167,20 @@ class RecorderService(QObject):
 
     def start(self, output_folder, retro_time):
         """Démarre l’enregistrement live."""
+        # Guard: worker KO -> notification explicite
+        try:
+            if not self.worker.is_alive():
+                logger.error("RecorderService: worker inactif (is_alive=False)")
+                self.app_context.notifications.notify(
+                    title="Enregistrement impossible",
+                    message="Le worker d'enregistrement est inactif. Redémarre l'application.",
+                    type=NotificationType.WARNING,
+                )
+                return
+        except Exception:
+            # Si l'état n'est pas accessible, on tente quand même
+            pass
+
         logger.info(f"RecorderService: démarrage vers {output_folder} (retro={retro_time}s)")
         self._set_recording_state(True)
         self.cmd_queue.put(('start', output_folder, retro_time))

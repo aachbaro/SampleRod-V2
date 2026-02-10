@@ -94,7 +94,7 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self.sample_list_widget)
         splitter.addWidget(self.right_tools_panel)
-        splitter.setSizes([300, 150])
+        splitter.setSizes([350, 100])
 
         samples_layout.addWidget(splitter)
 

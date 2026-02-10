@@ -70,6 +70,7 @@ class SampleCardWaveform:
 
         start_h = self._editor_current_height()
         editor.setMaximumHeight(start_h)
+        editor.setMinimumHeight(0)
         stack.setCurrentWidget(c.waveform_container)
 
         target_h = self._target_height()
@@ -152,6 +153,7 @@ class SampleCardWaveform:
 
         start_h = self._editor_current_height()
         editor.setMaximumHeight(start_h)
+        # Le minimum sera re-serre au playback dans _on_collapse_finished
         playback_h = self._playback_target_height()
         self._anim = self._animate_max_height(
             editor,
@@ -187,6 +189,10 @@ class SampleCardWaveform:
             if wave_fx is not None:
                 wave_fx.setOpacity(1.0)
                 wave_fx.setEnabled(False)
+            # Re-serre la hauteur sur le playback pour eviter l'espace vide.
+            playback_h = self._playback_target_height()
+            editor.setMinimumHeight(playback_h)
+            editor.setMaximumHeight(playback_h)
         self._cleanup_waveform()
         self._show_playback()
 
