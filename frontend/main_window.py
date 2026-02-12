@@ -23,6 +23,7 @@ from frontend.sample_gui.sample.sample_list import SampleListWidget
 from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
+from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.right_panel.tools_panel import RightToolsPanel
 
@@ -121,6 +122,7 @@ class MainWindow(QMainWindow):
         self.audio_settings_widget = AudioSettingsWidget(self.app_context)
         self.display_settings_widget = DisplaySettingsWidget(self.settings)
         self.remote_control_widget = RemoteControlSettingsWidget(self.app_context)
+        self.screenshot_settings_widget = ScreenshotSettingsWidget(self.app_context)
 
         # Section: bibliotheques (pleine largeur)
         libraries_group = self._make_settings_group(
@@ -159,6 +161,11 @@ class MainWindow(QMainWindow):
             "Piloter l'app depuis un navigateur (mobile) sur le meme reseau.",
             self.remote_control_widget
         )
+        screenshot_group = self._make_settings_group(
+            "Captures d'ecran",
+            "Capturer des images depuis le telephone (optionnel).",
+            self.screenshot_settings_widget
+        )
 
         left_col.addWidget(retro_group)
         left_col.addWidget(display_group)
@@ -166,6 +173,7 @@ class MainWindow(QMainWindow):
 
         right_col.addWidget(audio_group)
         right_col.addWidget(remote_group)
+        right_col.addWidget(screenshot_group)
         right_col.addStretch()
 
         columns.addLayout(left_col, 1)

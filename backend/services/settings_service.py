@@ -57,6 +57,9 @@ class SettingsService(QObject):
     samplesPerPageChanged = pyqtSignal(int)
     remoteControlToggled = pyqtSignal(bool)
     remoteControlPortChanged = pyqtSignal(int)
+    screenshotToggled = pyqtSignal(bool)
+    screenshotLibraryChanged = pyqtSignal(str)
+    screenshotDefaultScreenChanged = pyqtSignal(int)
 
     def __init__(self, app_context):
         super().__init__()
@@ -79,6 +82,14 @@ class SettingsService(QObject):
             "display/samples_per_page", 20, type=int
         )
         self.samplesPerPageChanged.emit(self.samples_per_page)
+
+        # Screenshot: activation + dossier + ecran par defaut
+        self.screenshot_enabled = self._qs.value("screenshot/enabled", False, type=bool)
+        self.screenshot_library_path = self._qs.value("screenshot/library_path", "", type=str)
+        self.screenshot_default_screen = self._qs.value("screenshot/default_screen", 0, type=int)
+        self.screenshotToggled.emit(self.screenshot_enabled)
+        self.screenshotLibraryChanged.emit(self.screenshot_library_path)
+        self.screenshotDefaultScreenChanged.emit(self.screenshot_default_screen)
 
         # Normalization: auto + niveau LUFS
         auto_norm = self._qs.value("autoNormalizeEnabled", False, type=bool)
@@ -276,3 +287,30 @@ class SettingsService(QObject):
         """Persiste le port HTTP du controle distant."""
         self._qs.setValue("remote_control/port", port)
         self.remoteControlPortChanged.emit(port)
+
+    # ------------------------------------------------------------------ Screenshot Settings
+    def isScreenshotEnabled(self) -> bool:
+        return self._qs.value("screenshot/enabled", False, type=bool)
+
+    def setScreenshotEnabled(self, enabled: bool):
+        self.screenshot_enabled = enabled
+        self._qs.setValue("screenshot/enabled", enabled)
+        self.screenshotToggled.emit(enabled)
+
+    def getScreenshotLibraryPath(self) -> str:
+        return self._qs.value("screenshot/library_path", "", type=str)
+
+    def setScreenshotLibraryPath(self, path: str):
+        self.screenshot_library_path = path
+        self._qs.setValue("screenshot/library_path", path)
+        self.screenshotLibraryChanged.emit(path)
+        if path and not self.isScreenshotEnabled():
+            self.setScreenshotEnabled(True)
+
+    def getScreenshotDefaultScreen(self) -> int:
+        return self._qs.value("screenshot/default_screen", 0, type=int)
+
+    def setScreenshotDefaultScreen(self, index: int):
+        self.screenshot_default_screen = index
+        self._qs.setValue("screenshot/default_screen", index)
+        self.screenshotDefaultScreenChanged.emit(index)

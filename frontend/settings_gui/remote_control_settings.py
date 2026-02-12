@@ -178,6 +178,18 @@ class RemoteControlSettingsWidget(QWidget):
                     self.app_context.settings.preSecondsChanged.connect(
                         svc.push_status
                     )
+                    try:
+                        self.app_context.screenshots.screenshotAdded.connect(
+                            svc.push_screenshot_added
+                        )
+                        self.app_context.screenshots.screenshotDeleted.connect(
+                            svc.push_screenshot_deleted
+                        )
+                        self.app_context.screenshots.screenshotsChanged.connect(
+                            svc.push_screenshots_changed
+                        )
+                    except Exception:
+                        pass
                     svc._signals_hooked = True
             except Exception:
                 pass

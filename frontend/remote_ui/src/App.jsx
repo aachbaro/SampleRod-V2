@@ -25,6 +25,12 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
+  const [screens, setScreens] = useState([]);
+  const [shots, setShots] = useState([]);
+  const [shotRenameId, setShotRenameId] = useState(null);
+  const [shotRenameValue, setShotRenameValue] = useState("");
+  const [shotBusyId, setShotBusyId] = useState(null);
+  const [viewerShot, setViewerShot] = useState(null);
   const [renameId, setRenameId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [busyId, setBusyId] = useState(null);
@@ -70,6 +76,24 @@ export default function App() {
     }
   };
 
+  const loadScreens = async () => {
+    try {
+      const data = await fetchJson("/screenshots/screens");
+      setScreens(data.screens || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const loadShots = async () => {
+    try {
+      const data = await fetchJson("/screenshots/list");
+      setShots(data.items || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const formatDate = (value) => {
     if (!value) return "";
     try {
@@ -107,6 +131,8 @@ export default function App() {
   useEffect(() => {
     loadLibraries();
     loadHistory();
+    loadScreens();
+    loadShots();
 
     const es = new EventSource("/events");
     const onStatus = (ev) => {
@@ -144,6 +170,30 @@ export default function App() {
         setError(err.message);
       }
     });
+    es.addEventListener("screenshot_added", (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        setShots((prev) => [data, ...prev.filter((s) => s.id !== data.id)]);
+      } catch (err) {
+        setError(err.message);
+      }
+    });
+    es.addEventListener("screenshot_deleted", (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        setShots((prev) => prev.filter((s) => s.id !== data.id));
+      } catch (err) {
+        setError(err.message);
+      }
+    });
+    es.addEventListener("screenshots_changed", (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        setShots(data.items || []);
+      } catch (err) {
+        setError(err.message);
+      }
+    });
     es.onerror = () => {
       setError("SSE connection lost");
     };
@@ -160,6 +210,17 @@ export default function App() {
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
+
+  useEffect(() => {
+    if (!viewerShot) return;
+    const onKey = (ev) => {
+      if (ev.key === "Escape") {
+        setViewerShot(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewerShot]);
 
   const toggleRecording = async () => {
     setLoading(true);
@@ -194,9 +255,19 @@ export default function App() {
     setRenameValue(sample.name || "");
   };
 
+  const startShotRename = (shot) => {
+    setShotRenameId(shot.id);
+    setShotRenameValue((shot.filename || "").replace(/\.png$/i, ""));
+  };
+
   const cancelRename = () => {
     setRenameId(null);
     setRenameValue("");
+  };
+
+  const cancelShotRename = () => {
+    setShotRenameId(null);
+    setShotRenameValue("");
   };
 
   const saveRename = async (sampleId) => {
@@ -222,6 +293,29 @@ export default function App() {
     }
   };
 
+  const saveShotRename = async (shotId) => {
+    if (!shotRenameValue.trim()) return;
+    setShotBusyId(shotId);
+    setError("");
+    try {
+      const res = await fetchJson(`/screenshots/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: shotId, name: shotRenameValue.trim() }),
+      });
+      if (res.item) {
+        setShots((prev) =>
+          prev.map((s) => (s.id === shotId ? res.item : s))
+        );
+      }
+      cancelShotRename();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setShotBusyId(null);
+    }
+  };
+
   const deleteSample = async (sampleId) => {
     setBusyId(sampleId);
     setError("");
@@ -232,6 +326,44 @@ export default function App() {
       setError(err.message);
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const deleteShot = async (shotId) => {
+    setShotBusyId(shotId);
+    setError("");
+    try {
+      await fetchJson(`/screenshots/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: shotId }),
+      });
+      setShots((prev) => prev.filter((s) => s.id !== shotId));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setShotBusyId(null);
+    }
+  };
+
+  const captureScreen = async (screenIndex) => {
+    setShotBusyId(`capture-${screenIndex}`);
+    setError("");
+    try {
+      const res = await fetchJson(`/screenshots/capture`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ screen_index: screenIndex }),
+      });
+      if (res.item) {
+        setShots((prev) => [res.item, ...prev.filter((s) => s.id !== res.item.id)]);
+      } else {
+        loadShots();
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setShotBusyId(null);
     }
   };
 
@@ -525,8 +657,155 @@ export default function App() {
           ))}
         </section>
 
+        <section className="section screenshots">
+          <div className="history-header">
+            <h2>Screenshots</h2>
+            <span className="history-count">{shots.length}</span>
+          </div>
+          <div className="screen-buttons">
+            {screens.length === 0 && (
+              <div className="history-empty">No screens detected.</div>
+            )}
+            {screens.map((screen) => (
+              <button
+                key={screen.index}
+                className="chip"
+                onClick={() => captureScreen(screen.index)}
+                disabled={shotBusyId === `capture-${screen.index}`}
+                type="button"
+              >
+                {screen.name || `Screen ${screen.index + 1}`}
+              </button>
+            ))}
+          </div>
+          {shots.length === 0 && (
+            <div className="history-empty">No screenshots yet.</div>
+          )}
+          {shots.map((shot) => (
+            <div className="shot-item" key={shot.id}>
+              <div className="shot-preview">
+                <img
+                  src={`/screenshots/file/${shot.id}`}
+                  alt={shot.filename}
+                  loading="lazy"
+                  onClick={() => setViewerShot(shot)}
+                />
+              </div>
+              <div className="shot-body">
+                {shotRenameId === shot.id ? (
+                  <input
+                    className="rename-input"
+                    value={shotRenameValue}
+                    onChange={(e) => setShotRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        saveShotRename(shot.id);
+                      } else if (e.key === "Escape") {
+                        cancelShotRename();
+                      }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <div
+                    className="history-title"
+                    onDoubleClick={() => startShotRename(shot)}
+                    title="Double click to rename"
+                  >
+                    {shot.filename}
+                  </div>
+                )}
+                <div className="history-meta">
+                  {formatDate(shot.created_at)} · Screen {Number(shot.screen_index) + 1} ·{" "}
+                  {shot.width}x{shot.height}
+                </div>
+                <div className="shot-actions">
+                  {shotRenameId === shot.id ? (
+                    <>
+                      <button
+                        className="icon-btn"
+                        onClick={() => saveShotRename(shot.id)}
+                        disabled={shotBusyId === shot.id}
+                        aria-label="Save"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M9.2 16.2 5.5 12.5l-1.4 1.4 5.1 5.1L20 8.2l-1.4-1.4z" />
+                        </svg>
+                      </button>
+                      <button
+                        className="icon-btn ghost"
+                        onClick={cancelShotRename}
+                        aria-label="Cancel"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z" />
+                        </svg>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="icon-btn ghost"
+                        onClick={() => startShotRename(shot)}
+                        aria-label="Rename"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M3 17.3V21h3.7l10.9-10.9-3.7-3.7L3 17.3zm17.7-10.6c.4-.4.4-1 0-1.4L18.7 3.3c-.4-.4-1-.4-1.4 0l-2 2 3.7 3.7 2-2z" />
+                        </svg>
+                      </button>
+                      <a
+                        className="icon-btn ghost"
+                        href={`/screenshots/file/${shot.id}`}
+                        download
+                        aria-label="Download"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M12 3v10.2l3.3-3.3 1.4 1.4-5.7 5.7-5.7-5.7 1.4-1.4 3.3 3.3V3h2zm-7 15h14v2H5v-2z" />
+                        </svg>
+                      </a>
+                      <button
+                        className="icon-btn danger"
+                        onClick={() => deleteShot(shot.id)}
+                        disabled={shotBusyId === shot.id}
+                        aria-label="Delete"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M6 7h12l-1 14H7L6 7zm3-3h6l1 2H8l1-2z" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </section>
+
         {error && <div className="error">Error: {error}</div>}
       </div>
+      {viewerShot && (
+        <div className="viewer-overlay" onClick={() => setViewerShot(null)}>
+          <div className="viewer-card" onClick={(e) => e.stopPropagation()}>
+            <div className="viewer-header">
+              <div className="viewer-title">{viewerShot.filename}</div>
+              <button
+                className="icon-btn ghost viewer-close"
+                onClick={() => setViewerShot(null)}
+                aria-label="Close"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 4.3 19.7 2.9 18.3 9.2 12 2.9 5.7 4.3 4.3l6.3 6.3 6.3-6.3z" />
+                </svg>
+              </button>
+            </div>
+            <img
+              className="viewer-image"
+              src={`/screenshots/file/${viewerShot.id}`}
+              alt={viewerShot.filename}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

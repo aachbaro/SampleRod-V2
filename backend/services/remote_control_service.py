@@ -291,6 +291,11 @@ class RemoteControlService:
             self._send_json(handler, 200, self._build_libraries_payload())
             return
 
+        if path.startswith("/screenshots"):
+            handled = self._handle_screenshots_route(handler, method, path)
+            if handled:
+                return
+
         if method == "POST" and path == "/record/start":
             payload = self._read_json(handler)
             if payload is None:
@@ -337,6 +342,13 @@ class RemoteControlService:
     def _get_sample_by_id(self, sample_id: int):
         samples = self.app_context.sample_store.get_cached()
         return next((s for s in samples if s.id == sample_id), None)
+
+    def _get_screenshot_by_id(self, item_id: int):
+        svc = getattr(self.app_context, "screenshots", None)
+        if not svc:
+            return None
+        items = svc.list_items()
+        return next((i for i in items if int(i.get("id", -1)) == item_id), None)
 
     def _sample_to_dict(self, sample) -> Dict[str, Any]:
         created_at = getattr(sample, "created_at", None)
@@ -474,6 +486,92 @@ class RemoteControlService:
 
         return False
 
+    def _handle_screenshots_route(self, handler: BaseHTTPRequestHandler, method: str, path: str) -> bool:
+        parts = path.strip("/").split("/")
+        if len(parts) < 2 or parts[0] != "screenshots":
+            return False
+
+        svc = getattr(self.app_context, "screenshots", None)
+        if not svc:
+            self._send_json(handler, 501, {"error": "screenshot_service_unavailable"})
+            return True
+
+        # /screenshots/list
+        if len(parts) == 2 and parts[1] == "list" and method == "GET":
+            self._send_json(handler, 200, {"items": svc.list_items()})
+            return True
+
+        # /screenshots/screens
+        if len(parts) == 2 and parts[1] == "screens" and method == "GET":
+            self._send_json(handler, 200, {"screens": svc.list_screens()})
+            return True
+
+        # /screenshots/capture
+        if len(parts) == 2 and parts[1] == "capture" and method == "POST":
+            payload = self._read_json(handler)
+            if payload is None:
+                return True
+            screen_index = payload.get("screen_index")
+            try:
+                screen_index = int(screen_index) if screen_index is not None else None
+            except Exception:
+                screen_index = None
+            meta = svc.capture(screen_index=screen_index)
+            if not meta:
+                self._send_json(handler, 400, {"error": "capture_failed"})
+                return True
+            self._send_json(handler, 200, {"status": "ok", "item": meta})
+            return True
+
+        # /screenshots/rename
+        if len(parts) == 2 and parts[1] == "rename" and method == "POST":
+            payload = self._read_json(handler)
+            if payload is None:
+                return True
+            raw_id = payload.get("id")
+            new_name = str(payload.get("name", "")).strip()
+            item_id = self._parse_int(raw_id)
+            if item_id is None or not new_name:
+                self._send_json(handler, 400, {"error": "invalid_payload"})
+                return True
+            meta = svc.rename(item_id, new_name)
+            if not meta:
+                self._send_json(handler, 404, {"error": "item_not_found"})
+                return True
+            self._send_json(handler, 200, {"status": "ok", "item": meta})
+            return True
+
+        # /screenshots/delete
+        if len(parts) == 2 and parts[1] == "delete" and method == "POST":
+            payload = self._read_json(handler)
+            if payload is None:
+                return True
+            item_id = self._parse_int(payload.get("id"))
+            if item_id is None:
+                self._send_json(handler, 400, {"error": "invalid_payload"})
+                return True
+            ok = svc.delete(item_id)
+            if not ok:
+                self._send_json(handler, 404, {"error": "item_not_found"})
+                return True
+            self._send_json(handler, 200, {"status": "ok"})
+            return True
+
+        # /screenshots/file/{id}
+        if len(parts) == 3 and parts[1] == "file" and method == "GET":
+            item_id = self._parse_int(parts[2])
+            if item_id is None:
+                self._send_json(handler, 400, {"error": "invalid_id"})
+                return True
+            path_str = svc.get_path(item_id)
+            if not path_str or not os.path.isfile(path_str):
+                self._send_json(handler, 404, {"error": "item_not_found"})
+                return True
+            self._send_file(handler, Path(path_str))
+            return True
+
+        return False
+
     # ------------------------------------------------------------------ Helpers
     def _execute(self, func: Callable[..., None], *args: Any) -> None:
         """
@@ -512,6 +610,12 @@ class RemoteControlService:
         return None
 
     def _parse_sample_id(self, raw: str) -> Optional[int]:
+        try:
+            return int(raw)
+        except Exception:
+            return None
+
+    def _parse_int(self, raw: Any) -> Optional[int]:
         try:
             return int(raw)
         except Exception:
@@ -600,6 +704,18 @@ class RemoteControlService:
         self._add_to_history(sample_dict)
         self._broadcast_event("sample_renamed", sample_dict)
 
+    def push_screenshot_added(self, item_id: int) -> None:
+        item = self._get_screenshot_by_id(item_id)
+        if not item:
+            return
+        self._broadcast_event("screenshot_added", item)
+
+    def push_screenshot_deleted(self, item_id: int) -> None:
+        self._broadcast_event("screenshot_deleted", {"id": item_id})
+
+    def push_screenshots_changed(self, items: list) -> None:
+        self._broadcast_event("screenshots_changed", {"items": items})
+
     def _register_sse_client(self) -> queue.Queue:
         q: queue.Queue = queue.Queue()
         with self._sse_lock:
@@ -685,6 +801,8 @@ class RemoteControlService:
         """Retourne True si le path correspond a une route API connue."""
         if path.startswith("/samples/"):
             return True
+        if path.startswith("/screenshots/"):
+            return True
         return path in (
             "/health",
             "/events",
@@ -693,6 +811,11 @@ class RemoteControlService:
             "/record/stop",
             "/libraries",
             "/samples/history",
+            "/screenshots/list",
+            "/screenshots/screens",
+            "/screenshots/capture",
+            "/screenshots/rename",
+            "/screenshots/delete",
         )
 
     def _try_serve_static(self, handler: BaseHTTPRequestHandler, path: str) -> bool:

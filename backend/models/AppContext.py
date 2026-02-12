@@ -45,6 +45,7 @@ from backend.services.sample_service import IntegrityCheckWorker
 from backend.services.notification_service import NotificationService
 from backend.services.directory_service import DirectoryService
 from backend.services.remote_control_service import RemoteControlService
+from backend.services.screenshot_service import ScreenshotService
 
 # Contexte global: instancie les services principaux de l'application.
 class AppContext:
@@ -74,6 +75,9 @@ class AppContext:
 
         # Service de gestion des samples (stockage, import, etc.)
         self.sample_store = SampleService(self)
+
+        # Service de capture d'ecran (optionnel via settings)
+        self.screenshots = ScreenshotService(self)
 
         # Service de controle a distance (serveur HTTP local)
         self.remote_control = None
@@ -113,6 +117,15 @@ class AppContext:
                         )
                         self.settings.preSecondsChanged.connect(
                             self.remote_control.push_status
+                        )
+                        self.screenshots.screenshotAdded.connect(
+                            self.remote_control.push_screenshot_added
+                        )
+                        self.screenshots.screenshotDeleted.connect(
+                            self.remote_control.push_screenshot_deleted
+                        )
+                        self.screenshots.screenshotsChanged.connect(
+                            self.remote_control.push_screenshots_changed
                         )
                         self.remote_control._signals_hooked = True
                 except Exception:
