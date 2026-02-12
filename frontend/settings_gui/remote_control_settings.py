@@ -185,9 +185,6 @@ class RemoteControlSettingsWidget(QWidget):
                         self.app_context.screenshots.screenshotDeleted.connect(
                             svc.push_screenshot_deleted
                         )
-                        self.app_context.screenshots.screenshotsChanged.connect(
-                            svc.push_screenshots_changed
-                        )
                     except Exception:
                         pass
                     svc._signals_hooked = True

@@ -124,9 +124,6 @@ class AppContext:
                         self.screenshots.screenshotDeleted.connect(
                             self.remote_control.push_screenshot_deleted
                         )
-                        self.screenshots.screenshotsChanged.connect(
-                            self.remote_control.push_screenshots_changed
-                        )
                         self.remote_control._signals_hooked = True
                 except Exception:
                     pass

@@ -498,7 +498,23 @@ class RemoteControlService:
 
         # /screenshots/list
         if len(parts) == 2 and parts[1] == "list" and method == "GET":
-            self._send_json(handler, 200, {"items": svc.list_items()})
+            items = svc.list_items()
+            # plus recentes d'abord
+            items = list(reversed(items))
+            # limit optionnel
+            try:
+                query = urlparse(handler.path).query
+                limit = None
+                if query:
+                    for kv in query.split("&"):
+                        if kv.startswith("limit="):
+                            limit = int(kv.split("=", 1)[1])
+                            break
+                if limit:
+                    items = items[:limit]
+            except Exception:
+                pass
+            self._send_json(handler, 200, {"items": items})
             return True
 
         # /screenshots/screens
