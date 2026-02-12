@@ -12,6 +12,7 @@ async function fetchJson(path, options) {
 }
 
 export default function App() {
+  const SHOT_LIMIT = 20;
   const [status, setStatus] = useState({
     is_recording: false,
     retro_enabled: false,
@@ -87,8 +88,8 @@ export default function App() {
 
   const loadShots = async () => {
     try {
-      const data = await fetchJson("/screenshots/list");
-      setShots(data.items || []);
+      const data = await fetchJson(`/screenshots/list?limit=${SHOT_LIMIT}`);
+      setShots((data.items || []).slice(0, SHOT_LIMIT));
     } catch (err) {
       setError(err.message);
     }
@@ -132,7 +133,6 @@ export default function App() {
     loadLibraries();
     loadHistory();
     loadScreens();
-    loadShots();
 
     const es = new EventSource("/events");
     const onStatus = (ev) => {
@@ -173,7 +173,9 @@ export default function App() {
     es.addEventListener("screenshot_added", (ev) => {
       try {
         const data = JSON.parse(ev.data);
-        setShots((prev) => [data, ...prev.filter((s) => s.id !== data.id)]);
+        setShots((prev) =>
+          [data, ...prev.filter((s) => s.id !== data.id)].slice(0, SHOT_LIMIT)
+        );
       } catch (err) {
         setError(err.message);
       }
@@ -182,14 +184,6 @@ export default function App() {
       try {
         const data = JSON.parse(ev.data);
         setShots((prev) => prev.filter((s) => s.id !== data.id));
-      } catch (err) {
-        setError(err.message);
-      }
-    });
-    es.addEventListener("screenshots_changed", (ev) => {
-      try {
-        const data = JSON.parse(ev.data);
-        setShots(data.items || []);
       } catch (err) {
         setError(err.message);
       }
