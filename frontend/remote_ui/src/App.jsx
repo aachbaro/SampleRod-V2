@@ -472,6 +472,26 @@ export default function App() {
           </button>
         </section>
 
+        <section className="section">
+          <label className="label">Capture d'écran</label>
+          <div className="screen-buttons">
+            {screens.length === 0 && (
+              <div className="history-empty">No screens detected.</div>
+            )}
+            {screens.map((screen) => (
+              <button
+                key={screen.index}
+                className="chip"
+                onClick={() => captureScreen(screen.index)}
+                disabled={shotBusyId === `capture-${screen.index}`}
+                type="button"
+              >
+                {screen.name || `Screen ${screen.index + 1}`}
+              </button>
+            ))}
+          </div>
+        </section>
+
         <section className="section status">
           <div className="stat">
             <span>Retro</span>
@@ -655,22 +675,6 @@ export default function App() {
           <div className="history-header">
             <h2>Screenshots</h2>
             <span className="history-count">{shots.length}</span>
-          </div>
-          <div className="screen-buttons">
-            {screens.length === 0 && (
-              <div className="history-empty">No screens detected.</div>
-            )}
-            {screens.map((screen) => (
-              <button
-                key={screen.index}
-                className="chip"
-                onClick={() => captureScreen(screen.index)}
-                disabled={shotBusyId === `capture-${screen.index}`}
-                type="button"
-              >
-                {screen.name || `Screen ${screen.index + 1}`}
-              </button>
-            ))}
           </div>
           {shots.length === 0 && (
             <div className="history-empty">No screenshots yet.</div>

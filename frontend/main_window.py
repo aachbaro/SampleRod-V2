@@ -24,6 +24,7 @@ from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
 from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
+from frontend.screenshot_gui.screenshot_list import ScreenshotListWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.right_panel.tools_panel import RightToolsPanel
 
@@ -100,6 +101,13 @@ class MainWindow(QMainWindow):
         samples_layout.addWidget(splitter)
 
         self.tab_widget.addTab(samples_tab, "Liste des Samples")
+
+        # --- Onglet 'Screenshots'
+        screenshots_tab = QWidget()
+        screenshots_layout = QVBoxLayout(screenshots_tab)
+        self.screenshot_list_widget = ScreenshotListWidget(self.app_context)
+        screenshots_layout.addWidget(self.screenshot_list_widget)
+        self.tab_widget.addTab(screenshots_tab, "Screenshots")
 
         # --- Onglet 'Parametres'
         settings_tab = QWidget()
