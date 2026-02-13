@@ -46,6 +46,8 @@ import numpy as np
 import os
 import time
 import tempfile
+import threading
+import queue
 from datetime import datetime
 from collections import deque
 from backend.models.sample import Sample
@@ -93,6 +95,81 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
     """
 
     logger.info("recorder_worker: Démarrage du worker…")
+
+
+    # Export asynchrone des WAV finaux pour eviter de bloquer la capture.
+    export_q = queue.Queue()
+
+    def _export_job_loop():
+        while True:
+            job = export_q.get()
+            if job is None:
+                export_q.task_done()
+                break
+
+            path = job.get("path")
+            pre = job.get("pre", [])
+            live_temp_path = job.get("live_temp_path")
+            live_blocks_written = int(job.get("live_blocks_written", 0))
+            out_sample_rate = int(job.get("sample_rate", sample_rate))
+
+            try:
+                has_pre = len(pre) > 0
+                has_live = (
+                    live_temp_path is not None
+                    and live_blocks_written > 0
+                    and os.path.exists(live_temp_path)
+                )
+
+                if has_pre:
+                    out_channels = pre[0].shape[1] if pre[0].ndim > 1 else 1
+                elif has_live:
+                    out_channels = sf.info(live_temp_path).channels
+                else:
+                    # Fallback defensif
+                    out_channels = 2
+
+                with sf.SoundFile(
+                    path,
+                    mode="w",
+                    samplerate=out_sample_rate,
+                    channels=out_channels,
+                    subtype="PCM_16",
+                ) as out:
+                    for block in pre:
+                        out.write(block)
+
+                    if has_live:
+                        with sf.SoundFile(live_temp_path, mode="r") as src:
+                            while True:
+                                chunk = src.read(
+                                    frames=block_size * 16,
+                                    dtype="float32",
+                                    always_2d=(out_channels > 1),
+                                )
+                                if chunk is None or len(chunk) == 0:
+                                    break
+                                out.write(chunk)
+
+                resp_q.put(('done', path))
+            except Exception as e:
+                logger.exception(f"recorder_worker: erreur export WAV ({path}) : {e}")
+                try:
+                    if path and os.path.exists(path):
+                        os.remove(path)
+                except Exception:
+                    pass
+                resp_q.put(('done_error', str(e)))
+            finally:
+                if live_temp_path and os.path.exists(live_temp_path):
+                    try:
+                        os.remove(live_temp_path)
+                    except Exception:
+                        pass
+                export_q.task_done()
+
+    export_thread = threading.Thread(target=_export_job_loop, daemon=True)
+    export_thread.start()
 
     # ------- Fonction utilitaire interne pour (re)chercher et (re)ouvrir un microphone ----------
     def open_microphone(device_name):
@@ -278,45 +355,25 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                             path = os.path.join(output_folder, filename)
                             os.makedirs(output_folder, exist_ok=True)
 
-                            # Ecriture finale en streaming: retro (RAM) + live temp (disque)
-                            if has_pre:
-                                out_channels = pre[0].shape[1] if pre[0].ndim > 1 else 1
-                            else:
-                                out_channels = sf.info(live_temp_path).channels
-
-                            with sf.SoundFile(
-                                path,
-                                mode="w",
-                                samplerate=sample_rate,
-                                channels=out_channels,
-                                subtype="PCM_16",
-                            ) as out:
-                                for block in pre:
-                                    out.write(block)
-
-                                if has_live:
-                                    with sf.SoundFile(live_temp_path, mode="r") as src:
-                                        while True:
-                                            chunk = src.read(
-                                                frames=block_size * 16,
-                                                dtype="float32",
-                                                always_2d=(out_channels > 1),
-                                            )
-                                            if chunk is None or len(chunk) == 0:
-                                                break
-                                            out.write(chunk)
-
-                            # On notifie le service principal que l'ecriture est finie
-                            resp_q.put(('done', path))
-
-                            # Cleanup du fichier live temporaire
-                            if live_temp_path and os.path.exists(live_temp_path):
+                            # Export asynchrone: on libere vite la boucle de capture.
+                            export_q.put(
+                                {
+                                    "path": path,
+                                    "pre": pre,
+                                    "live_temp_path": live_temp_path if has_live else None,
+                                    "live_blocks_written": live_blocks_written,
+                                    "sample_rate": sample_rate,
+                                }
+                            )
+                            if not has_live and live_temp_path and os.path.exists(live_temp_path):
                                 try:
                                     os.remove(live_temp_path)
                                 except Exception:
                                     pass
                             live_temp_path = None
                             live_blocks_written = 0
+                            # Mode "retro par prise": le prochain take repart d'un buffer vide.
+                            retro_buf.clear()
 
                         # 2.e) Modifier la durée du buffer rétrospectif à chaud ---
                         elif action == 'set_retro_time':
@@ -348,6 +405,13 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
             continue
 
     # En sortie des deux boucles, on signale au service principal la fin
+    # Arret propre du thread d'export
+    try:
+        export_q.put(None)
+        export_thread.join(timeout=2.0)
+    except Exception:
+        pass
+
     resp_q.put(('shutdown_ack', None))
     logger.info("recorder_worker: Fermeture complète du worker.")
 

@@ -246,6 +246,13 @@ class RecorderService(QObject):
                     # Ajoute le sample au store applicatif
                     self.app_context.sample_store.add(path)
                     others.append(('done', path))
+            elif msg == 'done_error':
+                logger.info(f"RecorderService: export WAV en erreur: {payload}")
+                self.app_context.notifications.notify(
+                    title="Enregistrement impossible",
+                    message="Erreur pendant la finalisation du fichier audio.",
+                    type=NotificationType.WARNING,
+                )
 
         return others
 
