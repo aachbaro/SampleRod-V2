@@ -22,7 +22,7 @@ Controleurs utilises
 - SampleCardStatus        : updates simples (nom/duree).
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal, Qt, QEvent
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import QWidget, QAbstractButton, QLineEdit, QComboBox, QSlider
 import logging
@@ -55,6 +55,9 @@ class SampleCard(QWidget):
     removeFromHistory  = pyqtSignal(int)          # emet l'ID du sample a retirer de l'historique
     concatWithPrevious = pyqtSignal(int)          # emet l'ID (sample courant) a concatener avec precedent
     dismissConcat      = pyqtSignal(int)          # emet l'ID (sample courant) pour ignorer la concat
+    concatPreviewHoverChanged = pyqtSignal(
+        int, bool, object
+    )  # (sample_id, hover_active, prev_id|None)
 
     def __init__(self, sample: Sample, app_context: AppContext, parent=None):
         """
@@ -200,9 +203,12 @@ class SampleCard(QWidget):
         self.dismissConcat.emit(self.sample.id)
 
     def setConcatCandidate(self, enabled: bool, prev_sample_id=None):
+        old_prev = self.concat_prev_id
         self.concat_prev_id = prev_sample_id if enabled else None
         self.concat_button.setVisible(enabled)
         self.concat_cancel_button.setVisible(enabled)
+        if not enabled and old_prev is not None:
+            self.concatPreviewHoverChanged.emit(self.sample.id, False, old_prev)
         if enabled and prev_sample_id is not None:
             self.concat_button.setToolTip(
                 f"Concatener ce sample apres le sample #{prev_sample_id}"
@@ -212,6 +218,11 @@ class SampleCard(QWidget):
 
     def setNormalizationLocked(self, locked: bool):
         self.normalize_button.setEnabled(not locked)
+
+    def setConcatPreviewActive(self, active: bool):
+        self.setProperty("concatPreview", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     # ---- Playback
     def togglePlay(self):
@@ -253,6 +264,15 @@ class SampleCard(QWidget):
         self.interactions.focus_out(event)
 
     def eventFilter(self, watched, event):
+        if watched is getattr(self, "concat_button", None):
+            if event.type() == QEvent.Type.Enter and self.concat_prev_id is not None:
+                self.concatPreviewHoverChanged.emit(
+                    self.sample.id, True, self.concat_prev_id
+                )
+            elif event.type() == QEvent.Type.Leave and self.concat_prev_id is not None:
+                self.concatPreviewHoverChanged.emit(
+                    self.sample.id, False, self.concat_prev_id
+                )
         if self.interactions.event_filter(watched, event):
             return True
         return super().eventFilter(watched, event)

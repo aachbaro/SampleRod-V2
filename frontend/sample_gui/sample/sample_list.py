@@ -181,6 +181,10 @@ class SampleListWidget(QWidget):
     def dismiss_concat(self, sample_id: int):
         self.service_actions.dismiss_concat(sample_id)
 
+    @pyqtSlot(int, bool, object)
+    def onConcatPreviewHoverChanged(self, sample_id: int, active: bool, prev_id):
+        self.cards.on_concat_preview_hover_changed(sample_id, active, prev_id)
+
     def bulkDelete(self):
         self.selection.bulk_delete()
 

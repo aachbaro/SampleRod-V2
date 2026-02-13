@@ -15,6 +15,7 @@ from frontend.sample_gui.sample.sample_card import SampleCard
 class SampleListCards:
     def __init__(self, widget):
         self.widget = widget
+        self._preview_pair_ids: set[int] = set()
 
     # ---- Service slots
     def on_samples_changed(self, samples: list):
@@ -36,6 +37,7 @@ class SampleListCards:
         self.widget.content_layout.insertWidget(0, card)
 
     def on_sample_removed_from_history(self, sample_id: int):
+        self._clear_concat_preview()
         card = self.widget._card_widgets.get(sample_id)
         if card:
             self.close_waveforms_for_path(card.sample.path)
@@ -46,6 +48,7 @@ class SampleListCards:
         self.widget.updateSelectActions()
 
     def on_sample_deleted(self, sample_id: int):
+        self._clear_concat_preview()
         card = self.widget._card_widgets.get(sample_id)
         if card:
             self.close_waveforms_for_path(card.sample.path)
@@ -83,6 +86,8 @@ class SampleListCards:
         card = self.widget._card_widgets.get(sample_id)
         if card:
             card.setConcatCandidate(enabled, prev_id)
+        if not enabled and sample_id in self._preview_pair_ids:
+            self._clear_concat_preview()
 
     def on_sample_normalization_lock_changed(self, sample_id: int, locked: bool):
         card = self.widget._card_widgets.get(sample_id)
@@ -91,6 +96,7 @@ class SampleListCards:
 
     # ---- Refresh list
     def refresh_list(self):
+        self._clear_concat_preview()
         ordered_samples = sorted(self.widget.samples, key=lambda s: s.id, reverse=True)
 
         total_samples = len(ordered_samples)
@@ -154,16 +160,47 @@ class SampleListCards:
         card.selectionChanged.connect(self.widget.onSelectionChanged)
         card.concatWithPrevious.connect(self.widget.concat_with_previous)
         card.dismissConcat.connect(self.widget.dismiss_concat)
+        card.concatPreviewHoverChanged.connect(self.widget.onConcatPreviewHoverChanged)
 
         prev_id = self.widget.sample_store.get_concat_previous_id(samp.id)
         card.setConcatCandidate(prev_id is not None, prev_id)
         card.setNormalizationLocked(
             self.widget.sample_store.is_normalization_locked(samp.id)
         )
+        card.setConcatPreviewActive(False)
 
         self.widget.sample_store.sampleRenamed.connect(card.onRenameSuccess)
         self.widget.sample_store.sampleMoved.connect(card.onMoveSuccess)
         return card
+
+    def on_concat_preview_hover_changed(self, sample_id: int, active: bool, prev_id):
+        if not active:
+            self._clear_concat_preview()
+            return
+
+        target_ids = {sample_id}
+        if prev_id is not None:
+            target_ids.add(int(prev_id))
+
+        if target_ids != self._preview_pair_ids:
+            self._clear_concat_preview()
+
+        self._preview_pair_ids = set()
+        for sid in target_ids:
+            card = self.widget._card_widgets.get(sid)
+            if not card:
+                continue
+            card.setConcatPreviewActive(True)
+            self._preview_pair_ids.add(sid)
+
+    def _clear_concat_preview(self):
+        if not self._preview_pair_ids:
+            return
+        for sid in tuple(self._preview_pair_ids):
+            card = self.widget._card_widgets.get(sid)
+            if card:
+                card.setConcatPreviewActive(False)
+        self._preview_pair_ids.clear()
 
     def close_waveforms_for_path(self, path):
         for i in range(self.widget.content_layout.count()):

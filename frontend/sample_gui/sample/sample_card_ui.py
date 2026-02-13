@@ -73,6 +73,9 @@ class SampleCardUIBuilder:
             background-color: #232a33;
             border-color: #f2c94c;
         }
+        SampleCard[concatPreview="true"] {
+            border: 1px solid #2cc6cf;
+        }
         QLabel#SampleName {
             font-weight: 600;
             font-size: 14px;
