@@ -45,6 +45,7 @@ import soundfile as sf
 import numpy as np
 import os
 import time
+import tempfile
 from datetime import datetime
 from collections import deque
 from backend.models.sample import Sample
@@ -146,7 +147,9 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
 
                 # Buffers pour rétro et live
                 retro_buf = deque(maxlen=maxlen)
-                live_buf = []
+                live_writer = None
+                live_temp_path = None
+                live_blocks_written = 0
                 is_recording = False
                 retro_enabled = False
                 output_folder = None
@@ -157,9 +160,29 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                     # --- Lecture bloquante d'un bloc audio de taille block_size ---
                     data = mic.record(numframes=block_size)
 
-                    # --- Si recording actif, stocke dans live_buf, sinon si retro activé, dans retro_buf ---
+                    # --- Si recording actif, ecrit vers le fichier live temporaire.
+                    # --- Sinon, si retro actif, stocke dans retro_buf.
                     if is_recording:
-                        live_buf.append(data)
+                        if live_writer is None:
+                            channels = data.shape[1] if data.ndim > 1 else 1
+                            os.makedirs(output_folder, exist_ok=True)
+                            tmp = tempfile.NamedTemporaryFile(
+                                prefix="._samplerod_live_",
+                                suffix=".wav",
+                                dir=output_folder,
+                                delete=False,
+                            )
+                            live_temp_path = tmp.name
+                            tmp.close()
+                            live_writer = sf.SoundFile(
+                                live_temp_path,
+                                mode="w",
+                                samplerate=sample_rate,
+                                channels=channels,
+                                subtype="PCM_16",
+                            )
+                        live_writer.write(data)
+                        live_blocks_written += 1
                     elif retro_enabled:
                         retro_buf.append(data)
 
@@ -204,7 +227,16 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                         elif action == 'start':
                             _, folder, rt = cmd
                             is_recording = True
-                            live_buf = []
+                            if live_writer is not None:
+                                live_writer.close()
+                                live_writer = None
+                            if live_temp_path and os.path.exists(live_temp_path):
+                                try:
+                                    os.remove(live_temp_path)
+                                except Exception:
+                                    pass
+                            live_temp_path = None
+                            live_blocks_written = 0
                             output_folder = folder
                             retro_time = rt
                             # Un retour immédiat pour signaler “started” au service
@@ -214,6 +246,9 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                         elif action == 'stop' and is_recording:
                             is_recording = False
                             resp_q.put(('stopped', None))
+                            if live_writer is not None:
+                                live_writer.close()
+                                live_writer = None
 
                             # On récupère les derniers blocs rétro (si retro_time > 0)
                             blocks = int(retro_time * sample_rate / block_size)
@@ -221,11 +256,20 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                                 pre = list(retro_buf)[-blocks:]
                             else:
                                 pre = []
+                            # Presence audio
+                            has_pre = len(pre) > 0
+                            has_live = (
+                                live_temp_path is not None
+                                and live_blocks_written > 0
+                                and os.path.exists(live_temp_path)
+                            )
 
-                            # Concaténation des blocs rétro + live
-                            combined = pre + live_buf
+                            # Stop immediat sans donnees: ecrit un bloc silencieux minimal
+                            if not has_pre and not has_live:
+                                pre = [np.zeros_like(data)]
+                                has_pre = True
 
-                            # Génération d'un nom de fichier unique
+                            # Generation d'un nom de fichier unique
                             next_id = Sample.get_next_id()
                             base = f"SMPL_{next_id:04d}"
                             filename = _generate_unique_filename(
@@ -234,14 +278,45 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                             path = os.path.join(output_folder, filename)
                             os.makedirs(output_folder, exist_ok=True)
 
-                            # Écriture du fichier WAV sur disque (toutes canaux empilés verticalement)
-                            sf.write(path, np.vstack(combined), samplerate=sample_rate)
+                            # Ecriture finale en streaming: retro (RAM) + live temp (disque)
+                            if has_pre:
+                                out_channels = pre[0].shape[1] if pre[0].ndim > 1 else 1
+                            else:
+                                out_channels = sf.info(live_temp_path).channels
 
-                            # On notifie le service principal que l'écriture est finie
+                            with sf.SoundFile(
+                                path,
+                                mode="w",
+                                samplerate=sample_rate,
+                                channels=out_channels,
+                                subtype="PCM_16",
+                            ) as out:
+                                for block in pre:
+                                    out.write(block)
+
+                                if has_live:
+                                    with sf.SoundFile(live_temp_path, mode="r") as src:
+                                        while True:
+                                            chunk = src.read(
+                                                frames=block_size * 16,
+                                                dtype="float32",
+                                                always_2d=(out_channels > 1),
+                                            )
+                                            if chunk is None or len(chunk) == 0:
+                                                break
+                                            out.write(chunk)
+
+                            # On notifie le service principal que l'ecriture est finie
                             resp_q.put(('done', path))
 
-                            # On vide live_buf pour la prochaine session
-                            live_buf = []
+                            # Cleanup du fichier live temporaire
+                            if live_temp_path and os.path.exists(live_temp_path):
+                                try:
+                                    os.remove(live_temp_path)
+                                except Exception:
+                                    pass
+                            live_temp_path = None
+                            live_blocks_written = 0
 
                         # 2.e) Modifier la durée du buffer rétrospectif à chaud ---
                         elif action == 'set_retro_time':
@@ -275,3 +350,5 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
     # En sortie des deux boucles, on signale au service principal la fin
     resp_q.put(('shutdown_ack', None))
     logger.info("recorder_worker: Fermeture complète du worker.")
+
+
