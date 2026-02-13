@@ -58,6 +58,12 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleFinishedNormalization.connect(self.onFinishedNormalization)
         self.sample_store.sampleNormalizationFailed.connect(self.onNormalizationFailed)
         self.sample_store.sampleRemovedFromHistory.connect(self.onSampleRemovedFromHistory)
+        self.sample_store.sampleConcatCandidateChanged.connect(
+            self.onSampleConcatCandidateChanged
+        )
+        self.sample_store.sampleNormalizationLockChanged.connect(
+            self.onSampleNormalizationLockChanged
+        )
         # 2) stockage des cartes existantes
         self._card_widgets = {}
         self.pagination = SampleListPagination(self)
@@ -158,6 +164,22 @@ class SampleListWidget(QWidget):
     @pyqtSlot(int, float)
     def onSampleDurationChanged(self, sample_id: int, new_duration: float):
         self.cards.on_sample_duration_changed(sample_id, new_duration)
+
+    @pyqtSlot(int, bool, object)
+    def onSampleConcatCandidateChanged(self, sample_id: int, enabled: bool, prev_id):
+        self.cards.on_sample_concat_candidate_changed(sample_id, enabled, prev_id)
+
+    @pyqtSlot(int, bool)
+    def onSampleNormalizationLockChanged(self, sample_id: int, locked: bool):
+        self.cards.on_sample_normalization_lock_changed(sample_id, locked)
+
+    @pyqtSlot(int)
+    def concat_with_previous(self, sample_id: int):
+        self.service_actions.concat_with_previous(sample_id)
+
+    @pyqtSlot(int)
+    def dismiss_concat(self, sample_id: int):
+        self.service_actions.dismiss_concat(sample_id)
 
     def bulkDelete(self):
         self.selection.bulk_delete()

@@ -28,6 +28,7 @@ from backend.services.notification_service import NotificationType
 import os
 # wave: lecture d'en-tetes WAV pour la duree
 import wave
+import soundfile as sf
 # Logging pour tracer les operations
 import logging
 # Logger specifique au service
@@ -57,6 +58,12 @@ class SampleService(QObject):
     sampleNormalizationFailed   = pyqtSignal(int, str)  # émet (ID, message d’erreur)
     sampleRemovedFromHistory = pyqtSignal(int)          # émet l’ID du sample retiré de l’historique
 
+    # Runtime only: indique si un sample courant peut etre concatene avec son precedent
+    sampleConcatCandidateChanged = pyqtSignal(
+        int, bool, object
+    )  # (sample_id, enabled, prev_id|None)
+    # Verrou temporaire de normalisation (pendant la fenetre de decision de concat)
+    sampleNormalizationLockChanged = pyqtSignal(int, bool)  # (sample_id, locked)
     def __init__(self, app_context):
         super().__init__()
         # Initialisation du service et du cache
@@ -65,6 +72,12 @@ class SampleService(QObject):
         self._samples = []
         # References vers les workers de normalisation (evite GC)
         self._normalize_threads = {}
+        # Runtime only: sample courant -> sample precedent a concatener
+        self._concat_candidates: dict[int, int] = {}
+        # IDs en attente de normalisation (fenetre refill / decision concat)
+        self._normalization_locked_ids: set[int] = set()
+        # Dernier sample cree par RecorderService (pour liberer a la fin du refill)
+        self._last_recorded_sample_id: int | None = None
         # Acces aux autres services (notifications, settings, audio player, etc.)
         self.app_context = app_context
 
@@ -100,57 +113,61 @@ class SampleService(QObject):
         """Retourne la liste courante en mémoire."""
         # Retourne une copie pour eviter les modifications externes
         return list(self._samples)
-    
-    def add(self, path: str):
+
+    def add(
+        self,
+        path: str,
+        *,
+        from_recorder: bool = False,
+        sequential_with_previous: bool = False,
+    ):
         """
-        Crée un nouveau sample (FS + BD), met à jour le cache,
-        et émet sampleAdded + samplesChanged.
+        Cree un nouveau sample (FS + BD), met a jour le cache, puis gere
+        la normalisation auto.
+
+        Args:
+            path: chemin du wav.
+            from_recorder: True si le sample vient du RecorderService.
+            sequential_with_previous: True si la prise a demarre avant refill
+                complet du buffer retro (candidate a concat avec la precedente).
+        Returns:
+            Sample | None
         """
+        new_sample = None
         try:
-            # 1) Création via le modèle : enregistre le fichier et la BD
+            # 1) Creation via le modele : enregistre fichier + base
             new_sample = Sample(path)
 
-            # Envoie d’une notification à l’utilisateur
-            # On affiche le nom, la durée (arrondie à 1 décimale) et le chemin complet
+            # 2) Notification utilisateur
             self.app_context.notifications.notify(
-                title="📥 Nouveau sample ajouté",
+                title="Nouveau sample ajoute",
                 message=(
-                    f"{new_sample.name} — {new_sample.duration:.1f}s\n"
+                    f"{new_sample.name} - {new_sample.duration:.1f}s\n"
                     f"Emplacement : {new_sample.path}"
                 ),
-                type=NotificationType.SUCCESS
+                type=NotificationType.SUCCESS,
             )
-            # ─────────────
 
-            # 2) Mise à jour du cache
+            # 3) Cache + signal d'ajout
             self._samples.append(new_sample)
-            # 3) Optionnel : tri du cache par ID croissant
             self._samples.sort(key=lambda s: s.id)
-            # 4) Émission du signal d'ajout
             self.sampleAdded.emit(new_sample.id)
 
-            # Normalisation auto si activee dans les settings
-            if self.app_context.settings.isAutoNormalizeEnabled():
-                mode      = "lufs"
-                target_db = self.app_context.settings.getNormalizationLevel()
-                worker = NormalizeWorker(
-                    sample_id=new_sample.id,
-                    file_path=path,
-                    mode=mode,
-                    target_db=target_db
+            # 4) Flux de normalisation
+            if from_recorder:
+                self._register_recorded_sample(
+                    new_sample.id,
+                    sequential_with_previous=sequential_with_previous,
                 )
-                # on relaye directement sur nos signaux :
-                worker.startedNormalization.connect(self.sampleStartedNormalization)
-                worker.finishedNormalization.connect(self.sampleFinishedNormalization)
-                worker.normalizationFailed .connect(self._onNormalizationFailed)
-                worker.start()
-                # on conserve la référence pour éviter que le thread ne soit détruit
-                self._normalize_threads[new_sample.id] = worker
+            else:
+                self._start_auto_normalization(new_sample.id)
 
+            return new_sample
         except Exception as e:
             logger.info(f"[SampleService] add error: {e}")
+            return None
         finally:
-            # 5) Émission de la liste mise à jour
+            # 5) Re-emission de la liste
             self.samplesChanged.emit(list(self._samples))
 
     def delete(self, sample_id: int):
@@ -164,6 +181,7 @@ class SampleService(QObject):
         try:
             # Suppression fichier + DB via le modele
             samp.delete()
+            self._cleanup_concat_state_for_deleted(sample_id)
             # 2) Mise à jour du cache : on enlève l'objet supprimé
             self._samples = [
                 s for s in self._samples
@@ -228,8 +246,10 @@ class SampleService(QObject):
             sample = session.query(Sample).filter_by(path=path).one_or_none()
             if not sample:
                 return False
+            sample_id = sample.id
             session.delete(sample)
             session.commit()
+            self._cleanup_concat_state_for_deleted(sample_id)
             # Mise à jour du cache local
             self._samples = [s for s in self._samples if s.path != path]
             # Rafraîchit l'UI
@@ -429,6 +449,7 @@ class SampleService(QObject):
                 session.delete(inst)
                 session.commit()
             session.close()
+            self._cleanup_concat_state_for_deleted(sample_id)
             # 3) Mise à jour du cache en mémoire
             self._samples = [s for s in self._samples if s.id != sample_id]
             # 4) Signaux
@@ -485,6 +506,8 @@ class SampleService(QObject):
             # 4) Mise à jour du cache
             self._samples = [s for s in self._samples if s.id not in sample_ids]
 
+            for sample_id in sample_ids:
+                self._cleanup_concat_state_for_deleted(sample_id)
             # 5) Émettre sampleDeleted pour chaque ID (pour fermer les waveforms)
             for sample_id in sample_ids:
                 self.sampleDeleted.emit(sample_id)
@@ -493,6 +516,231 @@ class SampleService(QObject):
         finally:
             # 6) N’émettre qu’UN SEUL samplesChanged à la fin
             self.samplesChanged.emit(list(self._samples))
+
+
+    # ------------------------------------------------------------------ Concat / Auto-normalize (runtime)
+    def is_normalization_locked(self, sample_id: int) -> bool:
+        return sample_id in self._normalization_locked_ids
+
+    def get_concat_previous_id(self, sample_id: int):
+        return self._concat_candidates.get(sample_id)
+
+    def on_retro_refill_complete(self):
+        """
+        Appele par RecorderService quand le buffer retro est re-rempli.
+        Cela libere la normalisation auto du dernier sample enregistre, sauf
+        s'il est implique dans une concat en attente.
+        """
+        sid = self._last_recorded_sample_id
+        if sid is None:
+            return
+        self._unlock_and_maybe_normalize(sid)
+
+    def concat_with_previous(self, sample_id: int):
+        """
+        Concatene `sample_id` a la fin de son sample precedent, puis supprime
+        le sample courant.
+        """
+        prev_id = self._concat_candidates.get(sample_id)
+        if not prev_id:
+            return False
+        cur = self._get(sample_id)
+        prev = self._get(prev_id)
+        if not cur or not prev:
+            self.dismiss_concat(sample_id)
+            return False
+
+        player = self.app_context.audio_player
+        if getattr(player, "current_sample_id", -1) in (sample_id, prev_id):
+            try:
+                player.clear_audio()
+            except Exception:
+                pass
+
+        tmp_path = prev.path + ".concat_tmp.wav"
+        try:
+            self._append_wav_files(prev.path, cur.path, tmp_path)
+            os.replace(tmp_path, prev.path)
+            self.updateDurationFromFile(prev.path)
+
+            # Supprime l'ancien sample "courant" (fichier + DB)
+            if os.path.isfile(cur.path):
+                os.remove(cur.path)
+            with SessionLocal() as session:
+                inst = session.get(Sample, sample_id)
+                if inst:
+                    session.delete(inst)
+                    session.commit()
+
+            # Cache + UI
+            self._samples = [s for s in self._samples if s.id != sample_id]
+            self.sampleDeleted.emit(sample_id)
+
+            # Nettoie le lien courant, puis rewire les enfants eventuels vers prev_id.
+            self._concat_candidates.pop(sample_id, None)
+            self.sampleConcatCandidateChanged.emit(sample_id, False, None)
+            for child_id, parent_id in list(self._concat_candidates.items()):
+                if parent_id == sample_id:
+                    self._concat_candidates[child_id] = prev_id
+                    self.sampleConcatCandidateChanged.emit(child_id, True, prev_id)
+
+            if sample_id in self._normalization_locked_ids:
+                self._normalization_locked_ids.discard(sample_id)
+                self.sampleNormalizationLockChanged.emit(sample_id, False)
+
+            if self._last_recorded_sample_id == sample_id:
+                self._last_recorded_sample_id = prev_id
+
+            # Le sample fusionne est normalise une seule fois, si plus de concat en attente.
+            self._unlock_and_maybe_normalize(prev_id)
+
+            self.app_context.notifications.notify(
+                title="Samples concatenes",
+                message=f"{cur.name} ajoute a la fin de {prev.name}",
+                type=NotificationType.SUCCESS,
+            )
+            self.samplesChanged.emit(list(self._samples))
+            return True
+        except Exception as e:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            logger.info(f"[SampleService] concat_with_previous error: {e}")
+            self.app_context.notifications.notify(
+                title="Erreur concatenation",
+                message=str(e),
+                type=NotificationType.ERROR,
+            )
+            return False
+
+    def dismiss_concat(self, sample_id: int):
+        """
+        Refuse la concat pour ce sample, puis relance la normalisation auto
+        pour les deux samples concernes (si activee).
+        """
+        prev_id = self._concat_candidates.pop(sample_id, None)
+        self.sampleConcatCandidateChanged.emit(sample_id, False, None)
+
+        self._unlock_and_maybe_normalize(sample_id)
+        if prev_id is not None:
+            self._unlock_and_maybe_normalize(prev_id)
+
+        self.app_context.notifications.notify(
+            title="Concat ignoree",
+            message="Les samples restent separes.",
+            type=NotificationType.INFO,
+        )
+
+    def _register_recorded_sample(self, sample_id: int, sequential_with_previous: bool):
+        # Chaque sample enregistre attend la fin de la fenetre refill avant normalisation.
+        self._lock_normalization(sample_id)
+
+        prev_id = self._last_recorded_sample_id
+        if sequential_with_previous and prev_id and self._get(prev_id):
+            self._concat_candidates[sample_id] = prev_id
+            self.sampleConcatCandidateChanged.emit(sample_id, True, prev_id)
+            # Le precedent aussi reste verrouille tant que la decision n'est pas prise.
+            self._lock_normalization(prev_id)
+
+        self._last_recorded_sample_id = sample_id
+
+    def _lock_normalization(self, sample_id: int):
+        if sample_id not in self._normalization_locked_ids:
+            self._normalization_locked_ids.add(sample_id)
+            self.sampleNormalizationLockChanged.emit(sample_id, True)
+
+    def _unlock_and_maybe_normalize(self, sample_id: int):
+        # Ne libere pas si le sample est encore implique dans une concat en attente.
+        if self._is_concat_linked(sample_id):
+            return
+        if sample_id in self._normalization_locked_ids:
+            self._normalization_locked_ids.discard(sample_id)
+            self.sampleNormalizationLockChanged.emit(sample_id, False)
+        self._start_auto_normalization(sample_id)
+
+    def _is_concat_linked(self, sample_id: int) -> bool:
+        if sample_id in self._concat_candidates:
+            return True
+        return sample_id in self._concat_candidates.values()
+
+    def _cleanup_concat_state_for_deleted(self, sample_id: int):
+        # Supprime un lien ou sample_id est "courant".
+        if sample_id in self._concat_candidates:
+            self._concat_candidates.pop(sample_id, None)
+            self.sampleConcatCandidateChanged.emit(sample_id, False, None)
+
+        # Supprime les liens ou sample_id est "precedent".
+        for child_id, parent_id in list(self._concat_candidates.items()):
+            if parent_id == sample_id:
+                self._concat_candidates.pop(child_id, None)
+                self.sampleConcatCandidateChanged.emit(child_id, False, None)
+                self._unlock_and_maybe_normalize(child_id)
+
+        if sample_id in self._normalization_locked_ids:
+            self._normalization_locked_ids.discard(sample_id)
+            self.sampleNormalizationLockChanged.emit(sample_id, False)
+
+        if self._last_recorded_sample_id == sample_id:
+            self._last_recorded_sample_id = None
+
+    def _start_auto_normalization(self, sample_id: int):
+        if not self.app_context.settings.isAutoNormalizeEnabled():
+            return
+        samp = self._get(sample_id)
+        if not samp:
+            return
+
+        worker = self._normalize_threads.get(sample_id)
+        if worker is not None and worker.isRunning():
+            return
+
+        mode = "lufs"
+        target_db = self.app_context.settings.getNormalizationLevel()
+        worker = NormalizeWorker(
+            sample_id=sample_id,
+            file_path=samp.path,
+            mode=mode,
+            target_db=target_db,
+        )
+        worker.startedNormalization.connect(self.sampleStartedNormalization)
+        worker.finishedNormalization.connect(self.sampleFinishedNormalization)
+        worker.normalizationFailed.connect(self._onNormalizationFailed)
+        worker.finishedNormalization.connect(
+            lambda sid=sample_id: self._normalize_threads.pop(sid, None)
+        )
+        worker.normalizationFailed.connect(
+            lambda sid, _msg: self._normalize_threads.pop(sid, None)
+        )
+        worker.start()
+        self._normalize_threads[sample_id] = worker
+
+    @staticmethod
+    def _append_wav_files(first_path: str, second_path: str, out_path: str):
+        with sf.SoundFile(first_path, mode="r") as first, sf.SoundFile(second_path, mode="r") as second:
+            if first.samplerate != second.samplerate:
+                raise RuntimeError("Sample rate different entre les deux fichiers.")
+            if first.channels != second.channels:
+                raise RuntimeError("Nombre de canaux different entre les deux fichiers.")
+
+            with sf.SoundFile(
+                out_path,
+                mode="w",
+                samplerate=first.samplerate,
+                channels=first.channels,
+                subtype="PCM_16",
+            ) as out:
+                for src in (first, second):
+                    while True:
+                        chunk = src.read(
+                            frames=8192,
+                            dtype="float32",
+                            always_2d=(first.channels > 1),
+                        )
+                        if chunk is None or len(chunk) == 0:
+                            break
+                        out.write(chunk)
 
 # -----------------------------------------------------------------------------
 # Worker de coherence DB/FS (thread Qt)

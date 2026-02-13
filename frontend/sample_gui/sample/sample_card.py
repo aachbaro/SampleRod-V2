@@ -53,6 +53,8 @@ class SampleCard(QWidget):
     normalizeClicked   = pyqtSignal(int)          # emet l'ID pour normaliser manuellement
     selectionChanged   = pyqtSignal(int, bool)    # nouveau signal : emet (ID du sample, etat coche)
     removeFromHistory  = pyqtSignal(int)          # emet l'ID du sample a retirer de l'historique
+    concatWithPrevious = pyqtSignal(int)          # emet l'ID (sample courant) a concatener avec precedent
+    dismissConcat      = pyqtSignal(int)          # emet l'ID (sample courant) pour ignorer la concat
 
     def __init__(self, sample: Sample, app_context: AppContext, parent=None):
         """
@@ -70,6 +72,7 @@ class SampleCard(QWidget):
         self.wave_edition_widget = None
 
         self.isChecked = False
+        self.concat_prev_id = None
 
         # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
         self.settings.librariesChanged.connect(self.updateLibraryCombo)
@@ -188,6 +191,26 @@ class SampleCard(QWidget):
 
     def onArchiveClicked(self):
         self.header_actions.archive()
+
+    def onConcatWithPreviousClicked(self):
+        self.concatWithPrevious.emit(self.sample.id)
+
+    def onDismissConcatClicked(self):
+        self.dismissConcat.emit(self.sample.id)
+
+    def setConcatCandidate(self, enabled: bool, prev_sample_id=None):
+        self.concat_prev_id = prev_sample_id if enabled else None
+        self.concat_button.setVisible(enabled)
+        self.concat_cancel_button.setVisible(enabled)
+        if enabled and prev_sample_id is not None:
+            self.concat_button.setToolTip(
+                f"Concatener ce sample apres le sample #{prev_sample_id}"
+            )
+        else:
+            self.concat_button.setToolTip("Concatener avec le sample precedent")
+
+    def setNormalizationLocked(self, locked: bool):
+        self.normalize_button.setEnabled(not locked)
 
     # ---- Playback
     def togglePlay(self):

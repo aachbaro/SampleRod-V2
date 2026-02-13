@@ -172,6 +172,28 @@ class SampleCardUIBuilder:
         )
         c.rename_button.clicked.connect(c.startRename)
 
+        c.concat_button = self._make_round_btn(
+            "fa5s.arrow-down",
+            "Concatener avec le sample precedent",
+            color_normal="#2cc6cf",
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
+        c.concat_button.clicked.connect(c.onConcatWithPreviousClicked)
+        c.concat_button.setVisible(False)
+
+        c.concat_cancel_button = self._make_round_btn(
+            "fa5s.times",
+            "Garder separe (ne pas concatener)",
+            color_normal="#b97a7a",
+            color_hover=icon_hover,
+            size=btn_size,
+            icon_size=btn_icon,
+        )
+        c.concat_cancel_button.clicked.connect(c.onDismissConcatClicked)
+        c.concat_cancel_button.setVisible(False)
+
         c.delete_button = self._make_round_btn(
             "fa5s.trash-alt",
             "Supprimer",
@@ -308,6 +330,8 @@ class SampleCardUIBuilder:
 
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(6)
+        actions_layout.addWidget(c.concat_button)
+        actions_layout.addWidget(c.concat_cancel_button)
         actions_layout.addWidget(c.rename_button)
         actions_layout.addWidget(c.normalize_button)
         actions_layout.addWidget(c.waveform_button)

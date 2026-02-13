@@ -85,6 +85,9 @@ class RecorderService(QObject):
         )
         # Etat local: enregistrement actif ou non
         self.is_recording = False
+        # Meta runtime de prise: True si la prise en cours suit la precedente.
+        self._current_take_sequential = False
+        self._retro_refill_active = False
         # Demarrage du processus worker
         self.worker.start()
         # Si retro actif au demarrage, on l'active cote worker
@@ -220,6 +223,12 @@ class RecorderService(QObject):
             # Lecture d'un message de statut
             if msg == 'started':
                 # Le worker confirme le demarrage
+                if isinstance(payload, dict):
+                    self._current_take_sequential = bool(
+                        payload.get("sequential_with_previous", False)
+                    )
+                else:
+                    self._current_take_sequential = False
                 self._set_recording_state(True)
             elif msg == 'stopped':
                 # Le worker confirme l'arret
@@ -227,14 +236,34 @@ class RecorderService(QObject):
             elif msg == 'retro_enabled':
                 logger.info(f"RecorderService: retro_enabled -> {payload}")
                 self.retro_enabled = payload
+            elif msg == 'retro_refill_state':
+                # Refill termine -> la normalisation differee peut etre relancee.
+                self._retro_refill_active = bool(payload)
+                if payload is False:
+                    try:
+                        self.app_context.sample_store.on_retro_refill_complete()
+                    except Exception:
+                        pass
             elif msg == 'done':
                 # Un enregistrement vient d'etre finalise
-                path = payload
+                if isinstance(payload, dict):
+                    path = payload.get("path")
+                    sequential_with_previous = bool(
+                        payload.get(
+                            "sequential_with_previous",
+                            self._current_take_sequential,
+                        )
+                    )
+                else:
+                    path = payload
+                    sequential_with_previous = self._current_take_sequential
+                if not path:
+                    continue
                 if self._is_wav_silent(path):
-                    # ▶ Sequence vide : notification et pas de sauvegarde
+                    # Sequence vide : notification et pas de sauvegarde
                     self.app_context.notifications.notify(
-                        title="Enregistrement annulé",
-                        message="Aucun son détecté : aucun fichier n’a été créé.",
+                        title="Enregistrement annule",
+                        message="Aucun son detecte : aucun fichier n'a ete cree.",
                         type=NotificationType.WARNING,
                     )
                     try:
@@ -244,7 +273,17 @@ class RecorderService(QObject):
                         pass
                 else:
                     # Ajoute le sample au store applicatif
-                    self.app_context.sample_store.add(path)
+                    self.app_context.sample_store.add(
+                        path,
+                        from_recorder=True,
+                        sequential_with_previous=sequential_with_previous,
+                    )
+                    # Cas race-condition: refill deja termine avant reception de "done".
+                    if not self._retro_refill_active:
+                        try:
+                            self.app_context.sample_store.on_retro_refill_complete()
+                        except Exception:
+                            pass
                     others.append(('done', path))
             elif msg == 'done_error':
                 logger.info(f"RecorderService: export WAV en erreur: {payload}")

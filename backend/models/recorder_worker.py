@@ -112,6 +112,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
             live_temp_path = job.get("live_temp_path")
             live_blocks_written = int(job.get("live_blocks_written", 0))
             out_sample_rate = int(job.get("sample_rate", sample_rate))
+            sequential_with_previous = bool(job.get("sequential_with_previous", False))
 
             try:
                 has_pre = len(pre) > 0
@@ -151,7 +152,15 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                                     break
                                 out.write(chunk)
 
-                resp_q.put(('done', path))
+                resp_q.put(
+                    (
+                        'done',
+                        {
+                            "path": path,
+                            "sequential_with_previous": sequential_with_previous,
+                        },
+                    )
+                )
             except Exception as e:
                 logger.exception(f"recorder_worker: erreur export WAV ({path}) : {e}")
                 try:
@@ -231,6 +240,13 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                 retro_enabled = False
                 output_folder = None
                 retro_time = 0
+                # Flag de continuité: True tant que le buffer retro n'a pas été
+                # "re-rempli" depuis le dernier stop.
+                retro_refill_active = False
+                retro_refill_target_blocks = 0
+                # Meta attachée à la prise en cours pour savoir si elle suit la
+                # précédente (démarrée pendant la fenêtre de refill).
+                current_take_sequential = False
 
                 # 2) Boucle interne : on lit par blocs successifs
                 while True:
@@ -262,6 +278,14 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                         live_blocks_written += 1
                     elif retro_enabled:
                         retro_buf.append(data)
+                        if (
+                            retro_refill_active
+                            and retro_refill_target_blocks > 0
+                            and len(retro_buf) >= retro_refill_target_blocks
+                        ):
+                            retro_refill_active = False
+                            retro_refill_target_blocks = 0
+                            resp_q.put(('retro_refill_state', False))
 
                     # --- Vérification “immédiate” des commandes sans pause artificielle ---
                     cmd = None
@@ -298,11 +322,19 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                         elif action == 'disable_retro':
                             retro_enabled = False
                             retro_buf.clear()
+                            retro_refill_active = False
+                            retro_refill_target_blocks = 0
+                            current_take_sequential = False
+                            resp_q.put(('retro_refill_state', False))
                             resp_q.put(('retro_enabled', False))
 
                         # 2.c) Démarrer l’enregistrement live ---
                         elif action == 'start':
                             _, folder, rt = cmd
+                            requested_blocks = int(max(0, rt) * sample_rate / block_size)
+                            current_take_sequential = (
+                                retro_refill_active and requested_blocks > 0
+                            )
                             is_recording = True
                             if live_writer is not None:
                                 live_writer.close()
@@ -317,7 +349,15 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                             output_folder = folder
                             retro_time = rt
                             # Un retour immédiat pour signaler “started” au service
-                            resp_q.put(('started', None))
+                            # Meta start: indique si la nouvelle prise suit la precedente.
+                            resp_q.put(
+                                (
+                                    'started',
+                                    {
+                                        "sequential_with_previous": current_take_sequential,
+                                    },
+                                )
+                            )
 
                         # 2.d) Arrêter l’enregistrement live ---
                         elif action == 'stop' and is_recording:
@@ -341,6 +381,16 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                                 and os.path.exists(live_temp_path)
                             )
 
+                            # Re-ouvre la fenetre de continuite jusqu'a refill complet.
+                            if retro_enabled and blocks > 0:
+                                retro_refill_active = True
+                                retro_refill_target_blocks = blocks
+                                resp_q.put(('retro_refill_state', True))
+                            else:
+                                retro_refill_active = False
+                                retro_refill_target_blocks = 0
+                                resp_q.put(('retro_refill_state', False))
+
                             # Stop immediat sans donnees: ecrit un bloc silencieux minimal
                             if not has_pre and not has_live:
                                 pre = [np.zeros_like(data)]
@@ -363,6 +413,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
                                     "live_temp_path": live_temp_path if has_live else None,
                                     "live_blocks_written": live_blocks_written,
                                     "sample_rate": sample_rate,
+                                    "sequential_with_previous": current_take_sequential,
                                 }
                             )
                             if not has_live and live_temp_path and os.path.exists(live_temp_path):

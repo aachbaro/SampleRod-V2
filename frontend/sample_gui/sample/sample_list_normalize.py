@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from backend.models.normalize_worker import NormalizeWorker
+from backend.services.notification_service import NotificationType
 
 
 class SampleListNormalize:
@@ -29,11 +30,23 @@ class SampleListNormalize:
             card.indicateNormalizationError(message)
 
     def on_clicked(self, sample_id: int):
+        if self.widget.sample_store.is_normalization_locked(sample_id):
+            self.widget.app_context.notifications.notify(
+                title="Normalisation en attente",
+                message="Decide d'abord si tu veux concatener ce sample.",
+                type=NotificationType.WARNING,
+            )
+            return
+
         samp = next(
             (s for s in self.widget.sample_store.get_cached() if s.id == sample_id),
             None,
         )
         if samp is None:
+            return
+
+        running = self.widget.app_context.sample_store._normalize_threads.get(sample_id)
+        if running is not None and running.isRunning():
             return
 
         worker = NormalizeWorker(

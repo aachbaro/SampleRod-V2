@@ -18,3 +18,9 @@ class SampleListServiceActions:
 
     def move_sample(self, sample_id: int, target_folder: str):
         self.widget.sample_store.move(sample_id, target_folder)
+
+    def concat_with_previous(self, sample_id: int):
+        self.widget.sample_store.concat_with_previous(sample_id)
+
+    def dismiss_concat(self, sample_id: int):
+        self.widget.sample_store.dismiss_concat(sample_id)

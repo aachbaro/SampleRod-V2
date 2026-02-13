@@ -79,6 +79,16 @@ class SampleListCards:
             card.sample.duration = new_duration
             card.length_label.setText(f"{new_duration:.1f}s")
 
+    def on_sample_concat_candidate_changed(self, sample_id: int, enabled: bool, prev_id):
+        card = self.widget._card_widgets.get(sample_id)
+        if card:
+            card.setConcatCandidate(enabled, prev_id)
+
+    def on_sample_normalization_lock_changed(self, sample_id: int, locked: bool):
+        card = self.widget._card_widgets.get(sample_id)
+        if card:
+            card.setNormalizationLocked(locked)
+
     # ---- Refresh list
     def refresh_list(self):
         ordered_samples = sorted(self.widget.samples, key=lambda s: s.id, reverse=True)
@@ -102,6 +112,11 @@ class SampleListCards:
                 card = self.widget._card_widgets[samp.id]
                 card.sample = samp
                 card.refresh_display()
+                prev_id = self.widget.sample_store.get_concat_previous_id(samp.id)
+                card.setConcatCandidate(prev_id is not None, prev_id)
+                card.setNormalizationLocked(
+                    self.widget.sample_store.is_normalization_locked(samp.id)
+                )
             else:
                 card = self._build_card(samp)
                 self.widget._card_widgets[samp.id] = card
@@ -137,6 +152,14 @@ class SampleListCards:
         card.sampleMoved.connect(self.widget.move_sample)
         card.normalizeClicked.connect(self.widget.onNormalizeClicked)
         card.selectionChanged.connect(self.widget.onSelectionChanged)
+        card.concatWithPrevious.connect(self.widget.concat_with_previous)
+        card.dismissConcat.connect(self.widget.dismiss_concat)
+
+        prev_id = self.widget.sample_store.get_concat_previous_id(samp.id)
+        card.setConcatCandidate(prev_id is not None, prev_id)
+        card.setNormalizationLocked(
+            self.widget.sample_store.is_normalization_locked(samp.id)
+        )
 
         self.widget.sample_store.sampleRenamed.connect(card.onRenameSuccess)
         self.widget.sample_store.sampleMoved.connect(card.onMoveSuccess)
