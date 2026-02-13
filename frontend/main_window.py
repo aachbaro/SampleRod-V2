@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QShortcut, QKeySequence
 import logging
 logger = logging.getLogger("main_window")
 
@@ -42,6 +43,7 @@ class MainWindow(QMainWindow):
         self._setup_window()
         self._build_ui()
         self._init_signals()
+        self._init_shortcuts()
 
     def _setup_window(self):
         """Configure la fenêtre principale"""
@@ -233,6 +235,28 @@ class MainWindow(QMainWindow):
         self.record_widget.newSampleRecorded.connect(
             lambda path: self.app_context.sample_store.load_all()
         )
+
+    def _init_shortcuts(self):
+        """Raccourcis clavier globaux de la fenetre principale."""
+        self._was_maximized_before_fullscreen = True
+        self._toggle_fullscreen_shortcut = QShortcut(QKeySequence("F11"), self)
+        self._toggle_fullscreen_shortcut.activated.connect(self._toggle_fullscreen)
+
+    def _toggle_fullscreen(self):
+        """
+        F11: bascule plein ecran <-> etat precedent.
+        - si la fenetre etait maximisee avant le plein ecran, on y revient.
+        - sinon on revient en mode normal.
+        """
+        if self.isFullScreen():
+            if self._was_maximized_before_fullscreen:
+                self.showMaximized()
+            else:
+                self.showNormal()
+            return
+
+        self._was_maximized_before_fullscreen = self.isMaximized()
+        self.showFullScreen()
 
     def closeEvent(self, event):
         """Nettoyage lors de la fermeture de la fenêtre principale"""
