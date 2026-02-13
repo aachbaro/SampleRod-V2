@@ -34,11 +34,6 @@ class SampleListSelection:
         self.widget.bulk_normalize_act.setEnabled(any_selected)
         self.widget.bulk_archive_act.setEnabled(any_selected)
 
-        # Desactive le bouton "Renommer" si plus d'un sample est coche
-        multiple = len(self.widget.selected_ids) > 1
-        for _, card in self.widget._card_widgets.items():
-            card.rename_button.setEnabled(not multiple)
-
         self.update_select_actions()
 
     def update_select_actions(self):

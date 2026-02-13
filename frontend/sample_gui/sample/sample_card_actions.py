@@ -28,7 +28,6 @@ class SampleCardHeaderActions:
         c.cancel_button.setVisible(True)
 
         c.name_label.setVisible(False)
-        c.rename_button.setVisible(False)
 
         c.rename_input.setFocus()
 
@@ -41,7 +40,6 @@ class SampleCardHeaderActions:
         c.cancel_button.setVisible(False)
 
         c.name_label.setVisible(True)
-        c.rename_button.setVisible(True)
 
     def submit_rename(self):
         c = self.card
@@ -55,7 +53,6 @@ class SampleCardHeaderActions:
         c.cancel_button.setVisible(False)
 
         c.name_label.setVisible(True)
-        c.rename_button.setVisible(True)
 
     def on_rename_success(self, sample_id, old_path, new_path):
         c = self.card

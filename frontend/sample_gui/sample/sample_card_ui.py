@@ -131,15 +131,16 @@ class SampleCardUIBuilder:
         # Nom / renommage
         c.name_label = QLabel(c.get_sample_name())
         c.name_label.setObjectName("SampleName")
-        c.name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        c.name_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         c.name_label.setFixedHeight(24)
         c.name_label.mouseDoubleClickEvent = c.name_label_double_click
         c.name_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         c.rename_input = QLineEdit(c.get_sample_name())
         c.rename_input.setObjectName("RenameInput")
-        c.rename_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        c.rename_input.setMinimumWidth(220)
+        c.rename_input.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        c.rename_input.setMinimumWidth(200)
+        c.rename_input.setMaximumWidth(360)
         c.rename_input.returnPressed.connect(c.submitRename)
 
         c.check_button = self._make_round_btn(
@@ -161,16 +162,6 @@ class SampleCardUIBuilder:
             icon_size=btn_icon,
         )
         c.cancel_button.clicked.connect(c.cancelRename)
-
-        c.rename_button = self._make_round_btn(
-            "fa6s.pen",
-            "Renommer",
-            color_normal=icon_normal,
-            color_hover=icon_hover,
-            size=btn_size,
-            icon_size=btn_icon,
-        )
-        c.rename_button.clicked.connect(c.startRename)
 
         c.concat_button = self._make_round_btn(
             "fa5s.arrow-down",
@@ -323,16 +314,18 @@ class SampleCardUIBuilder:
         left_header = QHBoxLayout()
         left_header.setSpacing(8)
         left_header.addWidget(c.checkbox)
-        left_header.addWidget(c.name_label, 1)
-        left_header.addWidget(c.rename_input, 1)
+        left_header.addWidget(c.name_label, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        left_header.addWidget(c.rename_input, 0, alignment=Qt.AlignmentFlag.AlignLeft)
         left_header.addWidget(c.check_button)
         left_header.addWidget(c.cancel_button)
+        # Le reste de la ligne est du "vrai" vide (pas un QLabel expansif),
+        # donc cliquer hors du nom se comporte comme un clic sur la card.
+        left_header.addStretch(1)
 
         actions_layout = QHBoxLayout()
         actions_layout.setSpacing(6)
         actions_layout.addWidget(c.concat_button)
         actions_layout.addWidget(c.concat_cancel_button)
-        actions_layout.addWidget(c.rename_button)
         actions_layout.addWidget(c.normalize_button)
         actions_layout.addWidget(c.waveform_button)
         actions_layout.addWidget(c.archive_button)

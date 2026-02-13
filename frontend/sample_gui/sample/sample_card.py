@@ -98,6 +98,7 @@ class SampleCard(QWidget):
     def _build_shortcuts(self):
         """Raccourcis actifs seulement quand la carte (ou un enfant) a le focus."""
         for seq, handler in [
+            ("Ctrl+R", lambda: self.startRename()),
             ("Ctrl+X", lambda: self._with_wave(lambda w: w._on_cut_shortcut())),
             ("Ctrl+Z", lambda: self._with_wave(lambda w: w.undo())),
             ("Ctrl+Shift+Z", lambda: self._with_wave(lambda w: w.redo())),
