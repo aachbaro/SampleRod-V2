@@ -31,6 +31,15 @@ class RecordWidgetWindow(QMainWindow):
         self.app_context = app_context
         self.settings = self.app_context.settings
 
+        # Widgets references (definis tot pour eviter les AttributeError
+        # si un event Qt arrive pendant la construction).
+        self.button_container = None
+        self.recordButton = None
+        self.library_indicator = None
+        self.library_number_label = None
+        self.drag_area = None
+        self.library_name = None
+
         self.scale = 1.3
         self.library_selected = 0
         self.retro_time_selected = 0
@@ -72,21 +81,19 @@ class RecordWidgetWindow(QMainWindow):
         slot_w = int(28 * self.scale)
 
         self.button_container = QWidget(self)
+        self.button_container.setObjectName("RecordShell")
         self.base_geometry = QRect(0, 0, base_w, base_h)
         self.button_container.setGeometry(self.base_geometry)
-        self.button_container.installEventFilter(self)
 
         self.recordButton = QPushButton(self.button_container)
         self.recordButton.setGeometry(int(4 * self.scale), int(4 * self.scale), int(20 * self.scale), int(20 * self.scale))
         self.recordButton.setCursor(Qt.CursorShape.PointingHandCursor)
         self.recordButton.setIconSize(QSize(int(14 * self.scale), int(14 * self.scale)))
-        self.recordButton.installEventFilter(self)
 
         self.library_indicator = QLabel(self.button_container)
         self.library_indicator.setGeometry(base_w, 0, slot_w, base_h)
         self.library_indicator.setCursor(Qt.CursorShape.SplitVCursor)
         self.library_indicator.setToolTip("Molette: changer de bibliotheque")
-        self.library_indicator.installEventFilter(self)
 
         self.library_number_label = QLabel(self.library_indicator)
         self.library_number_label.setGeometry(0, 0, slot_w, base_h)
@@ -113,6 +120,10 @@ class RecordWidgetWindow(QMainWindow):
         )
         self.library_name.setVisible(False)
         self.library_name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self.button_container.installEventFilter(self)
+        self.recordButton.installEventFilter(self)
+        self.library_indicator.installEventFilter(self)
 
         self._apply_static_icons()
         self._apply_shell_style()
@@ -153,10 +164,10 @@ class RecordWidgetWindow(QMainWindow):
             border = self._COLOR_BORDER
 
         bg = self._COLOR_BG_HOVER if hovered else self._COLOR_BG
-        radius = int(7 * self.scale)
+        radius = max(1, self.button_container.height() // 2)
         self.button_container.setStyleSheet(
             f"""
-            QWidget {{
+            QWidget#RecordShell {{
                 background-color: {bg};
                 border: 1px solid {border};
                 border-radius: {radius}px;
@@ -340,13 +351,14 @@ class RecordWidgetWindow(QMainWindow):
             icon_color = self._COLOR_TEXT
             text_color = self._COLOR_TEXT
 
+        button_radius = max(1, self.recordButton.height() // 2)
         self.recordButton.setStyleSheet(
             f"""
             QPushButton {{
                 background-color: {self._COLOR_BG};
                 color: {text_color};
                 border: 1px solid {border};
-                border-radius: {int(9 * self.scale)}px;
+                border-radius: {button_radius}px;
                 font-weight: 700;
             }}
             QPushButton:hover {{
@@ -360,7 +372,8 @@ class RecordWidgetWindow(QMainWindow):
             self.recordButton.setText(str(self.retro_time_selected))
         else:
             self.recordButton.setText("")
-            self.recordButton.setIcon(qta.icon("fa5s.microphone", color=icon_color))
+            dot_color = "#ff3b3b" if is_recording else "#ffffff"
+            self.recordButton.setIcon(qta.icon("fa5s.circle", color=dot_color))
 
         status = "Enregistrement en cours" if is_recording else "Pret"
         lib_name = self.library_name.text() if self.library_name.text() else "Aucune bibliotheque"
