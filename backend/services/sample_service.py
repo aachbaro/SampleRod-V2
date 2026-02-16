@@ -668,8 +668,12 @@ class SampleService(QObject):
     def _cleanup_concat_state_for_deleted(self, sample_id: int):
         # Supprime un lien ou sample_id est "courant".
         if sample_id in self._concat_candidates:
-            self._concat_candidates.pop(sample_id, None)
+            parent_id = self._concat_candidates.pop(sample_id, None)
             self.sampleConcatCandidateChanged.emit(sample_id, False, None)
+            # Si on supprime le "deuxieme" sample, le precedent peut etre libere
+            # et normalise (sauf s'il est encore implique ailleurs).
+            if parent_id is not None:
+                self._unlock_and_maybe_normalize(parent_id)
 
         # Supprime les liens ou sample_id est "precedent".
         for child_id, parent_id in list(self._concat_candidates.items()):
