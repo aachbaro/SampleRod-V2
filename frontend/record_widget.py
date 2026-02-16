@@ -1,369 +1,417 @@
-import os
-import sys
 import logging
-logger = logging.getLogger("record_widget")
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu, QMessageBox
 from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal
-from PyQt6.QtGui import QIcon, QWheelEvent, QCursor
+from PyQt6.QtGui import QIcon, QCursor
+from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu
 import qtawesome as qta
+
 from utils.utils import get_folder_name
-from backend.models.sample import Sample
-import datetime
-from backend.services.settings_service import SettingsService
 from backend.models.AppContext import AppContext
 from backend.services.notification_service import NotificationType
 
+logger = logging.getLogger("record_widget")
+
+
 class RecordWidgetWindow(QMainWindow):
+    """Floating recorder control (always on top)."""
+
     newSampleRecorded = pyqtSignal(str)
+
+    # Palette proche du reste de l'app
+    _COLOR_BG = "#16181b"
+    _COLOR_BG_HOVER = "#1e2228"
+    _COLOR_BORDER = "#3b3f46"
+    _COLOR_TEXT = "#f2f2f2"
+    _COLOR_MUTED = "#8d95a3"
+    _COLOR_RETRO = "#2cc6cf"
+    _COLOR_RECORDING = "#e45050"
 
     def __init__(self, app_context: AppContext):
         super().__init__()
         self.app_context = app_context
         self.settings = self.app_context.settings
 
-# ------------------------------------------------------------------------ Geometrie de la fenetre
         self.scale = 1.3
-        self.setWindowTitle("Record Widget")
-        self.setGeometry(int(150 * self.scale), int(150 * self.scale), int(80 * self.scale), int(40 * self.scale))
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)              # Supprime la bordure de la fenêtre
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)      # Transparence de la fenêtre
-        self.setStyleSheet("background: transparent;")                     # Fond transparent
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)  # Toujours au premier plan
-        self.setWindowOpacity(0.5)
-        self.button_container = QWidget(self)
-        self.recordButton = QPushButton(self.button_container)
-        self.library_indicator = QLabel(self.button_container)
-        self.library_number_label = QLabel(self.library_indicator)
-        self.library_name = QLabel(self)
         self.library_selected = 0
         self.retro_time_selected = 0
-
-        # 🔹 Timer pour forcer la fenêtre au premier plan
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.keep_on_top)
-        self.timer.start(1000)
-
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._poll_worker)  # Polling worker
-        self.timer.start(100)
-
+        self.is_dragging = False
+        self.drag_offset = QPoint(0, 0)
         self.current_animation = None
         self.current_animation_drag = None
 
+        self._build_window()
+        self._build_widgets()
+        self._wire_signals()
+        self._start_timers()
+
+        self.updateLibraryCount()
+        self.updateRetroRecording()
+        self.updateRecordButtonDisplay()
+
+    # ------------------------------------------------------------------ Setup
+    def _build_window(self):
+        self.setWindowTitle("Record Widget")
+        self.setGeometry(
+            int(150 * self.scale),
+            int(150 * self.scale),
+            int(110 * self.scale),
+            int(55 * self.scale),
+        )
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
+        self.setWindowOpacity(0.6)
+
+    def _build_widgets(self):
+        base_w = int(28 * self.scale)
+        base_h = int(28 * self.scale)
+        slot_w = int(28 * self.scale)
+
+        self.button_container = QWidget(self)
+        self.base_geometry = QRect(0, 0, base_w, base_h)
+        self.button_container.setGeometry(self.base_geometry)
+        self.button_container.installEventFilter(self)
+
+        self.recordButton = QPushButton(self.button_container)
+        self.recordButton.setGeometry(int(4 * self.scale), int(4 * self.scale), int(20 * self.scale), int(20 * self.scale))
+        self.recordButton.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.recordButton.setIconSize(QSize(int(14 * self.scale), int(14 * self.scale)))
+        self.recordButton.installEventFilter(self)
+
+        self.library_indicator = QLabel(self.button_container)
+        self.library_indicator.setGeometry(base_w, 0, slot_w, base_h)
+        self.library_indicator.setCursor(Qt.CursorShape.SplitVCursor)
+        self.library_indicator.setToolTip("Molette: changer de bibliotheque")
+        self.library_indicator.installEventFilter(self)
+
+        self.library_number_label = QLabel(self.library_indicator)
+        self.library_number_label.setGeometry(0, 0, slot_w, base_h)
+        self.library_number_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.drag_area = QLabel(self)
+        self.drag_areaBase_geometry = QRect(
+            int(34 * self.scale),
+            0,
+            int(10 * self.scale),
+            base_h,
+        )
+        self.drag_area.setGeometry(self.drag_areaBase_geometry)
+        self.drag_area.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.drag_area.setToolTip("Deplacer le widget")
+        self.drag_area.setStyleSheet("background: transparent;")
+
+        self.library_name = QLabel(self)
+        self.library_name.setGeometry(
+            0,
+            int(32 * self.scale),
+            int(180 * self.scale),
+            int(16 * self.scale),
+        )
+        self.library_name.setVisible(False)
+        self.library_name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        self._apply_static_icons()
+        self._apply_shell_style()
+
+    def _wire_signals(self):
         self.settings.librariesChanged.connect(self.updateLibraryCount)
         self.settings.retroToggled.connect(self.updateRetroRecording)
         self.settings.preSecondsChanged.connect(self.updateRetroRecording)
-        self.app_context.recorder.recordingStateChanged.connect(
-            self._on_recording_state_changed
+        self.app_context.recorder.recordingStateChanged.connect(self._on_recording_state_changed)
+
+    def _start_timers(self):
+        self.keep_top_timer = QTimer(self)
+        self.keep_top_timer.timeout.connect(self.keep_on_top)
+        self.keep_top_timer.start(1000)
+
+        self.poll_timer = QTimer(self)
+        self.poll_timer.timeout.connect(self._poll_worker)
+        self.poll_timer.start(100)
+
+    def _apply_static_icons(self):
+        self.library_indicator.setPixmap(
+            qta.icon("fa5s.folder", color=self._COLOR_TEXT).pixmap(
+                int(20 * self.scale), int(22 * self.scale)
+            )
+        )
+        self.drag_area.setPixmap(
+            qta.icon("fa5s.ellipsis-v", color=self._COLOR_MUTED).pixmap(
+                int(10 * self.scale), int(18 * self.scale)
+            )
         )
 
+    def _apply_shell_style(self, hovered: bool = False):
+        if self.app_context.recorder.is_recording:
+            border = self._COLOR_RECORDING
+        elif self.settings.isRetroEnabled():
+            border = self._COLOR_RETRO
+        else:
+            border = self._COLOR_BORDER
 
-
-# ------------------------------------------------------------------------ Container a boutons
-
-        self.base_geometry = QRect(0, 0, int(26 * self.scale), int(26 * self.scale))
-        self.button_container.setGeometry(self.base_geometry)
+        bg = self._COLOR_BG_HOVER if hovered else self._COLOR_BG
+        radius = int(7 * self.scale)
         self.button_container.setStyleSheet(
-            "background: black; "
-            "opacity: 10%;"
-            "border: 1px solid white; "
-            "border-radius: 4px;"
+            f"""
+            QWidget {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-radius: {radius}px;
+            }}
+            """
         )
-        self.button_container.installEventFilter(self)  # Installer l'event filter pour le hover
-
-        # ----- Bouton d'enregistrement placé à l'intérieur du conteneur
-
-        self.recordButton.setGeometry(int(4 * self.scale), int(4 * self.scale), int(18 * self.scale), int(18 * self.scale))
-        self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
-        self.recordButton.setIconSize(QSize(int(14 * self.scale), int(14 * self.scale)))
-        self.recordButton.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.recordButton.setStyleSheet(
-            "background: black; "
-            "color: white; "
-            "border: 1px solid white; "
-            "border-radius: 8px;"
-        )
-        self.recordButton.installEventFilter(self)
-
-        # ----- Indicateur de repertoire
-
-        self.library_indicator.setGeometry(int(26 * self.scale), int(0 * self.scale), int(26 * self.scale), int(26 * self.scale))
-        self.library_indicator.setPixmap(qta.icon('fa5s.folder', color='white').pixmap(int(20 * self.scale), int(23 * self.scale)))
-        self.library_indicator.setCursor(Qt.CursorShape.SplitVCursor)
-
-        self.library_number_label.setGeometry(int(3 * self.scale), int(2 * self.scale), int(25 * self.scale), int(25 * self.scale))  # Positionner le label à l'intérieur du `library_indicator`
+        self.library_indicator.setStyleSheet("background: transparent; border: none;")
         self.library_number_label.setStyleSheet(
-            "background: transparent; "
-            "color: black; "
-            "border: none; "
-            "font-size: 14px; "
-            "text-align: center;"
+            """
+            QLabel {
+                background: transparent;
+                color: #111111;
+                border: none;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            """
         )
-        if (self.settings.libraries):
-            self.library_number_label.setText(str(self.settings.libraries[self.library_selected].position))
-        else:
-            self.library_number_label.setText("N")
-        self.library_indicator.setStyleSheet(
-            "background: transparent; "
-            "color: white; "
-            "border: none; "
+        self.library_name.setStyleSheet(
+            f"""
+            QLabel {{
+                background-color: {self._COLOR_BG};
+                color: {self._COLOR_TEXT};
+                border: 1px solid {self._COLOR_BORDER};
+                border-radius: 4px;
+                padding-left: 6px;
+                font-size: 10px;
+            }}
+            """
         )
-        self.library_indicator.installEventFilter(self)
 
-
-
-# ------------------------------------------------------------------------ Zone draggable
-
-        self.drag_area = QLabel(self)
-        self.drag_areaBase_geometry = QRect(int(30 * self.scale), int(0 * self.scale), int(10 * self.scale), int(26 * self.scale))
-        self.drag_area.setGeometry(int(30 * self.scale), int(0 * self.scale), int(10 * self.scale), int(26 * self.scale))
-        self.drag_area.setPixmap(qta.icon('fa5s.ellipsis-v', color='white').pixmap(int(10 * self.scale), int(20 * self.scale)))
-        self.drag_area.setCursor(Qt.CursorShape.SizeAllCursor)
-        self.drag_area.setStyleSheet(
-            "background: transparent;"
-            "font-size: 1x;"
-        )
-        self.is_dragging = False
-        self.drag_offset = QPoint(0, 0)
-
-# ------------------------------------------------------------------------ Indicateur de nom
-        self.library_name.setGeometry(int(0 * self.scale), int(26 * self.scale), int(100 * self.scale), int(10 * self.scale))  # Définir la géométrie correctement
-        if (self.settings.libraries):
-            self.library_name.setText(get_folder_name(self.settings.libraries[self.library_selected].path))
-        else:
-            self.library_name.setText("No library")
-        self.library_name.setVisible(False)
-        self.library_name.setStyleSheet("font-size: 10px;")
-
-        self.updateRetroRecording()  # Met à jour l'affichage du bouton d'enregistrement
-
-# ------------------------------------------------------------------------ Extension du container a bouton
+    # ------------------------------------------------------------------ Events
     def eventFilter(self, source, event):
-        """Filtre les événements pour gérer le survol et le clic sur le conteneur de boutons."""
-        # ------------------------------------------------ Button container
         if source == self.button_container:
             if event.type() == QEvent.Type.Enter:
+                self._apply_shell_style(hovered=True)
                 self.animate_container(expand=True)
             elif event.type() == QEvent.Type.Leave:
+                self._apply_shell_style(hovered=False)
                 self.animate_container(expand=False)
-
-        # ------------------------------------------------ lIBRARY INDICATOR
 
         if source == self.library_indicator:
             if event.type() == QEvent.Type.Wheel:
-                # event est déjà un QWheelEvent, pas besoin de le recréer
                 delta = event.angleDelta().y()
-                if self.settings.libraries:
-                    if delta > 0:
-                        self.library_selected = (self.library_selected + 1) % len(self.settings.libraries)
-                    else:
-                        self.library_selected = (self.library_selected - 1) % len(self.settings.libraries)
-                    self.updateLibraryCount()
-                    if (self.settings.libraries):
-                        self.library_name.setText(get_folder_name(self.settings.libraries[self.library_selected].path))
-                    else:
-                        self.library_name.setText("No library.")
-
+                self._rotate_library(delta)
                 return True
-            elif event.type() == QEvent.Type.MouseButtonPress:
+            if event.type() == QEvent.Type.MouseButtonPress:
                 self.library_name.setVisible(not self.library_name.isVisible())
-
-        # ----------------------------------------------- RecordButton
+                return True
 
         if source == self.recordButton:
-            if event.type() == QEvent.Type.MouseButtonPress  and event.button() == Qt.MouseButton.LeftButton:
-        # ─── Guard clause : s’assurer qu’une bibliothèque est sélectionnée ───
-                if not self.settings.libraries or \
-                self.library_selected < 0 or \
-                self.library_selected >= len(self.settings.libraries):
-                    # Notification discrète via ton service existant
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                if not self._has_valid_library():
                     self.app_context.notifications.notify(
                         title="Enregistrement impossible",
-                        message="Sélectionnez d’abord une bibliothèque avant d’enregistrer.",
+                        message="Selectionnez d'abord une bibliotheque avant d'enregistrer.",
                         type=NotificationType.WARNING,
                     )
-                    # On intercepte l’événement pour éviter l’erreur d’index
                     return True
                 selected_library = self.settings.libraries[self.library_selected].path
-                self.app_context.recorder.record_button_clicked(selected_library, self.retro_time_selected)
-                self.updateRecordButtonDisplay()
-                return True
-
-            # clic droit = toggle rétro-enregistrement
-            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
-                menu = QMenu(self)
-                enabled = self.settings.isRetroEnabled()
-                action = menu.addAction(
-                    "Désactiver rétro-enregistrement" if enabled
-                    else "Activer rétro-enregistrement"
+                self.app_context.recorder.record_button_clicked(
+                    selected_library, self.retro_time_selected
                 )
-                chosen = menu.exec(QCursor.pos())
-                if chosen == action:
-                    self.settings.toggleRetro()
+                self.updateRecordButtonDisplay()
                 return True
 
-        # -------------------------------- Scroll sur retro recording
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.RightButton:
+                self._show_retro_context_menu()
+                return True
 
-            elif event.type() == QEvent.Type.Wheel and self.settings.isRetroEnabled():
-                delta = event.angleDelta().y()
-                if delta > 0 and self.retro_time_selected < self.settings.getPreSeconds():
-                    self.retro_time_selected += 1
-                elif delta < 0 and self.retro_time_selected > 0:
-                    self.retro_time_selected -= 1
-                
-                self.updateRecordButtonDisplay()
+            if event.type() == QEvent.Type.Wheel and self.settings.isRetroEnabled():
+                self._adjust_retro_time(event.angleDelta().y())
+                return True
 
         return super().eventFilter(source, event)
 
-
-    def updateLibraryCount(self):
-        """Met à jour le nombre de bibliothèques affiché"""
-        if (self.settings.libraries):
-            if (len(self.settings.libraries) - 1 < self.library_selected):
-                self.library_selected = len(self.settings.libraries) - 1
-            self.library_number_label.setText(str(self.settings.libraries[self.library_selected].position))
-            self.library_name.setText(get_folder_name(self.settings.libraries[self.library_selected].path))
-        else:
-            self.library_number_label.setText('N')
-            self.library_name.setText("No library.")
-
-    def updateRetroRecording(self):
-        logger.info("update Retro Recoring from record widget")
-        if self.retro_time_selected > self.settings.getPreSeconds():
-            self.retro_time_selected = self.settings.getPreSeconds()
-            self.updateRecordButtonDisplay()
-        if self.settings.isRetroEnabled():
-            self.button_container.setStyleSheet(
-                "background: black; "
-                "border: 1px solid #40E0D0; "
-                "border-radius: 4px;"
-            )
-        else:
-            self.recordButton.setText("")  # Supprime le texte
-            self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
-            self.button_container.setStyleSheet(
-                "background: black; "
-                "border: 1px solid white; "
-                "border-radius: 4px;"
-            )
-
-    def _on_recording_state_changed(self, _is_recording: bool):
-        """Reagit au changement d'etat d'enregistrement (local ou remote)."""
-        self.updateRecordButtonDisplay()
-
-
-# ------------------------------------------------------------------------ Position de la fenetre
-    def keep_on_top(self):
-        """Assure que la fenêtre reste au premier plan."""
-        self.raise_()
-
     def mousePressEvent(self, event):
-        """Capture l'événement de clic sur la zone draggable."""
-        if self.drag_area.geometry().contains(event.pos()):
+        if self.drag_area.geometry().contains(event.position().toPoint()):
             self.is_dragging = True
-            self.drag_offset = event.pos()
+            self.drag_offset = event.position().toPoint()
             self.drag_area.setCursor(Qt.CursorShape.ClosedHandCursor)
         else:
             self.is_dragging = False
 
     def mouseMoveEvent(self, event):
-        """Déplace la fenêtre si on est en mode 'dragging'."""
         if self.is_dragging:
-            delta = event.pos() - self.drag_offset
+            delta = event.position().toPoint() - self.drag_offset
             self.move(self.pos() + delta)
 
     def mouseReleaseEvent(self, event):
-        """Arrête le glissement de la fenêtre."""
         self.is_dragging = False
         self.drag_area.setCursor(Qt.CursorShape.OpenHandCursor)
-    
+
     def enterEvent(self, event):
-        """Augmente l'opacité lorsque la souris entre dans la fenêtre."""
-        self.setWindowOpacity(0.8)  # Opacité à 100%
+        self.setWindowOpacity(0.9)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        """Diminue l'opacité lorsque la souris quitte la fenêtre."""
-        self.setWindowOpacity(0.5)  # Opacité à 50%
+        self.setWindowOpacity(0.6)
         super().leaveEvent(event)
 
+    # ------------------------------------------------------------------ UI Logic
+    def _has_valid_library(self) -> bool:
+        if not self.settings.libraries:
+            return False
+        return 0 <= self.library_selected < len(self.settings.libraries)
+
+    def _rotate_library(self, delta: int):
+        libs = self.settings.libraries
+        if not libs:
+            return
+        if delta > 0:
+            self.library_selected = (self.library_selected + 1) % len(libs)
+        else:
+            self.library_selected = (self.library_selected - 1) % len(libs)
+        self.updateLibraryCount()
+
+    def _adjust_retro_time(self, wheel_delta: int):
+        max_pre = self.settings.getPreSeconds()
+        if wheel_delta > 0 and self.retro_time_selected < max_pre:
+            self.retro_time_selected += 1
+        elif wheel_delta < 0 and self.retro_time_selected > 0:
+            self.retro_time_selected -= 1
+        self.updateRecordButtonDisplay()
+
+    def _show_retro_context_menu(self):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            """
+            QMenu {
+                background-color: #1b1b1b;
+                color: #f2f2f2;
+                border: 1px solid #333;
+            }
+            QMenu::item:selected {
+                background-color: #2a2a2a;
+            }
+            """
+        )
+        enabled = self.settings.isRetroEnabled()
+        action = menu.addAction(
+            "Desactiver retro-enregistrement" if enabled else "Activer retro-enregistrement"
+        )
+        if menu.exec(QCursor.pos()) == action:
+            self.settings.toggleRetro()
+
+    def updateLibraryCount(self):
+        libs = self.settings.libraries
+        if libs:
+            if self.library_selected >= len(libs):
+                self.library_selected = len(libs) - 1
+            current = libs[self.library_selected]
+            self.library_number_label.setText(str(current.position))
+            self.library_name.setText(get_folder_name(current.path))
+        else:
+            self.library_number_label.setText("N")
+            self.library_name.setText("Aucune bibliotheque")
+
+    def updateRetroRecording(self):
+        max_pre = self.settings.getPreSeconds()
+        if self.retro_time_selected > max_pre:
+            self.retro_time_selected = max_pre
+        self._apply_shell_style()
+        self.updateRecordButtonDisplay()
+
+    def _on_recording_state_changed(self, _is_recording: bool):
+        self._apply_shell_style()
+        self.updateRecordButtonDisplay()
+
     def updateRecordButtonDisplay(self):
-        """Met à jour l'affichage du bouton en fonction du mode de rétro-enregistrement et de l'état d'enregistrement."""
-        if self.app_context.recorder.is_recording:
-            if self.retro_time_selected > 0:
-                self.recordButton.setIcon(QIcon())
-                self.recordButton.setText(str(self.retro_time_selected))
-                self.recordButton.setStyleSheet(
-                    "background: black; "
-                    "color: red; "
-                    "border: 1px solid red; "
-                    "border-radius: 8px;"
-                )
-            else:
-                self.recordButton.setIcon(qta.icon('fa5s.microphone', color='red'))
+        is_recording = self.app_context.recorder.is_recording
+        is_retro = self.settings.isRetroEnabled()
+        show_retro_value = is_retro and self.retro_time_selected > 0
+
+        if is_recording:
+            border = self._COLOR_RECORDING
+            icon_color = self._COLOR_RECORDING
+            text_color = self._COLOR_RECORDING
         else:
-            if self.retro_time_selected > 0 and self.settings.isRetroEnabled():
-                # Si le rétro-enregistrement est activé, on affiche le temps restant
-                self.recordButton.setIcon(QIcon())
-                self.recordButton.setText(str(self.retro_time_selected))
-                self.recordButton.setStyleSheet(
-                    "background: black; "
-                    "color: white; "
-                    "border: 1px solid white; "
-                    "border-radius: 8px;"
-                )
-            else:
-                self.recordButton.setIcon(qta.icon('fa5s.microphone', color='white'))
-                self.recordButton.setText("")  # Supprime le texte
+            border = self._COLOR_RETRO if is_retro else self._COLOR_BORDER
+            icon_color = self._COLOR_TEXT
+            text_color = self._COLOR_TEXT
 
+        self.recordButton.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {self._COLOR_BG};
+                color: {text_color};
+                border: 1px solid {border};
+                border-radius: {int(9 * self.scale)}px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                border-color: #ffffff;
+            }}
+            """
+        )
 
+        if show_retro_value:
+            self.recordButton.setIcon(QIcon())
+            self.recordButton.setText(str(self.retro_time_selected))
+        else:
+            self.recordButton.setText("")
+            self.recordButton.setIcon(qta.icon("fa5s.microphone", color=icon_color))
+
+        status = "Enregistrement en cours" if is_recording else "Pret"
+        lib_name = self.library_name.text() if self.library_name.text() else "Aucune bibliotheque"
+        self.recordButton.setToolTip(
+            f"{status}\nBibliotheque: {lib_name}\n"
+            "Clic gauche: start/stop\nClic droit: toggle retro\nMolette: ajuster retro"
+        )
+
+    # ------------------------------------------------------------------ Animations / timers
     def animate_container(self, expand: bool):
-        """Anime le conteneur pour qu'il s'étende vers la droite de 26 pixels ou revienne à sa taille initiale."""
+        base_w = self.base_geometry.width()
+        slot_w = int(28 * self.scale)
+        drag_shift = slot_w
+
+        end_geom = (
+            QRect(self.base_geometry.x(), self.base_geometry.y(), base_w + slot_w, self.base_geometry.height())
+            if expand
+            else self.base_geometry
+        )
+        current_drag_geom = self.drag_area.geometry()
+        end_drag_geom = (
+            QRect(
+                self.drag_areaBase_geometry.x() + drag_shift,
+                self.drag_areaBase_geometry.y(),
+                self.drag_areaBase_geometry.width(),
+                self.drag_areaBase_geometry.height(),
+            )
+            if expand
+            else self.drag_areaBase_geometry
+        )
+
+        if current_drag_geom == end_drag_geom and self.button_container.geometry() == end_geom:
+            return
+
         anim = QPropertyAnimation(self.button_container, b"geometry", self)
-        animDragZone = QPropertyAnimation(self.drag_area, b"geometry", self)
-
-        anim.setDuration(200)  # Durée de l'animation en ms
-        animDragZone.setDuration(200)  # Durée de l'animation en ms
-
-        start_geom = self.button_container.geometry()
-        start_geomDragZone = self.drag_area.geometry()
-
-        if expand:
-            # Augmente la largeur du conteneur et décale la drag_area de 26 pixels vers la droite
-            end_geom = QRect(
-                self.base_geometry.x(),
-                self.base_geometry.y(),
-                self.base_geometry.width() + int(26  * self.scale),
-                self.base_geometry.height()
-            )
-            end_geomDragZone = QRect(
-                start_geomDragZone.x() + int(26 * self.scale),
-                start_geomDragZone.y(),
-                start_geomDragZone.width(),
-                start_geomDragZone.height()
-            )
-        else:
-            # Retour à la géométrie de base
-            end_geom = self.base_geometry
-            end_geomDragZone = self.drag_areaBase_geometry
-
-        anim.setStartValue(start_geom)
+        anim_drag = QPropertyAnimation(self.drag_area, b"geometry", self)
+        anim.setDuration(160)
+        anim_drag.setDuration(160)
+        anim.setStartValue(self.button_container.geometry())
         anim.setEndValue(end_geom)
-
-        animDragZone.setStartValue(start_geomDragZone)
-        animDragZone.setEndValue(end_geomDragZone)
-
+        anim_drag.setStartValue(self.drag_area.geometry())
+        anim_drag.setEndValue(end_drag_geom)
         anim.start()
-        animDragZone.start()
+        anim_drag.start()
+        self.current_animation = anim
+        self.current_animation_drag = anim_drag
 
-        self.current_animation = anim  # Conserver une référence
-        self.current_animation_drag = animDragZone
+    def keep_on_top(self):
+        self.raise_()
 
     def _poll_worker(self):
         for msg, payload in self.app_context.recorder.poll():
-            logger.info(f"record_widget: polling {msg} {payload}")
-            if msg == 'done':
-                logger.info("record_widget: done received from service.")
+            if msg == "done" and payload:
+                self.newSampleRecorded.emit(payload)

@@ -34,10 +34,7 @@ Application audio desktop avec:
 ## Trucs a faire (backlog)
 - Refactor `record_widget.py` (separer UI / logique comme les autres).
 - Refactor les fichiers trop gros
-- Concateneur de samples
 - Modifier l'ui pour le record widget
-- ajouter la capture d'ecran
-- ajouter le ctrl R pour renommer un sample
 - ajouter echape pour annuler le renaming dans le directory widget
 - faire un loader pour la fermeture de l'application
 - Problème: Lorsque je click gauche sur la waveform pendant le playback apres la barre de lecture en mode loop enabled, ça deplace la tete de lecture apres le marqueur de selection, comme si ça faisait playstart + temps de lecture en cours
@@ -50,6 +47,9 @@ Application audio desktop avec:
 
 
 ## Faits
+- Concateneur de samples
+- ajouter le ctrl R pour renommer un sample
+- ajouter la capture d'ecran
 - Clic droit sur la waveform pour lancer la lecture a cet endroit.
 - Refonte UI du Waveform Editor (ergonomie + outils visibles).
 - Refactor `sample_card.py` et `sample_list.py` (alleger + organiser comme Waveform).
