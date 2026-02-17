@@ -112,6 +112,14 @@ h1 {
   font-size: 16px;
 }
 
+.btn.toggle.mega {
+  min-height: 72px;
+  font-size: 24px;
+  font-weight: 700;
+  border-radius: 18px;
+  letter-spacing: 0.4px;
+}
+
 .btn.toggle.start {
   background: #111827;
   color: #ffffff;
@@ -193,9 +201,16 @@ h1 {
   fill: currentColor;
 }
 
-.chips {
-  display: flex;
-  gap: 8px;
+.chips,
+.chip-rail {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chip-rail {
+  overflow: visible;
+  padding-bottom: 0;
 }
 
 .chip {
@@ -214,13 +229,52 @@ h1 {
   border-color: #111827;
 }
 
+.chip-rail .chip {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  font-size: 16px;
+}
+
 .history {
   margin-top: 18px;
 }
 
-.screen-buttons {
+.history-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.tab-btn {
+  border: 1px solid #d7dbe2;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #111827;
+  padding: 10px 12px;
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-btn.active {
+  background: #111827;
+  color: #ffffff;
+  border-color: #111827;
+}
+
+.hidden {
+  display: none;
+}
+
+.screen-buttons,
+.capture-rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }
@@ -228,6 +282,34 @@ h1 {
 .screen-buttons .chip {
   flex: 0 0 auto;
   min-width: 120px;
+}
+
+.capture-rail {
+  overflow: visible;
+  padding-bottom: 0;
+}
+
+.capture-btn {
+  width: 100%;
+  min-width: 0;
+  min-height: 64px;
+  border-radius: 16px;
+  border: 1px solid #d7dbe2;
+  background: #fbfbfc;
+  font-size: 28px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 10px 12px;
+  line-height: 1;
+}
+
+.capture-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.capture-btn:active {
+  transform: translateY(1px);
 }
 
 .shot-item {

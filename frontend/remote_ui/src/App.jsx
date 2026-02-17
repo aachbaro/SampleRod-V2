@@ -32,6 +32,7 @@ export default function App() {
   const [shotRenameValue, setShotRenameValue] = useState("");
   const [shotBusyId, setShotBusyId] = useState(null);
   const [viewerShot, setViewerShot] = useState(null);
+  const [activeTab, setActiveTab] = useState("records");
   const [renameId, setRenameId] = useState(null);
   const [renameValue, setRenameValue] = useState("");
   const [busyId, setBusyId] = useState(null);
@@ -443,9 +444,9 @@ export default function App() {
           </select>
         </section>
 
-        <section className="section">
+        <section className="section record-zone">
           <label className="label">Retro time</label>
-          <div className="chips">
+          <div className="chip-rail">
             {[0, 5, 10, 20].map((value) => (
               <button
                 key={value}
@@ -464,50 +465,55 @@ export default function App() {
 
         <section className="section actions">
           <button
-            className={`btn toggle ${status.is_recording ? "stop" : "start"}`}
+            className={`btn toggle mega ${status.is_recording ? "stop" : "start"}`}
             onClick={toggleRecording}
             disabled={loading || (!selectedId && !status.is_recording)}
           >
-            {status.is_recording ? "Stop" : "Start"}
+            {status.is_recording ? "Stop Recording" : "Start Recording"}
           </button>
         </section>
 
-        <section className="section">
+        <section className="section screenshot-zone">
           <label className="label">Capture d'écran</label>
-          <div className="screen-buttons">
+          <div className="capture-rail">
             {screens.length === 0 && (
               <div className="history-empty">No screens detected.</div>
             )}
             {screens.map((screen) => (
               <button
                 key={screen.index}
-                className="chip"
+                className="capture-btn"
                 onClick={() => captureScreen(screen.index)}
                 disabled={shotBusyId === `capture-${screen.index}`}
+                aria-label={`Capture écran ${screen.index + 1}${screen.name ? ` (${screen.name})` : ""}`}
                 type="button"
               >
-                {screen.name || `Screen ${screen.index + 1}`}
+                {screen.index + 1}
               </button>
             ))}
           </div>
         </section>
 
-        <section className="section status">
-          <div className="stat">
-            <span>Retro</span>
-            <strong>{status.retro_enabled ? "Enabled" : "Disabled"}</strong>
-          </div>
-          <div className="stat">
-            <span>Retro selection</span>
-            <strong>{retroTime}s</strong>
-          </div>
-          <div className="stat">
-            <span>Buffer max</span>
-            <strong>{status.pre_seconds}s</strong>
-          </div>
+        <section className="section history-tabs">
+          <button
+            className={`tab-btn ${activeTab === "records" ? "active" : ""}`}
+            onClick={() => setActiveTab("records")}
+            type="button"
+          >
+            Record history
+            <span className="history-count">{history.length}</span>
+          </button>
+          <button
+            className={`tab-btn ${activeTab === "screenshots" ? "active" : ""}`}
+            onClick={() => setActiveTab("screenshots")}
+            type="button"
+          >
+            Screenshots
+            <span className="history-count">{shots.length}</span>
+          </button>
         </section>
 
-        <section className="section history">
+        <section className={`section history ${activeTab !== "records" ? "hidden" : ""}`}>
           <div className="history-header">
             <h2>History</h2>
             <span className="history-count">{history.length}</span>
@@ -671,7 +677,7 @@ export default function App() {
           ))}
         </section>
 
-        <section className="section screenshots">
+        <section className={`section screenshots ${activeTab !== "screenshots" ? "hidden" : ""}`}>
           <div className="history-header">
             <h2>Screenshots</h2>
             <span className="history-count">{shots.length}</span>
