@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Configuration centralisee du logging application.
+# - Initialise handlers console/fichier avec rotation et format commun.
+#
+# LIENS CLES
+# - app.py
+# - backend/services/recorder_service.py
+# -----------------------------------------------------------------------------
+# utils/logger.py
+
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path

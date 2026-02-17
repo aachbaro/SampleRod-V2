@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Widgets PyQt reutilisables partages par plusieurs ecrans.
+# - Centralise des composants UI custom (DnD, dialogs, sliders, etc.).
+#
+# LIENS CLES
+# - frontend/main_window.py
+# - frontend/settings_gui/libraries_list.py
+# -----------------------------------------------------------------------------
+# frontend/custom_widgets.py
+
 # custom_widgets.py
 
 from PyQt6.QtWidgets import QListWidget, QSlider, QStyle

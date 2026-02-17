@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Worker Qt dedie a la normalisation audio en arriere-plan.
+# - Evite de bloquer l'UI pendant les traitements LUFS/peak.
+#
+# LIENS CLES
+# - backend/services/sample_service.py
+# - frontend/sample_gui/sample/sample_list_normalize.py
+# -----------------------------------------------------------------------------
+# backend/models/normalize_worker.py
+
 # backend/models/normalize_worker.py
 
 import os

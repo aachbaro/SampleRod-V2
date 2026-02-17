@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Pile undo/redo minimale pour les actions waveform.
+# - Stocke les commandes et gere les transitions d'etat utilisateur.
+#
+# LIENS CLES
+# - frontend/sample_gui/waveform/waveform_history.py
+# - frontend/sample_gui/wave_form.py
+# -----------------------------------------------------------------------------
+# frontend/sample_gui/waveform/history_stack.py
+
 class HistoryStack:
     """Simple undo/redo command history."""
 

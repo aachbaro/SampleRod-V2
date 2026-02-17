@@ -67,8 +67,6 @@ class ScreenshotListWidget(QWidget):
         self.container_layout.insertWidget(0, self.empty_label)
 
     def _wire_signals(self):
-        self.svc.screenshotAdded.connect(lambda _id: self.refresh())
-        self.svc.screenshotDeleted.connect(lambda _id: self.refresh())
         self.svc.screenshotsChanged.connect(lambda _items: self.refresh())
 
     # ------------------------------------------------------------------ Data

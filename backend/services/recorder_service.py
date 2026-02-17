@@ -100,7 +100,7 @@ class RecorderService(QObject):
     def onRetroToggled(self, enabled: bool):
         """Slot appelé à chaque fois qu’on active/désactive le rétro."""
         # Met a jour l'etat local et transmet l'ordre au worker
-        logger.info("RecorderService: onRetroToggled called with signal: ", enabled)
+        logger.info("RecorderService: onRetroToggled called with signal: %s", enabled)
         self.retro_enabled = enabled
         if enabled:
             logger.info("RecorderService: retro activé")

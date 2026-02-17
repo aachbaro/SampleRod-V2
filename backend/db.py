@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Configuration de la couche SQLAlchemy (engine, session, Base).
+# - Expose SessionLocal pour les services/modeles backend.
+#
+# LIENS CLES
+# - backend/models/sample.py
+# - backend/models/SampleLibrary.py
+# -----------------------------------------------------------------------------
+# backend/db.py
+
 # backend/db.py
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base

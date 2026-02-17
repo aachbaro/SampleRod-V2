@@ -1,3 +1,16 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Point d'entree principal de l'application desktop.
+# - Initialise logging, base SQLAlchemy, AppContext et UI PyQt.
+# - Assure le shutdown propre des services a la fermeture.
+#
+# LIENS CLES
+# - backend/models/AppContext.py
+# - frontend/main_window.py
+# - utils/logger.py
+# -----------------------------------------------------------------------------
+# app.py
+
 # ./app.py
 
 import sys

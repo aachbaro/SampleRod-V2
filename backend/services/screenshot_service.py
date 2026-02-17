@@ -79,13 +79,14 @@ class ScreenshotService(QObject):
 
         try:
             meta = self._model.capture(screen_index=screen_index)
-            self.screenshotAdded.emit(int(meta["id"]))
-            self.screenshotsChanged.emit(self._model.list_items())
+            # Feedback utilisateur immediat avant les rafraichissements potentiellement lourds.
             self.app_context.notifications.notify(
-                title="Capture enregistrée",
+                title="Capture enregistree",
                 message=f"{meta['filename']}",
                 type=NotificationType.SUCCESS,
             )
+            self.screenshotAdded.emit(int(meta["id"]))
+            self.screenshotsChanged.emit(self._model.list_items())
             return meta
         except Exception as exc:
             logger.error(f"[ScreenshotService] capture error: {exc}")

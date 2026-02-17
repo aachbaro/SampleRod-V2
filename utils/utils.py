@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Utilitaires transverses simples reutilises dans l'application.
+# - Fonctions helpers pour manipulation de chemins et valeurs UI.
+#
+# LIENS CLES
+# - frontend/record_widget.py
+# - backend/services/sample_service.py
+# -----------------------------------------------------------------------------
+# utils/utils.py
+
 import os
 import logging
 logger = logging.getLogger("utils")

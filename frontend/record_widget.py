@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Widget flottant de controle d'enregistrement.
+# - Pilote start/stop, etat retro et feedback visuel temps reel.
+#
+# LIENS CLES
+# - backend/services/recorder_service.py
+# - backend/services/settings_service.py
+# -----------------------------------------------------------------------------
+# frontend/record_widget.py
+
 import logging
 
 from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal

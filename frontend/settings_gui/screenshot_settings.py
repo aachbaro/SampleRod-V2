@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Section Parametres de la fonctionnalite screenshot.
+# - Choix dossier cible, ecran cible et activation des options associees.
+#
+# LIENS CLES
+# - backend/services/screenshot_service.py
+# - backend/services/settings_service.py
+# -----------------------------------------------------------------------------
+# frontend/settings_gui/screenshot_settings.py
+
 from PyQt6.QtWidgets import (
     QWidget,
     QLabel,

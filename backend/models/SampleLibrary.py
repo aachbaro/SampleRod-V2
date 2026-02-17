@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Modele ORM de bibliotheque de samples (table SampleBank).
+# - Fournit les operations CRUD de base pour les librairies audio.
+#
+# LIENS CLES
+# - backend/services/settings_service.py
+# - frontend/settings_gui/libraries_list.py
+# -----------------------------------------------------------------------------
+# backend/models/SampleLibrary.py
+
 from sqlalchemy import Column, Integer, String
 from sqlalchemy.sql import func
 from backend.db import Base, SessionLocal

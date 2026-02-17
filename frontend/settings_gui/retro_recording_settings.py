@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Section Parametres du retro-enregistrement.
+# - Permet de regler duree du buffer et activation globale.
+#
+# LIENS CLES
+# - backend/services/settings_service.py
+# - backend/services/recorder_service.py
+# -----------------------------------------------------------------------------
+# frontend/settings_gui/retro_recording_settings.py
+
 # /backend/settings_gui/retro_recording_settings.py
 
 from PyQt6.QtWidgets import (

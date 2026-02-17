@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Section Parametres Affichage (pagination, densite de liste).
+# - Expose les reglages de presentation de la liste de samples.
+#
+# LIENS CLES
+# - backend/services/settings_service.py
+# - frontend/sample_gui/sample/sample_list.py
+# -----------------------------------------------------------------------------
+# frontend/settings_gui/display_settings.py
+
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QComboBox, QFormLayout, QVBoxLayout
 )

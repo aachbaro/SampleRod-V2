@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Section Parametres pour gerer les bibliotheques de samples.
+# - Ajout, suppression et ordre des dossiers surveilles.
+#
+# LIENS CLES
+# - backend/models/SampleLibrary.py
+# - backend/services/settings_service.py
+# -----------------------------------------------------------------------------
+# frontend/settings_gui/libraries_list.py
+
 # ./frontend/settings_gui/libraries_list.py
 
 

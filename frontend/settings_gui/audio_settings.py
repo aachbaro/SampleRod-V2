@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Section Parametres Audio (sample rate, loopback, normalisation).
+# - Synchronise les choix UI avec SettingsService/RecorderService.
+#
+# LIENS CLES
+# - backend/services/settings_service.py
+# - backend/services/recorder_service.py
+# -----------------------------------------------------------------------------
+# frontend/settings_gui/audio_settings.py
+
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QComboBox, QPushButton, QFormLayout, QVBoxLayout, QHBoxLayout, QMessageBox, QCheckBox, QSpinBox
 )

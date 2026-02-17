@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Gestionnaire UI de la liste de markers/slices pour la waveform.
+# - Gere selection, reorder et drag-and-drop des segments audio.
+#
+# LIENS CLES
+# - frontend/sample_gui/wave_form.py
+# - frontend/right_panel/composer/composer_widget.py
+# -----------------------------------------------------------------------------
+# frontend/sample_gui/marker_manager.py
+
 from PyQt6.QtCore import Qt, QMimeData, QVariantAnimation, QEasingCurve, QEvent, QRectF
 from PyQt6.QtWidgets import QListWidget, QListWidgetItem
 from PyQt6.QtGui import QDrag, QPainter, QPen, QColor

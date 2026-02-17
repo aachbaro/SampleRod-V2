@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Service de gestion des dossiers/samples cote backend.
+# - Liste, deplace, supprime et prepare les actions DnD de fichiers.
+#
+# LIENS CLES
+# - frontend/right_panel/directory/directory_widget.py
+# - backend/services/sample_service.py
+# -----------------------------------------------------------------------------
+# backend/services/directory_service.py
+
 import os
 import shutil
 import pickle

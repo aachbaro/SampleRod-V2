@@ -1,3 +1,15 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Fenetre principale de l'application desktop.
+# - Compose les onglets, panneaux et widgets racine de l'interface.
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_list.py
+# - frontend/right_panel/tools_panel.py
+# - frontend/record_widget.py
+# -----------------------------------------------------------------------------
+# frontend/main_window.py
+
 from PyQt6.QtWidgets import (
     QMainWindow,
     QTabWidget,

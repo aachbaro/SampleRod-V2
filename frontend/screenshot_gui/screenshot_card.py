@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Carte UI representant une capture d'ecran sauvegardee.
+# - Affiche miniature, metadonnees et actions (ouvrir/rename/delete).
+#
+# LIENS CLES
+# - frontend/screenshot_gui/screenshot_list.py
+# - backend/services/screenshot_service.py
+# -----------------------------------------------------------------------------
+# frontend/screenshot_gui/screenshot_card.py
+
 from __future__ import annotations
 
 from datetime import datetime

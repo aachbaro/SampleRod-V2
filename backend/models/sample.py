@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Modele ORM des samples (table Sample).
+# - Contient les operations fichier associees (rename/delete/move).
+#
+# LIENS CLES
+# - backend/services/sample_service.py
+# - frontend/sample_gui/sample/sample_card.py
+# -----------------------------------------------------------------------------
+# backend/models/sample.py
+
 # /backend/models/sample.py
 
 import os

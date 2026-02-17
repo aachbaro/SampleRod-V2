@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Thread de chargement et reduction de waveform en fond.
+# - Retourne des donnees pretes a afficher sans bloquer l'UI.
+#
+# LIENS CLES
+# - frontend/sample_gui/wave_form.py
+# - frontend/sample_gui/waveform/waveform_renderer.py
+# -----------------------------------------------------------------------------
+# frontend/sample_gui/waveform/waveform_loader.py
+
 from PyQt6.QtCore import QThread, pyqtSignal
 import numpy as np
 import librosa

@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Section Parametres du controle distant (serveur HTTP local).
+# - Affiche etat, URL/QR code et actions de rafraichissement.
+#
+# LIENS CLES
+# - backend/services/remote_control_service.py
+# - backend/services/settings_service.py
+# -----------------------------------------------------------------------------
+# frontend/settings_gui/remote_control_settings.py
+
 from PyQt6.QtWidgets import (
     QWidget,
     QLabel,
