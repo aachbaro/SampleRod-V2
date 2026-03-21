@@ -12,26 +12,18 @@
 # FLUX GLOBAL
 # UI -> SampleService -> (FS + DB) -> signaux Qt -> UI
 # -----------------------------------------------------------------------------
-# Qt: base QObject + signaux pour notifier l'UI
 from PySide6.QtCore import QObject, Signal
-# SQLAlchemy: gestion des erreurs DB
 from sqlalchemy.exc import SQLAlchemyError
-# Acces a la session DB
 from backend.db import SessionLocal
-# Modele Sample (logique fichier + DB)
 from backend.models.sample import Sample
-# Worker de normalisation audio
 from backend.models.normalize_worker import NormalizeWorker
-# Types de notifications UI
+from backend.models.integrity_worker import IntegrityCheckWorker
 from backend.services.notification_service import NotificationType
-# OS: operations sur fichiers (rename/delete/etc.)
 import os
-# wave: lecture d'en-tetes WAV pour la duree
 import wave
 import soundfile as sf
-# Logging pour tracer les operations
 import logging
-# Logger specifique au service
+
 logger = logging.getLogger("sample_service")
 
 class SampleService(QObject):
@@ -745,58 +737,3 @@ class SampleService(QObject):
                         if chunk is None or len(chunk) == 0:
                             break
                         out.write(chunk)
-
-# -----------------------------------------------------------------------------
-# Worker de coherence DB/FS (thread Qt)
-# -----------------------------------------------------------------------------
-from PySide6.QtCore import QThread, Signal
-import os, wave
-
-class IntegrityCheckWorker(QThread):
-    """Vérifie que la DB et les fichiers sont cohérents."""
-    durationMismatch = Signal(int, float)   # (sample_id, new_duration)
-    fileMissing      = Signal(int)          # sample_id
-
-    def __init__(self, app_context):
-        super().__init__()
-        self.app_context = app_context
-
-    def run(self):
-        session = SessionLocal()
-        try:
-            samples = session.query(Sample).all()
-            for samp in samples:
-                sid = samp.id
-                path = samp.path
-                # 1) Fichier manquant ?
-                if not os.path.isfile(path):
-                    self.fileMissing.emit(sid)
-                    # ▶ Notification warning
-                    self.app_context.notifications.notify(
-                        title="⚠️ Fichier manquant",
-                        message=f"Pour sample #{sid}, entrée supprimée",
-                        type=NotificationType.WARNING
-                    )
-                    continue
-
-                # 2) Vérifier la vraie durée
-                try:
-                    with wave.open(path, 'rb') as w:
-                        real_dur = w.getnframes() / w.getframerate()
-                except Exception:
-                    continue
-
-                # 3) Si écart > 0.1s, on corrige en DB
-                if abs(real_dur - samp.duration) > 0.1:
-                    session_inst = session.get(Sample, sid)
-                    session_inst.duration = real_dur
-                    session.commit()
-                    self.durationMismatch.emit(sid, real_dur)
-                    # ▶ Notification info
-                    self.app_context.notifications.notify(
-                        title="ℹ️ Durée corrigée",
-                        message=f"Sample #{sid} → {real_dur:.1f}s",
-                        type=NotificationType.INFO
-                    )
-        finally:
-            session.close()
