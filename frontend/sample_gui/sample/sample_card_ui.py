@@ -431,12 +431,12 @@ class SampleCardUIBuilder:
         card.setStyleSheet(f"""
         SampleCard {{
             background-color: {p.BG_MEDIUM};
-            border: 1px solid {p.BORDER};
+            border: 1px solid {p.BORDER_LIGHT};
             border-radius: 10px;
         }}
         SampleCard:hover {{
             background-color: {p.BG_HOVER};
-            border-color: {p.BORDER_LIGHT};
+            border-color: {p.BORDER};
         }}
         SampleCard[focused="true"] {{
             border: 1px solid {p.WARNING};
@@ -485,9 +485,9 @@ class SampleCardUIBuilder:
             border-radius: 4px;
         }}
         QComboBox#DirCombo {{
-            background-color: {p.BG_MEDIUM};
-            color: {p.TEXT};
-            border: 1px solid {p.BORDER};
+            background-color: transparent;
+            color: {p.TEXT_MUTED};
+            border: none;
             padding: 2px 6px;
             border-radius: 4px;
         }}

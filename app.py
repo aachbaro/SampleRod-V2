@@ -93,6 +93,11 @@ if __name__ == '__main__':
         sys.exit(0)
     gui = QApplication(sys.argv)
 
+    # Appliquer le theme global des le debut pour que le splash
+    # herite deja des bons styles (evite le QFont::setPointSize warning).
+    from frontend.styles import theme as _theme
+    _theme.manager.apply()
+
     splash = SplashScreen()
     splash.show()
     QApplication.processEvents()

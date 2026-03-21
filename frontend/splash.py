@@ -8,7 +8,7 @@
 
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QApplication
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtGui import QGuiApplication
 
 
 class SplashScreen(QWidget):
@@ -29,10 +29,7 @@ class SplashScreen(QWidget):
         layout.setSpacing(0)
 
         self._title = QLabel("SampleRod")
-        title_font = QFont()
-        title_font.setPointSize(26)
-        title_font.setWeight(QFont.Weight.Bold)
-        self._title.setFont(title_font)
+        self._title.setObjectName("SplashTitle")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self._status = QLabel("Demarrage...")
@@ -56,6 +53,10 @@ class SplashScreen(QWidget):
                 background: transparent;
                 border: none;
                 color: #f2f2f2;
+            }
+            QLabel#SplashTitle {
+                font-size: 28px;
+                font-weight: bold;
             }
             QLabel#SplashStatus {
                 color: #8d95a3;

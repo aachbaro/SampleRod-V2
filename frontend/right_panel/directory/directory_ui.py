@@ -215,12 +215,12 @@ def apply_styles(widget) -> None:
 
         QWidget#DirectoryRow {{
             background-color: {p.BG_MEDIUM};
-            border: 1px solid {p.BORDER};
+            border: 1px solid {p.BORDER_LIGHT};
             border-radius: 10px;
         }}
         QWidget#DirectoryRow:hover {{
             background-color: {p.BG_HOVER};
-            border-color: {p.BORDER_LIGHT};
+            border-color: {p.BORDER};
         }}
 
         QLabel#DirectoryItemName {{

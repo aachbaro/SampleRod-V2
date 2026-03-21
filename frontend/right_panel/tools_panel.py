@@ -108,7 +108,7 @@ class RightToolsPanel(QWidget):
             QWidget#DirectoryToolCard,
             QWidget#ComposerToolCard {{
                 background-color: {p.BG_MEDIUM};
-                border: 1px solid {p.BORDER};
+                border: 1px solid {p.BORDER_LIGHT};
                 border-radius: 10px;
             }}
 
