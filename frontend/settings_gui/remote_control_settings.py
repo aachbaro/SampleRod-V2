@@ -9,7 +9,7 @@
 # -----------------------------------------------------------------------------
 # frontend/settings_gui/remote_control_settings.py
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget,
     QLabel,
     QVBoxLayout,
@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QFormLayout,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from pathlib import Path
 from io import BytesIO
 import socket

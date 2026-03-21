@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QTimer
+from PySide6.QtCore import QTimer
 import qtawesome as qta
 
 

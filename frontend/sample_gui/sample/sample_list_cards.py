@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import QEasingCurve, QPropertyAnimation
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation
 
 from frontend.sample_gui.sample.sample_card import SampleCard
 

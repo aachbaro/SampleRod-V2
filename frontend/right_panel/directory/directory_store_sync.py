@@ -34,7 +34,7 @@ import os
 import logging
 from typing import Any
 
-from PyQt6.QtCore import QObject
+from PySide6.QtCore import QObject
 
 logger = logging.getLogger("directory_store_sync")
 

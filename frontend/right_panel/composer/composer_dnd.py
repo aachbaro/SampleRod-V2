@@ -32,7 +32,7 @@ import pickle
 from typing import Any
 
 import numpy as np
-from PyQt6.QtCore import QMimeData
+from PySide6.QtCore import QMimeData
 
 logger = logging.getLogger("sample_composer_dnd")
 

@@ -13,15 +13,15 @@
 # - Protéger l'UX: drag gauche utilisé pour la sélection, pas pour le pan.
 #
 # DEPENDANCES
-# - PyQt6 (Qt, QMenu, QCursor)
+# - PySide6 (Qt, QMenu, QCursor)
 # - pyqtgraph
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCursor
-from PyQt6.QtWidgets import QMenu
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QCursor
+from PySide6.QtWidgets import QMenu
 import pyqtgraph as pg
 
 

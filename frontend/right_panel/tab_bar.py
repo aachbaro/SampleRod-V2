@@ -14,9 +14,9 @@ Actuellement:
 from __future__ import annotations
 
 import qtawesome as qta
-from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
-from PyQt6.QtWidgets import QTabBar, QToolButton
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QTabBar, QToolButton
 
 
 class HoverCloseTabBar(QTabBar):
@@ -26,7 +26,7 @@ class HoverCloseTabBar(QTabBar):
     - apparait en rouge quand on survole l'onglet
     """
 
-    closeRequested = pyqtSignal(int)
+    closeRequested = Signal(int)
 
     def __init__(
         self,

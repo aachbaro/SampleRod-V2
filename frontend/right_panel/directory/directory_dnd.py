@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PyQt6.QtCore import QMimeData
+from PySide6.QtCore import QMimeData
 
 logger = logging.getLogger("directory_dnd")
 

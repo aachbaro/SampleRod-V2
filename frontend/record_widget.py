@@ -11,9 +11,9 @@
 
 import logging
 
-from PyQt6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, pyqtSignal
-from PyQt6.QtGui import QIcon, QCursor
-from PyQt6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu
+from PySide6.QtCore import Qt, QPoint, QTimer, QPropertyAnimation, QEvent, QRect, QSize, Signal
+from PySide6.QtGui import QIcon, QCursor
+from PySide6.QtWidgets import QMainWindow, QPushButton, QWidget, QLabel, QMenu
 import qtawesome as qta
 
 from utils.utils import get_folder_name
@@ -26,7 +26,7 @@ logger = logging.getLogger("record_widget")
 class RecordWidgetWindow(QMainWindow):
     """Floating recorder control (always on top)."""
 
-    newSampleRecorded = pyqtSignal(str)
+    newSampleRecorded = Signal(str)
 
     # Palette proche du reste de l'app
     _COLOR_BG = "#16181b"

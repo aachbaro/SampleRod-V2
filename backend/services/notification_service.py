@@ -28,7 +28,7 @@
 Service centralise d'envoi et de diffusion des notifications
 """
 # Qt: QObject + signaux
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 # Dataclass pour le modele Notification
 from dataclasses import dataclass
 # Enum pour les types de notification
@@ -64,7 +64,7 @@ class NotificationService(QObject):
     """Service Qt pour gérer la création et la diffusion des notifications"""
 
     # Signal emis lors de l'ajout d'une notification (envoie l'objet Notification)
-    notificationAdded = pyqtSignal(object)
+    notificationAdded = Signal(object)
 
     def __init__(self):
         super().__init__()

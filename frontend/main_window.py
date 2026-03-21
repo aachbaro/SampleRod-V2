@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------
 # frontend/main_window.py
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QMainWindow,
     QTabWidget,
     QWidget,
@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QScrollArea,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QShortcut, QKeySequence
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QShortcut, QKeySequence
 import logging
 logger = logging.getLogger("main_window")
 

@@ -25,7 +25,7 @@
 #
 # DEPENDANCES
 # - numpy, pyqtgraph, soundfile
-# - PyQt6 (QMessageBox)
+# - PySide6 (QMessageBox)
 # - backend.models.sample.DBSample (id pour export)
 #
 # IDEES / TODO
@@ -41,8 +41,8 @@ import bisect
 import numpy as np
 import pyqtgraph as pg
 import soundfile as sf
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox
 
 from backend.models.sample import Sample as DBSample
 

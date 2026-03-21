@@ -9,7 +9,7 @@
 # -----------------------------------------------------------------------------
 # frontend/settings_gui/screenshot_settings.py
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget,
     QLabel,
     QVBoxLayout,
@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QLineEdit,
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 import logging
 
 from backend.models.AppContext import AppContext

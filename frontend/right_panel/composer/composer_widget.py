@@ -38,9 +38,9 @@ import logging
 import os
 
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QEvent, QThread, pyqtSignal, QSettings
-from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QWidget, QListWidgetItem, QApplication, QFileDialog
+from PySide6.QtCore import Qt, QEvent, QThread, Signal, QSettings
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import QWidget, QListWidgetItem, QApplication, QFileDialog
 
 from frontend.sample_gui.wave_form import WaveformWidget
 from frontend.sample_gui.waveform.waveform_plot_helpers import ContextMenuLinearRegionItem
@@ -705,8 +705,8 @@ class SampleComposerWidget(QWidget):
 
 
 class _ComposerSampleLoader(QThread):
-    loaded = pyqtSignal(int, object, int, str, dict)
-    failed = pyqtSignal(int, str)
+    loaded = Signal(int, object, int, str, dict)
+    failed = Signal(int, str)
 
     def __init__(self, sample_id: int, path: str, name: str, parent=None):
         super().__init__(parent)

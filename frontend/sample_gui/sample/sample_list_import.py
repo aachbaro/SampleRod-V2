@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import os
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 
 class SampleListImport:

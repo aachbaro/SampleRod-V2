@@ -30,8 +30,8 @@ from __future__ import annotations
 import os
 import logging
 
-from PyQt6.QtCore import Qt, QSettings
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QFileDialog
+from PySide6.QtCore import Qt, QSettings
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QFileDialog
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from frontend.right_panel.tab_bar import HoverCloseTabBar

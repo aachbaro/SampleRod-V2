@@ -9,7 +9,7 @@
 # -----------------------------------------------------------------------------
 # frontend/sample_gui/waveform/waveform_loader.py
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 import numpy as np
 import librosa
 import logging
@@ -18,7 +18,7 @@ logger = logging.getLogger("waveform_loader")
 class WaveformLoaderThread(QThread):
     """Background thread loading a waveform from disk."""
 
-    waveformReady = pyqtSignal(np.ndarray, int, float)
+    waveformReady = Signal(np.ndarray, int, float)
 
     def __init__(self, path: str):
         super().__init__()

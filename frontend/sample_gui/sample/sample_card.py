@@ -22,9 +22,9 @@ Controleurs utilises
 - SampleCardStatus        : updates simples (nom/duree).
 """
 
-from PyQt6.QtCore import pyqtSignal, Qt, QEvent
-from PyQt6.QtGui import QKeySequence, QShortcut
-from PyQt6.QtWidgets import QWidget, QAbstractButton, QLineEdit, QComboBox, QSlider
+from PySide6.QtCore import Signal, Qt, QEvent
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import QWidget, QAbstractButton, QLineEdit, QComboBox, QSlider
 import logging
 import os
 
@@ -45,17 +45,17 @@ class SampleCard(QWidget):
     """Carte UI d'un sample, avec sous-controleurs pour chaque domaine."""
 
     # ---- Signaux
-    deleteSample       = pyqtSignal(int)          # emet l'ID du sample a supprimer
-    renameSample       = pyqtSignal(int, str)     # emet (ID, nouveau nom)
-    playSample         = pyqtSignal(object)       # emet l'objet Sample a jouer
-    sampleMoved        = pyqtSignal(int, str)     # emet (ID, nouveau dossier)
-    newSampleSaved     = pyqtSignal(str)          # emet le path quand on sauvegarde
-    normalizeClicked   = pyqtSignal(int)          # emet l'ID pour normaliser manuellement
-    selectionChanged   = pyqtSignal(int, bool)    # nouveau signal : emet (ID du sample, etat coche)
-    removeFromHistory  = pyqtSignal(int)          # emet l'ID du sample a retirer de l'historique
-    concatWithPrevious = pyqtSignal(int)          # emet l'ID (sample courant) a concatener avec precedent
-    dismissConcat      = pyqtSignal(int)          # emet l'ID (sample courant) pour ignorer la concat
-    concatPreviewHoverChanged = pyqtSignal(
+    deleteSample       = Signal(int)          # emet l'ID du sample a supprimer
+    renameSample       = Signal(int, str)     # emet (ID, nouveau nom)
+    playSample         = Signal(object)       # emet l'objet Sample a jouer
+    sampleMoved        = Signal(int, str)     # emet (ID, nouveau dossier)
+    newSampleSaved     = Signal(str)          # emet le path quand on sauvegarde
+    normalizeClicked   = Signal(int)          # emet l'ID pour normaliser manuellement
+    selectionChanged   = Signal(int, bool)    # nouveau signal : emet (ID du sample, etat coche)
+    removeFromHistory  = Signal(int)          # emet l'ID du sample a retirer de l'historique
+    concatWithPrevious = Signal(int)          # emet l'ID (sample courant) a concatener avec precedent
+    dismissConcat      = Signal(int)          # emet l'ID (sample courant) pour ignorer la concat
+    concatPreviewHoverChanged = Signal(
         int, bool, object
     )  # (sample_id, hover_active, prev_id|None)
 

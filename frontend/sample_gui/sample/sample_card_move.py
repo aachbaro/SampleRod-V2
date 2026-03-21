@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 
-from PyQt6.QtWidgets import QFileDialog
+from PySide6.QtWidgets import QFileDialog
 
 logger = logging.getLogger("sample_card")
 

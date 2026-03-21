@@ -5,7 +5,7 @@ Onglet UI pour afficher les captures d'ecran en cards.
 Calque sur l'esprit SampleList/SampleCard (liste + cartes + actions).
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QScrollArea,
@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
 )
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from backend.models.AppContext import AppContext
 from frontend.screenshot_gui.screenshot_card import ScreenshotCard

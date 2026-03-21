@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation
-from PyQt6.QtGui import QPainter, QColor, QPen
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal, QPropertyAnimation
+from PySide6.QtGui import QPainter, QColor, QPen
+from PySide6.QtWidgets import (
     QListWidget,
     QWidget,
     QHBoxLayout,
@@ -39,9 +39,9 @@ logger = logging.getLogger("sample_composer_clip_list")
 
 
 class ComposerClipListWidget(QListWidget):
-    sliceDropped = pyqtSignal(object)  # dict payload normalise
-    sampleCardDropped = pyqtSignal(object)  # dict payload (sample_id)
-    orderChanged = pyqtSignal(object)  # list[int] clip_ids
+    sliceDropped = Signal(object)  # dict payload normalise
+    sampleCardDropped = Signal(object)  # dict payload (sample_id)
+    orderChanged = Signal(object)  # list[int] clip_ids
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -126,10 +126,10 @@ class ComposerClipRow(QWidget):
     - bouton delete (retire la slice du compositeur)
     """
 
-    playRequested = pyqtSignal(int)
-    silenceRequested = pyqtSignal(int)
-    removeRequested = pyqtSignal(int)
-    clicked = pyqtSignal()
+    playRequested = Signal(int)
+    silenceRequested = Signal(int)
+    removeRequested = Signal(int)
+    clicked = Signal()
 
     def __init__(self, clip_id: int, label: str, parent=None):
         super().__init__(parent)

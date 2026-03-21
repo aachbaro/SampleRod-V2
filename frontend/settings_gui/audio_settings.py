@@ -9,10 +9,10 @@
 # -----------------------------------------------------------------------------
 # frontend/settings_gui/audio_settings.py
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QLabel, QComboBox, QPushButton, QFormLayout, QVBoxLayout, QHBoxLayout, QMessageBox, QCheckBox, QSpinBox
 )
-from PyQt6.QtCore import pyqtSignal, QTimer
+from PySide6.QtCore import Signal, QTimer
 import sounddevice as sd
 
 from backend.services.settings_service import SettingsService
@@ -32,8 +32,8 @@ class AudioSettingsWidget(QWidget):
     """
     Un widget de paramètres audio : sample rate, micro en loopback, etc.
     """
-    sampleRateChanged     = pyqtSignal(int)
-    loopbackDeviceChanged = pyqtSignal(object)
+    sampleRateChanged     = Signal(int)
+    loopbackDeviceChanged = Signal(object)
 
     def __init__(self, app_context: AppContext, parent=None):
         super().__init__(parent)

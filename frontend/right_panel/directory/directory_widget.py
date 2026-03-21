@@ -42,8 +42,8 @@ Ce decoupage prepare l'arrivee d'autres outils dans le Right Panel (ex: Sample C
 ------------------------------------------------------------------------------
 """
 
-from PyQt6.QtWidgets import QWidget, QSizePolicy, QListWidgetItem
-from PyQt6.QtCore import pyqtSignal, QSettings
+from PySide6.QtWidgets import QWidget, QSizePolicy, QListWidgetItem
+from PySide6.QtCore import Signal, QSettings
 import wave
 
 from backend.services.directory_service import DirectoryService
@@ -61,7 +61,7 @@ logger = logging.getLogger("directory_widget")
 class DirectoryWidget(QWidget):
     """Widget UI pour importer / pre-ecouter / renommer / supprimer des samples dans un dossier."""
     # Signal émis quand on change de dossier
-    directoryChanged = pyqtSignal(str)
+    directoryChanged = Signal(str)
 
     def __init__(self, service: DirectoryService, app_context: AppContext, parent=None, path: str | None = None):
         super().__init__(parent)

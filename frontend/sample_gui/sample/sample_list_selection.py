@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import os
 
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from backend.models.normalize_worker import NormalizeWorker
 

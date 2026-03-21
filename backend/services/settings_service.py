@@ -27,9 +27,9 @@
 # -----------------------------------------------------------------------------
 # settings_service.py
 # Qt: QObject + signaux
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 # QSettings: persistance des preferences
-from PyQt6.QtCore import QSettings
+from PySide6.QtCore import QSettings
 # SampleBank: gestion des librairies
 from backend.models.SampleLibrary import SampleBank
 # DB session (utilisee par SampleBank)
@@ -47,19 +47,19 @@ logger = logging.getLogger("settings_service")
 
 class SettingsService(QObject):
     # Signaux emis pour synchroniser UI et services
-    retroToggled      = pyqtSignal(bool)
-    preSecondsChanged = pyqtSignal(int)
-    librariesChanged  = pyqtSignal(list)
-    sampleRateChanged = pyqtSignal(int)
-    loopbackDeviceChanged = pyqtSignal(object)
-    autoNormalizeToggled   = pyqtSignal(bool)
-    normalizationLevelChanged = pyqtSignal(int)
-    samplesPerPageChanged = pyqtSignal(int)
-    remoteControlToggled = pyqtSignal(bool)
-    remoteControlPortChanged = pyqtSignal(int)
-    screenshotToggled = pyqtSignal(bool)
-    screenshotLibraryChanged = pyqtSignal(str)
-    screenshotDefaultScreenChanged = pyqtSignal(int)
+    retroToggled      = Signal(bool)
+    preSecondsChanged = Signal(int)
+    librariesChanged  = Signal(list)
+    sampleRateChanged = Signal(int)
+    loopbackDeviceChanged = Signal(object)
+    autoNormalizeToggled   = Signal(bool)
+    normalizationLevelChanged = Signal(int)
+    samplesPerPageChanged = Signal(int)
+    remoteControlToggled = Signal(bool)
+    remoteControlPortChanged = Signal(int)
+    screenshotToggled = Signal(bool)
+    screenshotLibraryChanged = Signal(str)
+    screenshotDefaultScreenChanged = Signal(int)
 
     def __init__(self, app_context):
         super().__init__()

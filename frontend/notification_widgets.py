@@ -7,15 +7,15 @@ Contient les widgets pour afficher les notifications :
 - NotificationManager : contrôleur qui relie le service aux widgets
 """
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QFrame, QLabel, QVBoxLayout, QListWidget, QPushButton,
     QHBoxLayout, QScrollArea
 )
-from PyQt6.QtCore import (
-    Qt, QTimer, pyqtSignal, pyqtSlot,
+from PySide6.QtCore import (
+    Qt, QTimer, Signal, Slot,
     QPropertyAnimation, QEasingCurve, QObject, QRect
 )
-from PyQt6.QtGui import QFont
+from PySide6.QtGui import QFont
 
 from backend.services.notification_service import NotificationService, Notification, NotificationType
 
@@ -159,7 +159,7 @@ class NotificationCenter(QWidget):
 
         self.resize(300, 400)
 
-    @pyqtSlot(Notification)
+    @Slot(Notification)
     def add_notification(self, notification: Notification):
         """Ajoute une notification à la liste et rafraîchit l'affichage."""
         text = f"[{notification.timestamp.strftime('%H:%M:%S')}] {notification.title} – {notification.message}"
@@ -193,7 +193,7 @@ class NotificationManager(QObject):
         """Associe un NotificationCenter pour y dupliquer les notifications."""
         self.center = center
 
-    @pyqtSlot(Notification)
+    @Slot(Notification)
     def _on_new_notification(self, notification: Notification):
         # Ajout au centre
         if self.center:

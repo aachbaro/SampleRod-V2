@@ -13,7 +13,7 @@
 # UI -> SampleService -> (FS + DB) -> signaux Qt -> UI
 # -----------------------------------------------------------------------------
 # Qt: base QObject + signaux pour notifier l'UI
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 # SQLAlchemy: gestion des erreurs DB
 from sqlalchemy.exc import SQLAlchemyError
 # Acces a la session DB
@@ -44,26 +44,26 @@ class SampleService(QObject):
     Émet des signaux pour permettre à l’UI de se mettre à jour.
     """
     # Signaux emis pour que l'UI se mette a jour sans recharger tout le cache
-    sampleAdded = pyqtSignal(int)            # émet l’ID du sample ajouté
-    samplesChanged = pyqtSignal(list)        # émet la liste complète des Sample
-    sampleDeleted  = pyqtSignal(int)         # émet l’ID supprimé
+    sampleAdded = Signal(int)            # émet l’ID du sample ajouté
+    samplesChanged = Signal(list)        # émet la liste complète des Sample
+    sampleDeleted  = Signal(int)         # émet l’ID supprimé
     # Emis après un renommage. Fournit l'ID du sample, l'ancien chemin complet
     # et le nouveau chemin complet pour permettre la mise à jour de toutes les
     # vues sans avoir à recharger la liste complète.
-    sampleRenamed  = pyqtSignal(int, str, str)    # émet (ID, ancien chemin, nouveau chemin)
-    sampleMoved    = pyqtSignal(int, str)    # émet (ID, nouveau dossier)
-    sampleDurationChanged = pyqtSignal(int, float)  # émet (ID, nouvelle durée)
-    sampleStartedNormalization  = pyqtSignal(int)      # émet l’ID du sample en cours de normalisation
-    sampleFinishedNormalization = pyqtSignal(int)       # émet l’ID du sample normalisé
-    sampleNormalizationFailed   = pyqtSignal(int, str)  # émet (ID, message d’erreur)
-    sampleRemovedFromHistory = pyqtSignal(int)          # émet l’ID du sample retiré de l’historique
+    sampleRenamed  = Signal(int, str, str)    # émet (ID, ancien chemin, nouveau chemin)
+    sampleMoved    = Signal(int, str)    # émet (ID, nouveau dossier)
+    sampleDurationChanged = Signal(int, float)  # émet (ID, nouvelle durée)
+    sampleStartedNormalization  = Signal(int)      # émet l’ID du sample en cours de normalisation
+    sampleFinishedNormalization = Signal(int)       # émet l’ID du sample normalisé
+    sampleNormalizationFailed   = Signal(int, str)  # émet (ID, message d’erreur)
+    sampleRemovedFromHistory = Signal(int)          # émet l’ID du sample retiré de l’historique
 
     # Runtime only: indique si un sample courant peut etre concatene avec son precedent
-    sampleConcatCandidateChanged = pyqtSignal(
+    sampleConcatCandidateChanged = Signal(
         int, bool, object
     )  # (sample_id, enabled, prev_id|None)
     # Verrou temporaire de normalisation (pendant la fenetre de decision de concat)
-    sampleNormalizationLockChanged = pyqtSignal(int, bool)  # (sample_id, locked)
+    sampleNormalizationLockChanged = Signal(int, bool)  # (sample_id, locked)
     def __init__(self, app_context):
         super().__init__()
         # Initialisation du service et du cache
@@ -749,13 +749,13 @@ class SampleService(QObject):
 # -----------------------------------------------------------------------------
 # Worker de coherence DB/FS (thread Qt)
 # -----------------------------------------------------------------------------
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 import os, wave
 
 class IntegrityCheckWorker(QThread):
     """Vérifie que la DB et les fichiers sont cohérents."""
-    durationMismatch = pyqtSignal(int, float)   # (sample_id, new_duration)
-    fileMissing      = pyqtSignal(int)          # sample_id
+    durationMismatch = Signal(int, float)   # (sample_id, new_duration)
+    fileMissing      = Signal(int)          # sample_id
 
     def __init__(self, app_context):
         super().__init__()

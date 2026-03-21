@@ -43,8 +43,8 @@
 
 import logging
 
-from PyQt6.QtWidgets import QWidget
-from PyQt6.QtCore import Qt, pyqtSignal
+from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import Qt, Signal
 import pyqtgraph as pg
 import qtawesome as qta
 
@@ -68,9 +68,9 @@ from .waveform.waveform_plot_helpers import ContextMenuLinearRegionItem, NoLeftD
 logger = logging.getLogger("waveform_widget")
 
 class WaveformWidget(QWidget):
-    stop_timer_signal = pyqtSignal()
-    waveformSaved    = pyqtSignal(str)
-    positionUpdated = pyqtSignal(float)
+    stop_timer_signal = Signal()
+    waveformSaved    = Signal(str)
+    positionUpdated = Signal(float)
 
 # -- Construction & état (core)
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————

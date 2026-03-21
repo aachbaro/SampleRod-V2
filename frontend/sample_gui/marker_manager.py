@@ -9,9 +9,9 @@
 # -----------------------------------------------------------------------------
 # frontend/sample_gui/marker_manager.py
 
-from PyQt6.QtCore import Qt, QMimeData, QVariantAnimation, QEasingCurve, QEvent, QRectF
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem
-from PyQt6.QtGui import QDrag, QPainter, QPen, QColor
+from PySide6.QtCore import Qt, QMimeData, QVariantAnimation, QEasingCurve, QEvent, QRectF
+from PySide6.QtWidgets import QListWidget, QListWidgetItem
+from PySide6.QtGui import QDrag, QPainter, QPen, QColor
 import pyqtgraph as pg
 import numpy as np
 import bisect

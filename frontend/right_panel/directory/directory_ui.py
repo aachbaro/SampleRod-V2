@@ -27,8 +27,8 @@ from __future__ import annotations
 import os
 
 import qtawesome as qta
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 

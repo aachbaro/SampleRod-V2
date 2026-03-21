@@ -17,13 +17,13 @@
 #
 # DEPENDANCES
 # - pyqtgraph
-# - PyQt6 (Qt)
+# - PySide6 (Qt)
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 
 class WaveformNavigationController:

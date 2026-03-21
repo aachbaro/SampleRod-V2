@@ -22,7 +22,7 @@
 # - Logique de selection/cut/export (WaveformRegionController).
 #
 # DEPENDANCES
-# - PyQt6 (Qt, QListWidgetItem)
+# - PySide6 (Qt, QListWidgetItem)
 # - pyqtgraph (InfiniteLine)
 # - qtawesome (icones chargees par le UI builder)
 # -----------------------------------------------------------------------------
@@ -32,8 +32,8 @@ from __future__ import annotations
 import logging
 import bisect
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QListWidgetItem
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QListWidgetItem
 
 logger = logging.getLogger("waveform_markers")
 

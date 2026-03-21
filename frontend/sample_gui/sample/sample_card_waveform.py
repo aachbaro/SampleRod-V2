@@ -8,8 +8,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
-from PyQt6.QtWidgets import QGraphicsOpacityEffect
+from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+from PySide6.QtWidgets import QGraphicsOpacityEffect
 
 from frontend.sample_gui.wave_form import WaveformWidget
 

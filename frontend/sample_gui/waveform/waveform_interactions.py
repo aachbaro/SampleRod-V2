@@ -23,7 +23,7 @@
 # - Aucun rendu de waveform (delegue a WaveformWidget).
 #
 # DEPENDANCES
-# - PyQt6 (QEvent, Qt)
+# - PySide6 (QEvent, Qt)
 # - pyqtgraph (LinearRegionItem via region_cls)
 # - numpy (convertit scene -> temps)
 #
@@ -36,7 +36,7 @@
 import logging
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent
 
 logger = logging.getLogger("waveform_interactions")
 

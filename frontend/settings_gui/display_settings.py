@@ -9,10 +9,10 @@
 # -----------------------------------------------------------------------------
 # frontend/settings_gui/display_settings.py
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QLabel, QComboBox, QFormLayout, QVBoxLayout
 )
-from PyQt6.QtCore import pyqtSignal
+from PySide6.QtCore import Signal
 from backend.services.settings_service import SettingsService
 
 import logging
@@ -20,7 +20,7 @@ logger = logging.getLogger("display_settings")
 
 class DisplaySettingsWidget(QWidget):
     """Widget pour configurer l'affichage des samples."""
-    samplesPerPageChanged = pyqtSignal(int)
+    samplesPerPageChanged = Signal(int)
 
     def __init__(self, settings: SettingsService, parent=None):
         super().__init__(parent)

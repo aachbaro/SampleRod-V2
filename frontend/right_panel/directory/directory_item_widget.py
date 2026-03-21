@@ -27,7 +27,7 @@ import os
 import logging
 from typing import Any
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget,
     QMessageBox,
 )

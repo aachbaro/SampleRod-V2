@@ -11,18 +11,18 @@
 
 # /backend/settings_gui/retro_recording_settings.py
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QLabel, QSpinBox, QPushButton,
     QVBoxLayout, QHBoxLayout, QCheckBox
 )
-from PyQt6.QtCore import pyqtSignal
+from PySide6.QtCore import Signal
 from backend.services.settings_service import SettingsService
 
 import logging
 logger = logging.getLogger("retro_recording")
 
 class RetroRecordingWidget(QWidget):
-    retroRecordingUpdated = pyqtSignal()
+    retroRecordingUpdated = Signal()
 
     def __init__(self, settingsService: SettingsService, parent=None):
         super().__init__(parent)

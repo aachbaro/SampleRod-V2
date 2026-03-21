@@ -12,12 +12,12 @@
 # ./frontend/settings_gui/libraries_list.py
 
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, 
     QHBoxLayout, QFrame, QScrollArea, QGroupBox, QComboBox, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QRect, QThread, QSettings, pyqtSlot
-from PyQt6.QtGui import QIcon
+from PySide6.QtCore import Qt, Signal, QObject, QRect, QThread, QSettings, Slot
+from PySide6.QtGui import QIcon
 from backend.models.SampleLibrary import SampleBank
 from backend.models.AppContext import AppContext
 from frontend.custom_widgets import QListWidgetDragBugFix
@@ -73,7 +73,7 @@ class SettingsLibrariesList(QWidget):
 
         self.refreshLibraryList(self.settings_service.libraries)
 
-    @pyqtSlot(list)
+    @Slot(list)
     def onLibrariesUpdated(self, libraries):
         """Slot appelé à chaque fois que la liste change."""
         self.refreshLibraryList(libraries)

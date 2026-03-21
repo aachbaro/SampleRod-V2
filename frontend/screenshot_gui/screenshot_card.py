@@ -14,9 +14,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QSize, QUrl
-from PyQt6.QtGui import QPixmap, QDesktopServices
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtGui import QPixmap, QDesktopServices
+from PySide6.QtWidgets import (
     QWidget,
     QLabel,
     QHBoxLayout,

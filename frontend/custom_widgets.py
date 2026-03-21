@@ -11,10 +11,10 @@
 
 # custom_widgets.py
 
-from PyQt6.QtWidgets import QListWidget, QSlider, QStyle
-from PyQt6.QtCore    import Qt
-from PyQt6.QtGui     import QDragMoveEvent, QDragEnterEvent, QDropEvent
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import QListWidget, QSlider, QStyle
+from PySide6.QtCore    import Qt
+from PySide6.QtGui     import QDragMoveEvent, QDragEnterEvent, QDropEvent
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QRadioButton, QLineEdit,
     QLabel, QDialogButtonBox, QFormLayout
 )
@@ -111,7 +111,7 @@ class SaveWaveformDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # — Titre : icône + texte
-        from PyQt6.QtWidgets import QHBoxLayout
+        from PySide6.QtWidgets import QHBoxLayout
         icon_label = QLabel()
         icon_label.setPixmap(qta.icon('fa5s.save', color='lightgray').pixmap(24, 24))
         text_label = QLabel("Choisissez une option d’enregistrement")

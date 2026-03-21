@@ -16,8 +16,8 @@ Sous-modules utilises
 - SampleListCards         : gestion du cycle de vie des SampleCard.
 """
 
-from PyQt6.QtWidgets import QWidget, QSizePolicy
-from PyQt6.QtCore import pyqtSlot, QSettings
+from PySide6.QtWidgets import QWidget, QSizePolicy
+from PySide6.QtCore import Slot, QSettings
 
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
@@ -89,99 +89,99 @@ class SampleListWidget(QWidget):
         self.ui_builder.build()
 
     # ---- Service slots (cache / cards)
-    @pyqtSlot(list)
+    @Slot(list)
     def onSamplesChanged(self, samples: list):
         self.cards.on_samples_changed(samples)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onSampleAdded(self, sample_id: int):
         self.cards.on_sample_added(sample_id)
 
     # ---- Service actions (delete / rename / move)
-    @pyqtSlot(int)
+    @Slot(int)
     def delete_sample(self, sample_id: int):
         self.service_actions.delete_sample(sample_id)
 
-    @pyqtSlot(int, str)
+    @Slot(int, str)
     def rename_sample(self, sample_id: int, new_name: str):
         self.service_actions.rename_sample(sample_id, new_name)
 
-    @pyqtSlot(int, str)
+    @Slot(int, str)
     def move_sample(self, sample_id: int, target_folder: str):
         self.service_actions.move_sample(sample_id, target_folder)
 
     # ---- Normalisation
-    @pyqtSlot(int)
+    @Slot(int)
     def onStartedNormalization(self, sample_id: int):
         self.normalizer.on_started(sample_id)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onFinishedNormalization(self, sample_id: int):
         self.normalizer.on_finished(sample_id)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onNormalizeClicked(self, sample_id: int):
         self.normalizer.on_clicked(sample_id)
 
-    @pyqtSlot(int, str)
+    @Slot(int, str)
     def onNormalizationFailed(self, sample_id: int, message: str):
         self.normalizer.on_failed(sample_id, message)
 
     # ---- Selection / bulk
-    @pyqtSlot(int, bool)
+    @Slot(int, bool)
     def onSelectionChanged(self, sample_id: int, checked: bool):
         self.selection.on_selection_changed(sample_id, checked)
 
     # ---- Import manuel
-    @pyqtSlot()
+    @Slot()
     def onAddFiles(self):
         self.importer.add_files()
 
     # ---- Cards (retours service)
-    @pyqtSlot(int)
+    @Slot(int)
     def onSampleRemovedFromHistory(self, sample_id: int):
         self.cards.on_sample_removed_from_history(sample_id)
 
-    @pyqtSlot()
+    @Slot()
     def bulkRemoveFromHistory(self):
         self.selection.bulk_remove_from_history()
 
     def refreshList(self):
         self.cards.refresh_list()
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onSampleDeleted(self, sample_id: int):
         self.cards.on_sample_deleted(sample_id)
 
-    @pyqtSlot(int, str, str)
+    @Slot(int, str, str)
     def onSampleRenamed(self, sample_id: int, old_path: str, new_path: str):
         self.cards.on_sample_renamed(sample_id, old_path, new_path)
 
-    @pyqtSlot(int, str)
+    @Slot(int, str)
     def onSampleMoved(self, sample_id: int, target_folder: str):
         self.cards.on_sample_moved(sample_id, target_folder)
 
-    @pyqtSlot(int, float)
+    @Slot(int, float)
     def onSampleDurationChanged(self, sample_id: int, new_duration: float):
         self.cards.on_sample_duration_changed(sample_id, new_duration)
 
-    @pyqtSlot(int, bool, object)
+    @Slot(int, bool, object)
     def onSampleConcatCandidateChanged(self, sample_id: int, enabled: bool, prev_id):
         self.cards.on_sample_concat_candidate_changed(sample_id, enabled, prev_id)
 
-    @pyqtSlot(int, bool)
+    @Slot(int, bool)
     def onSampleNormalizationLockChanged(self, sample_id: int, locked: bool):
         self.cards.on_sample_normalization_lock_changed(sample_id, locked)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def concat_with_previous(self, sample_id: int):
         self.service_actions.concat_with_previous(sample_id)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def dismiss_concat(self, sample_id: int):
         self.service_actions.dismiss_concat(sample_id)
 
-    @pyqtSlot(int, bool, object)
+    @Slot(int, bool, object)
     def onConcatPreviewHoverChanged(self, sample_id: int, active: bool, prev_id):
         self.cards.on_concat_preview_hover_changed(sample_id, active, prev_id)
 
@@ -200,11 +200,11 @@ class SampleListWidget(QWidget):
     def updateSelectActions(self):
         self.selection.update_select_actions()
 
-    @pyqtSlot()
+    @Slot()
     def onSelectAll(self):
         self.selection.select_all()
 
-    @pyqtSlot()
+    @Slot()
     def onDeselectAll(self):
         self.selection.deselect_all()
 
@@ -223,7 +223,7 @@ class SampleListWidget(QWidget):
         """Met a jour le label de pagination."""
         self.pagination.update_label(start_idx, end_idx, total_samples)
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onSamplesPerPageChanged(self, count: int):
         """Slot appele lorsque le parametre de pagination change."""
         self.pagination.on_samples_per_page_changed(count)

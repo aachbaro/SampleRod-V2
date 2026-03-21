@@ -15,6 +15,7 @@
 
 import sys
 import os
+os.environ.setdefault('PYQTGRAPH_QT_LIB', 'PySide6')
 import subprocess
 import multiprocessing as mp
 from pathlib import Path
@@ -26,8 +27,8 @@ if sys.platform.startswith("win"):
     ctypes.windll.ole32.OleInitialize(0)
 
 from backend.db import engine, Base
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QSharedMemory, QSystemSemaphore, Qt
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QSharedMemory, QSystemSemaphore, Qt
 import os
 from backend.models.AppContext import AppContext
 from backend.services.settings_service import SettingsService
@@ -106,7 +107,7 @@ if __name__ == '__main__':
                 feed = os.getenv("SAMPLEROD_UPDATE_FEED", "")
                 if not feed:
                     try:
-                        from PyQt6.QtCore import QSettings
+                        from PySide6.QtCore import QSettings
                         qs = QSettings("SampleRod", "Main")
                         feed = qs.value("update_feed", "")
                     except Exception:

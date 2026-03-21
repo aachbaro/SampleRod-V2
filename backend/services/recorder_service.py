@@ -3,7 +3,7 @@
 # ROLE DANS L'ARCHITECTURE
 # - Service d'orchestration de l'enregistrement audio cote backend.
 # - Intermediaire entre:
-#   1) L'UI/les settings (PyQt6, signaux/slots)
+#   1) L'UI/les settings (PySide6, signaux/slots)
 #   2) Le worker d'enregistrement (processus separé via multiprocessing)
 #   3) Le stockage/notification (SampleService + NotificationService)
 #
@@ -17,8 +17,8 @@
 # UI -> RecorderService (signal/slot) -> cmd_queue -> recorder_worker (process)
 # recorder_worker -> resp_queue -> RecorderService.poll -> UI/Stockage/Notifications
 # -----------------------------------------------------------------------------
-# PyQt6: QObject + decorateurs de slots pour recevoir les signaux
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal
+# PySide6: QObject + decorateurs de slots pour recevoir les signaux
+from PySide6.QtCore import QObject, Slot, Signal
 # multiprocessing: worker d'enregistrement dans un process isole
 import multiprocessing as mp
 # Fonction worker qui effectue la capture audio
@@ -44,7 +44,7 @@ class RecorderService(QObject):
     Maintenant hérite de QObject pour pouvoir recevoir les signaux Qt.
     """
     # Emis quand l'etat d'enregistrement change (True/False)
-    recordingStateChanged = pyqtSignal(bool)
+    recordingStateChanged = Signal(bool)
 
     def __init__(self, app_context, sample_rate, block_size):
         super().__init__()
@@ -96,7 +96,7 @@ class RecorderService(QObject):
             # Remettre le worker en mode retro
             self.cmd_queue.put(('enable_retro',))
 
-    @pyqtSlot(bool)
+    @Slot(bool)
     def onRetroToggled(self, enabled: bool):
         """Slot appelé à chaque fois qu’on active/désactive le rétro."""
         # Met a jour l'etat local et transmet l'ordre au worker
@@ -109,7 +109,7 @@ class RecorderService(QObject):
             logger.info("RecorderService: retro désactivé")
             self.cmd_queue.put(('disable_retro',))
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onPreSecondsChanged(self, secs: int):
         """Slot appelé à chaque fois qu’on change la durée du buffer retro."""
         # Met a jour la valeur locale et notifie le worker
@@ -118,7 +118,7 @@ class RecorderService(QObject):
         # si le worker supporte la modification à chaud :
         self.cmd_queue.put(('set_retro_time', secs))
 
-    @pyqtSlot(object)
+    @Slot(object)
     def onLoopbackDeviceChanged(self, device):
         """Slot appelé quand on change le device loopback dans les settings."""
         # Met a jour le device actif cote service
@@ -132,7 +132,7 @@ class RecorderService(QObject):
             # remettre le worker en mode rétro
             self.cmd_queue.put(('enable_retro',))
 
-    @pyqtSlot(int)
+    @Slot(int)
     def onSampleRateChanged(self, new_rate: int):
         """
         Slot appelé quand on modifie le sample rate dans les settings.

@@ -41,7 +41,7 @@ from fractions import Fraction
 from typing import Any
 
 import numpy as np
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 logger = logging.getLogger("sample_composer_model")
 
@@ -159,10 +159,10 @@ class ComposerModel(QObject):
     - render_preview() (audio concatene + metadata)
     """
 
-    changed = pyqtSignal()
-    clipsChanged = pyqtSignal()
-    previewChanged = pyqtSignal()
-    formatChanged = pyqtSignal()
+    changed = Signal()
+    clipsChanged = Signal()
+    previewChanged = Signal()
+    formatChanged = Signal()
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)

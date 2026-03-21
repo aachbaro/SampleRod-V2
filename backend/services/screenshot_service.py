@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 from backend.models.screenshot import ScreenshotModel
 from backend.services.notification_service import NotificationType
@@ -22,9 +22,9 @@ logger = logging.getLogger("screenshot_service")
 
 
 class ScreenshotService(QObject):
-    screenshotAdded = pyqtSignal(int)     # id ajoute
-    screenshotDeleted = pyqtSignal(int)   # id supprime
-    screenshotsChanged = pyqtSignal(list) # liste complete
+    screenshotAdded = Signal(int)     # id ajoute
+    screenshotDeleted = Signal(int)   # id supprime
+    screenshotsChanged = Signal(list) # liste complete
 
     def __init__(self, app_context):
         super().__init__()

@@ -17,7 +17,7 @@ import soundfile as sf
 import logging
 logger = logging.getLogger("normalize_worker")
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 try:
     import pyloudnorm as pyln
@@ -34,9 +34,9 @@ class NormalizeWorker(QThread):
     - Émet un signal finishedNormalization(sample_id) à la fin du traitement (fichier réécrit).
     """
 
-    startedNormalization = pyqtSignal(int)
-    finishedNormalization = pyqtSignal(int)
-    normalizationFailed  = pyqtSignal(int, str)
+    startedNormalization = Signal(int)
+    finishedNormalization = Signal(int)
+    normalizationFailed  = Signal(int, str)
 
     def __init__(self, sample_id: int, file_path: str,
                  mode: str = "lufs", target_db: float = -16.0):

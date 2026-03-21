@@ -17,7 +17,7 @@ import soundfile as sf
 import logging
 logger = logging.getLogger("directory_service")
 
-from PyQt6.QtCore import QMimeData
+from PySide6.QtCore import QMimeData
 from backend.services.sample_service import SampleService
 
 class DirectoryService:

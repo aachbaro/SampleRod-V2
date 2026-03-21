@@ -18,7 +18,7 @@
 # - Playback (WaveformPlaybackController).
 #
 # DEPENDANCES
-# - PyQt6 (QMessageBox)
+# - PySide6 (QMessageBox)
 # - soundfile
 # - SaveWaveformDialog, NotificationType
 # -----------------------------------------------------------------------------
@@ -39,7 +39,7 @@ class WaveformSaveController:
         et met a jour la base si overwrite, ou cree un nouveau sample si copy.
         """
         w = self.widget
-        from PyQt6.QtWidgets import QMessageBox, QInputDialog
+        from PySide6.QtWidgets import QMessageBox, QInputDialog
         import os, soundfile as sf
         from backend.models.sample import Sample as DBSample
         import librosa

@@ -25,8 +25,8 @@ Contenu
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
 
 from backend.models.AppContext import AppContext
 from backend.services.directory_service import DirectoryService

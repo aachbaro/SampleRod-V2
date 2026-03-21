@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import List
 
-from PyQt6.QtCore import QSettings
+from PySide6.QtCore import QSettings
 
 
 class DirectoryHistory:
