@@ -40,6 +40,7 @@ from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
 from frontend.screenshot_gui.screenshot_list import ScreenshotListWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.right_panel.tools_panel import RightToolsPanel
+from frontend.styles import theme
 
 from backend.services.directory_service import DirectoryService
 
@@ -56,6 +57,8 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._init_signals()
         self._init_shortcuts()
+        theme.manager.apply()
+        theme.manager.themeChanged.connect(self._on_theme_changed)
 
     def _setup_window(self):
         """Configure la fenÃªtre principale"""
@@ -205,12 +208,25 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.addTab(settings_tab, "ParamÃ¨tres")
 
-        # bouton ðŸ›Ž placÃ© dans le coin supÃ©rieur droit des onglets
+        # coin superieur droit : bouton theme + bouton notif
+        _corner = QWidget()
+        _corner_layout = QHBoxLayout(_corner)
+        _corner_layout.setContentsMargins(0, 0, 4, 0)
+        _corner_layout.setSpacing(4)
+
+        self.theme_button = QPushButton()
+        self.theme_button.setFixedSize(28, 28)
+        self.theme_button.setToolTip("Basculer dark / light mode")
+        self._update_theme_button_icon()
+        self.theme_button.clicked.connect(theme.manager.toggle)
+        _corner_layout.addWidget(self.theme_button)
+
         self.notif_button = QPushButton()
         self.notif_button.setIcon(qta.icon('fa5s.bell', color='lightgray'))
         self.notif_button.setToolTip("Notifications")
-        # positionne le bouton dans le coin
-        self.tab_widget.setCornerWidget(self.notif_button, Qt.Corner.TopRightCorner)
+        _corner_layout.addWidget(self.notif_button)
+
+        self.tab_widget.setCornerWidget(_corner, Qt.Corner.TopRightCorner)
 
         # instancie le centre et le manager
         self.notif_center  = NotificationCenter(self)
@@ -269,6 +285,13 @@ class MainWindow(QMainWindow):
 
         self._was_maximized_before_fullscreen = self.isMaximized()
         self.showFullScreen()
+
+    def _update_theme_button_icon(self):
+        icon_name = "fa5s.sun" if theme.manager.is_dark() else "fa5s.moon"
+        self.theme_button.setIcon(qta.icon(icon_name, color="lightgray"))
+
+    def _on_theme_changed(self, _name: str):
+        self._update_theme_button_icon()
 
     def closeEvent(self, event):
         """Nettoyage lors de la fermeture de la fenÃªtre principale"""

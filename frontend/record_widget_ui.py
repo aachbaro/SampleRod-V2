@@ -109,15 +109,12 @@ class RecordWidgetUIBuilder:
     def _apply_static_icons(self):
         w = self.w
         s = w.scale
+        p = theme.manager.p
         w.library_indicator.setPixmap(
-            qta.icon("fa5s.folder", color=theme.TEXT).pixmap(
-                int(20 * s), int(22 * s)
-            )
+            qta.icon("fa5s.folder", color=p.TEXT).pixmap(int(20 * s), int(22 * s))
         )
         w.drag_area.setPixmap(
-            qta.icon("fa5s.ellipsis-v", color=theme.TEXT_MUTED).pixmap(
-                int(10 * s), int(18 * s)
-            )
+            qta.icon("fa5s.ellipsis-v", color=p.TEXT_MUTED).pixmap(int(10 * s), int(18 * s))
         )
 
     # ------------------------------------------------------------------ Style dynamique
@@ -129,14 +126,16 @@ class RecordWidgetUIBuilder:
         instancier un nouveau builder.
         """
         w = window
-        if w.app_context.recorder.is_recording:
-            border = theme.RECORDING
-        elif w.settings.isRetroEnabled():
-            border = theme.RETRO
-        else:
-            border = theme.BORDER
+        p = theme.manager.p
 
-        bg     = theme.BG_HOVER if hovered else theme.BG
+        if w.app_context.recorder.is_recording:
+            border = p.RECORDING
+        elif w.settings.isRetroEnabled():
+            border = p.RETRO
+        else:
+            border = p.BORDER
+
+        bg     = p.BG_HOVER if hovered else p.BG
         radius = max(1, w.button_container.height() // 2)
 
         w.button_container.setStyleSheet(
@@ -153,7 +152,7 @@ class RecordWidgetUIBuilder:
             f"""
             QLabel {{
                 background: transparent;
-                color: {theme.BG_DARK};
+                color: {p.BG_DARK};
                 border: none;
                 font-size: 12px;
                 font-weight: 700;
@@ -163,9 +162,9 @@ class RecordWidgetUIBuilder:
         w.library_name.setStyleSheet(
             f"""
             QLabel {{
-                background-color: {theme.BG};
-                color: {theme.TEXT};
-                border: 1px solid {theme.BORDER};
+                background-color: {p.BG};
+                color: {p.TEXT};
+                border: 1px solid {p.BORDER};
                 border-radius: 4px;
                 padding-left: 6px;
                 font-size: 10px;

@@ -66,6 +66,7 @@ class RecordWidgetWindow(QMainWindow):
         self.settings.retroToggled.connect(self.updateRetroRecording)
         self.settings.preSecondsChanged.connect(self.updateRetroRecording)
         self.app_context.recorder.recordingStateChanged.connect(self._on_recording_state_changed)
+        theme.manager.themeChanged.connect(self._on_theme_changed)
 
     def _start_timers(self):
         self.keep_top_timer = QTimer(self)
@@ -173,17 +174,22 @@ class RecordWidgetWindow(QMainWindow):
             self.retro_time_selected -= 1
         self.updateRecordButtonDisplay()
 
+    def _on_theme_changed(self, _name: str):
+        self._apply_shell_style()
+        self.updateRecordButtonDisplay()
+
     def _show_retro_context_menu(self):
+        p = theme.manager.p
         menu = QMenu(self)
         menu.setStyleSheet(
             f"""
             QMenu {{
-                background-color: {theme.BG_MEDIUM};
-                color: {theme.TEXT};
-                border: 1px solid {theme.BORDER_LIGHT};
+                background-color: {p.BG_MEDIUM};
+                color: {p.TEXT};
+                border: 1px solid {p.BORDER_LIGHT};
             }}
             QMenu::item:selected {{
-                background-color: {theme.BG_CARD};
+                background-color: {p.BG_CARD};
             }}
             """
         )
@@ -218,22 +224,23 @@ class RecordWidgetWindow(QMainWindow):
         self.updateRecordButtonDisplay()
 
     def updateRecordButtonDisplay(self):
+        p = theme.manager.p
         is_recording = self.app_context.recorder.is_recording
         is_retro = self.settings.isRetroEnabled()
         show_retro_value = is_retro and self.retro_time_selected > 0
 
         if is_recording:
-            border     = theme.RECORDING
-            text_color = theme.RECORDING
+            border     = p.RECORDING
+            text_color = p.RECORDING
         else:
-            border     = theme.RETRO if is_retro else theme.BORDER
-            text_color = theme.TEXT
+            border     = p.RETRO if is_retro else p.BORDER
+            text_color = p.TEXT
 
         button_radius = max(1, self.recordButton.height() // 2)
         self.recordButton.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {theme.BG};
+                background-color: {p.BG};
                 color: {text_color};
                 border: 1px solid {border};
                 border-radius: {button_radius}px;
