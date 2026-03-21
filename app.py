@@ -34,6 +34,7 @@ from backend.models.AppContext import AppContext
 from backend.services.settings_service import SettingsService
 
 from frontend.main_window import MainWindow
+from frontend.splash import SplashScreen
 
 def create_database():
     """Crée la base de données et les tables."""
@@ -90,9 +91,18 @@ if __name__ == '__main__':
             pass
     if not _acquire_single_instance("SampleRod.SingleInstance"):
         sys.exit(0)
-    create_database()
-    app_context = AppContext()  # Initialisation du contexte de l'application
     gui = QApplication(sys.argv)
+
+    splash = SplashScreen()
+    splash.show()
+    QApplication.processEvents()
+
+    splash.set_status("Initialisation de la base de donnees...")
+    create_database()
+
+    splash.set_status("Chargement du contexte...")
+    app_context = AppContext()  # Initialisation du contexte de l'application
+
     # Auto-update (Squirrel) - uniquement en version packagée
     try:
         if (
@@ -133,6 +143,10 @@ if __name__ == '__main__':
         }
         """
     )
+
+    splash.set_status("Construction de l'interface...")
     main_window = MainWindow(app_context)
+
+    splash.close()
     main_window.show()
     sys.exit(gui.exec())

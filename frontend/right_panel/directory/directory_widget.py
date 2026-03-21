@@ -101,8 +101,11 @@ class DirectoryWidget(QWidget):
 
     def _on_theme_changed(self, _name: str):
         directory_ui.apply_styles(self)
-        for item_widget in self._items_by_id.values():
-            directory_ui.restyle_item(item_widget)
+        for i in range(self.list_widget.count()):
+            list_item = self.list_widget.item(i)
+            w = self.list_widget.itemWidget(list_item)
+            if w is not None:
+                directory_ui.restyle_item(w)
 
     def open_directory(self, path: str) -> None:
         """Set current directory, refresh list and update history."""
