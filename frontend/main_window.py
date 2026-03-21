@@ -58,10 +58,10 @@ class MainWindow(QMainWindow):
         self._init_shortcuts()
 
     def _setup_window(self):
-        """Configure la fenêtre principale"""
+        """Configure la fenÃªtre principale"""
         self.setWindowTitle("SampleRod")
         self.setGeometry(300, 200, 1200, 600)
-        # Démarrage en mode maximisé (barre de titre visible)
+        # DÃ©marrage en mode maximisÃ© (barre de titre visible)
         self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
 
     def _build_ui(self):
@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
         # --- Onglet 'Enregistrement' (pop-up flottant)
         self.record_widget = RecordWidgetWindow(self.app_context)
         self.record_widget.show()
-        # On ne l'ajoute pas aux tabs, c'est une fenêtre indépendante
+        # On ne l'ajoute pas aux tabs, c'est une fenÃªtre indÃ©pendante
 
         # --- Onglet 'Liste des Samples'
         samples_tab = QWidget()
@@ -165,7 +165,7 @@ class MainWindow(QMainWindow):
 
         retro_group = self._make_settings_group(
             "Enregistrement retro",
-            "Active le pre-enregistrement et ajuste la duree du buffer.",
+            "Active le pre-enregistrement, ajuste la duree du buffer, puis utilise la molette sur REC pour choisir le retro time de chaque prise.",
             self.settings_retro_widget
         )
         display_group = self._make_settings_group(
@@ -203,9 +203,9 @@ class MainWindow(QMainWindow):
         container_layout.addLayout(columns)
         container_layout.addStretch()
 
-        self.tab_widget.addTab(settings_tab, "Paramètres")
+        self.tab_widget.addTab(settings_tab, "ParamÃ¨tres")
 
-        # bouton 🛎 placé dans le coin supérieur droit des onglets
+        # bouton ðŸ›Ž placÃ© dans le coin supÃ©rieur droit des onglets
         self.notif_button = QPushButton()
         self.notif_button.setIcon(qta.icon('fa5s.bell', color='lightgray'))
         self.notif_button.setToolTip("Notifications")
@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
 
         # instancie le centre et le manager
         self.notif_center  = NotificationCenter(self)
-        self.notif_center.hide()  # masqué par défaut
+        self.notif_center.hide()  # masquÃ© par dÃ©faut
         self.notif_manager = NotificationManager(self.app_context.notifications, parent=self)
         self.notif_manager.set_center(self.notif_center)
 
@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
 
     def _init_signals(self):
         """Connecte les signaux entre composants"""
-        # Quand un nouvel échantillon est enregistré, on l'ajoute à la liste
+        # Quand un nouvel Ã©chantillon est enregistrÃ©, on l'ajoute Ã  la liste
         self.record_widget.newSampleRecorded.connect(
             lambda path: self.app_context.sample_store.load_all()
         )
@@ -271,9 +271,9 @@ class MainWindow(QMainWindow):
         self.showFullScreen()
 
     def closeEvent(self, event):
-        """Nettoyage lors de la fermeture de la fenêtre principale"""
+        """Nettoyage lors de la fermeture de la fenÃªtre principale"""
         self._exit_procedure()
-        # Fermer aussi la fenêtre d'enregistrement si ouverte
+        # Fermer aussi la fenÃªtre d'enregistrement si ouverte
         try:
             self.record_widget.close()
         except Exception:
@@ -287,13 +287,13 @@ class MainWindow(QMainWindow):
         # TODO: autres nettoyages (sauvegarde, etc.)
 
     def _increment_badge(self):
-        """Incrémente le badge et l’affiche."""
+        """IncrÃ©mente le badge et lâ€™affiche."""
         self._unread_count += 1
         self._notif_badge.setText(str(self._unread_count))
         self._notif_badge.show()
 
     def _clear_badge(self):
-        """Remet le compteur à zéro et masque le badge."""
+        """Remet le compteur Ã  zÃ©ro et masque le badge."""
         self._unread_count = 0
         self._notif_badge.hide()
 
@@ -315,9 +315,9 @@ class MainWindow(QMainWindow):
         return group
 
     def _on_notif_button_clicked(self):
-        # on inverse la visibilité du centre
+        # on inverse la visibilitÃ© du centre
         visible = not self.notif_center.isVisible()
         self.notif_center.setVisible(visible)
-        # si on vient de l'ouvrir, on remet le badge à zéro
+        # si on vient de l'ouvrir, on remet le badge Ã  zÃ©ro
         if visible:
             self._clear_badge()

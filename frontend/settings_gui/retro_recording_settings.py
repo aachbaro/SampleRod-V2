@@ -31,7 +31,7 @@ class RetroRecordingWidget(QWidget):
         # 1) Construire l'UI
         self.init_ui()
 
-        # 2) Initialiser l'état des contrôles à partir du service
+        # 2) Initialiser l'ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tat des contrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â´les ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  partir du service
         self.toggle_checkbox.setChecked(
             self.settingsService.isRetroEnabled()
         )
@@ -39,7 +39,7 @@ class RetroRecordingWidget(QWidget):
             self.settingsService.getPreSeconds()
         )
 
-        # 3) Connecter les signaux pour les mises à jour ultérieures
+        # 3) Connecter les signaux pour les mises ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  jour ultÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©rieures
         self.settingsService.retroToggled.connect(
             self.toggle_checkbox.setChecked
         )
@@ -56,13 +56,13 @@ class RetroRecordingWidget(QWidget):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        # → Titre
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Titre
         top_layout = QHBoxLayout()
-        self.title_label = QLabel("Enregistrement Rétroactif")
+        self.title_label = QLabel("Enregistrement RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©troactif")
         top_layout.addWidget(self.title_label)
         top_layout.addStretch()
 
-        # → Configuration de la durée
+        # ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ Configuration de la durÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e
         settings_layout = QHBoxLayout()
         self.duration_input = QSpinBox()
         self.duration_input.setRange(1, 60)
@@ -73,18 +73,26 @@ class RetroRecordingWidget(QWidget):
         self.confirm_button.setEnabled(False)
         self.confirm_button.clicked.connect(self.save_duration)
 
-        settings_layout.addWidget(QLabel("Durée max :"))
+        settings_layout.addWidget(QLabel("DurÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e max :"))
         settings_layout.addWidget(self.duration_input)
         settings_layout.addWidget(self.confirm_button)
 
-        # → Activation
+        # Activation
         self.toggle_checkbox = QCheckBox("Activer")
         self.toggle_checkbox.clicked.connect(self.toggle_recording)
 
-        # → Assemblage
+        self.help_label = QLabel(
+            "Astuce widget REC : clic droit pour activer/desactiver le retro, "
+            "puis molette sur REC pour choisir le retro time applique a la prochaine prise "
+            "(entre 0 et la duree max ci-dessus)."
+        )
+        self.help_label.setWordWrap(True)
+        self.help_label.setStyleSheet("color: #8d95a3; font-size: 11px;")
+
         layout.addLayout(top_layout)
         layout.addLayout(settings_layout)
         layout.addWidget(self.toggle_checkbox)
+        layout.addWidget(self.help_label)
         layout.addStretch()
         self.setLayout(layout)
 
@@ -94,13 +102,13 @@ class RetroRecordingWidget(QWidget):
     def save_duration(self):
         # Informe le service (persistance + signal)
         self.settingsService.setPreSeconds(self.duration_input.value())
-        logger.info(f"[RetroRecording] Durée enregistrée : {self.duration_input.value()}s")
+        logger.info(f"[RetroRecording] DurÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e enregistrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e : {self.duration_input.value()}s")
         self.confirm_button.setEnabled(False)
 
     def toggle_recording(self):
         # Informe le service (persistance + signal)
         self.settingsService.toggleRetro()
-        state = 'activé' if self.toggle_checkbox.isChecked() else 'désactivé'
-        logger.info(f"[RetroRecording] Rétro-enregistrement {state}")
-        # On peut aussi émettre un signal local si besoin
+        state = 'activÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©' if self.toggle_checkbox.isChecked() else 'dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sactivÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©'
+        logger.info(f"[RetroRecording] RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©tro-enregistrement {state}")
+        # On peut aussi ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©mettre un signal local si besoin
         self.retroRecordingUpdated.emit()

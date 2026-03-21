@@ -390,7 +390,7 @@ class RecordWidgetWindow(QMainWindow):
         lib_name = self.library_name.text() if self.library_name.text() else "Aucune bibliotheque"
         self.recordButton.setToolTip(
             f"{status}\nBibliotheque: {lib_name}\n"
-            "Clic gauche: start/stop\nClic droit: toggle retro\nMolette: ajuster retro"
+            "Clic gauche: start/stop\nClic droit: activer/desactiver retro\nMolette sur REC: retro time de la prise (0..duree max des Parametres)"
         )
 
     # ------------------------------------------------------------------ Animations / timers
@@ -436,6 +436,21 @@ class RecordWidgetWindow(QMainWindow):
         self.raise_()
 
     def _poll_worker(self):
-        for msg, payload in self.app_context.recorder.poll():
-            if msg == "done" and payload:
-                self.newSampleRecorded.emit(payload)
+        try:
+            for msg, payload in self.app_context.recorder.poll():
+                if msg == "done" and payload:
+                    self.newSampleRecorded.emit(payload)
+        except KeyboardInterrupt:
+            # Peut arriver pendant un shutdown/interrupt global de l'app.
+            logger.info("record_widget: polling interrompu pendant la fermeture")
+            if hasattr(self, "poll_timer") and self.poll_timer is not None:
+                self.poll_timer.stop()
+        except Exception:
+            logger.exception("record_widget: erreur inattendue dans _poll_worker")
+
+    def closeEvent(self, event):
+        if hasattr(self, "poll_timer") and self.poll_timer is not None:
+            self.poll_timer.stop()
+        if hasattr(self, "keep_top_timer") and self.keep_top_timer is not None:
+            self.keep_top_timer.stop()
+        super().closeEvent(event)
