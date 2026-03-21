@@ -33,6 +33,7 @@ from backend.services.directory_service import DirectoryService
 
 from .directory.directory_tool import DirectoryToolWidget
 from .composer.composer_widget import SampleComposerWidget
+from frontend.styles import theme
 
 
 class RightToolsPanel(QWidget):
@@ -64,91 +65,85 @@ class RightToolsPanel(QWidget):
         self.tools_tabs.addTab(self.composer_tool, "Compositeur")
 
         layout.addWidget(self.tools_tabs)
+        self._apply_stylesheet()
+        theme.manager.themeChanged.connect(lambda _: self._apply_stylesheet())
 
-        # Styles: keep it minimal + aligned with SampleCard/SampleList/Waveform tokens.
+    def _apply_stylesheet(self):
+        p = theme.manager.p
         self.setStyleSheet(
-            """
-            QWidget#RightToolsPanelRoot {
-                background-color: #121212;
-            }
+            f"""
+            QWidget#RightToolsPanelRoot {{
+                background-color: {p.BG_DARK};
+            }}
 
-            /* Tools tabs: no extra frame; tabs look like subtle "chips" */
-            QTabWidget#RightToolsTabs {
+            QTabWidget#RightToolsTabs {{
                 background: transparent;
-            }
-            QTabWidget#RightToolsTabs::pane {
+            }}
+            QTabWidget#RightToolsTabs::pane {{
                 border: none;
                 background: transparent;
-                /* Separation visuelle entre les tabs "tools" et le contenu (Directory tabs, etc.) */
                 padding-top: 8px;
-            }
-
-            QTabWidget#RightToolsTabs QTabBar {
+            }}
+            QTabWidget#RightToolsTabs QTabBar {{
                 background: transparent;
-            }
-            QTabWidget#RightToolsTabs QTabBar::tab {
+            }}
+            QTabWidget#RightToolsTabs QTabBar::tab {{
                 background: transparent;
-                color: #cfcfcf;
-                border: 1px solid #2a2a2a;
+                color: {p.TEXT_MUTED};
+                border: 1px solid {p.BORDER};
                 border-radius: 10px;
                 padding: 4px 10px;
                 margin-right: 6px;
-            }
-            QTabWidget#RightToolsTabs QTabBar::tab:selected {
-                background: #202020;
-                border-color: #3a3a3a;
-                color: #f5f5f5;
-            }
-            QTabWidget#RightToolsTabs QTabBar::tab:hover {
-                background: #1f1f1f;
-                border-color: #3a3a3a;
-            }
+            }}
+            QTabWidget#RightToolsTabs QTabBar::tab:selected {{
+                background: {p.BG_HOVER};
+                border-color: {p.BORDER_LIGHT};
+                color: {p.TEXT};
+            }}
+            QTabWidget#RightToolsTabs QTabBar::tab:hover {{
+                background: {p.BG_MEDIUM};
+                border-color: {p.BORDER_LIGHT};
+            }}
 
-            /* Chaque tool (Dossiers / Compositeur) est une carte independante */
             QWidget#DirectoryToolCard,
-            QWidget#ComposerToolCard {
-                background-color: #1b1b1b;
-                border: 1px solid #2a2a2a;
+            QWidget#ComposerToolCard {{
+                background-color: {p.BG_MEDIUM};
+                border: 1px solid {p.BORDER};
                 border-radius: 10px;
-            }
+            }}
 
-            /* Directory inner tabs: remove extra pane borders/backgrounds */
-            QTabWidget#DirectoryTabs {
+            QTabWidget#DirectoryTabs {{
                 background: transparent;
-            }
-            QTabWidget#DirectoryTabs::pane {
+            }}
+            QTabWidget#DirectoryTabs::pane {{
                 border: none;
                 background: transparent;
-            }
-            QTabWidget#DirectoryTabs QTabBar {
+            }}
+            QTabWidget#DirectoryTabs QTabBar {{
                 background: transparent;
-            }
-            QTabWidget#DirectoryTabs QTabBar::tab {
+            }}
+            QTabWidget#DirectoryTabs QTabBar::tab {{
                 background: transparent;
-                color: #cfcfcf;
-                border: 1px solid #2a2a2a;
+                color: {p.TEXT_MUTED};
+                border: 1px solid {p.BORDER};
                 border-radius: 10px;
                 padding: 3px 10px;
-                /* Pas de margin ici: on a un bouton de fermeture "tabButton" a droite.
-                   La margin peut faire sortir le bouton du "chip" et provoquer des
-                   reflows/artefacts au survol. */
                 margin-right: 0px;
-            }
-            QTabWidget#DirectoryTabs QTabBar::tab:selected {
-                /* L'onglet actif doit donner l'impression d'etre "ouvert" (pas encapsule). */
-                background: transparent;
-                border: 1px solid transparent; /* garde la meme taille sans bordure visible */
-                color: #f5f5f5;
-                font-weight: 600;
-            }
-            QTabWidget#DirectoryTabs QTabBar::tab:selected:hover {
+            }}
+            QTabWidget#DirectoryTabs QTabBar::tab:selected {{
                 background: transparent;
                 border: 1px solid transparent;
-                color: #f5f5f5;
-            }
-            QTabWidget#DirectoryTabs QTabBar::tab:hover {
-                background: #1f1f1f;
-                border-color: #3a3a3a;
-            }
+                color: {p.TEXT};
+                font-weight: 600;
+            }}
+            QTabWidget#DirectoryTabs QTabBar::tab:selected:hover {{
+                background: transparent;
+                border: 1px solid transparent;
+                color: {p.TEXT};
+            }}
+            QTabWidget#DirectoryTabs QTabBar::tab:hover {{
+                background: {p.BG_MEDIUM};
+                border-color: {p.BORDER_LIGHT};
+            }}
             """
         )

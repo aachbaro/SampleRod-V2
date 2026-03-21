@@ -22,6 +22,7 @@ from PySide6.QtCore import Slot, QSettings
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
 from frontend.sample_gui.sample.sample_list_ui import SampleListUIBuilder
+from frontend.styles import theme
 from frontend.sample_gui.sample.sample_list_pagination import SampleListPagination
 from frontend.sample_gui.sample.sample_list_selection import SampleListSelection
 from frontend.sample_gui.sample.sample_list_dragdrop import SampleListDragDrop
@@ -87,6 +88,10 @@ class SampleListWidget(QWidget):
         """Construit l'UI (toolbar, scroll, pagination)."""
         self.ui_builder = SampleListUIBuilder(self)
         self.ui_builder.build()
+        theme.manager.themeChanged.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, _name: str):
+        SampleListUIBuilder.restyle(self)
 
     # ---- Service slots (cache / cards)
     @Slot(list)

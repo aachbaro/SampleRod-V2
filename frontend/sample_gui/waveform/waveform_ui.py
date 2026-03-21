@@ -65,6 +65,7 @@ class HoverIconButton(QToolButton):
         self.setIconSize(QSize(icon_size, icon_size))
         self.setContentsMargins(0, 0, 0, 0)
         self._radius = size // 2
+        self._icon_name = icon_name
         self._icon_color_normal = icon_color_normal
         self._icon_color_hover = icon_color_hover
         self._icon_normal = qta.icon(icon_name, color=self._icon_color_normal)
@@ -140,6 +141,25 @@ class HoverIconButton(QToolButton):
         self._anim.setStartValue(start)
         self._anim.setEndValue(end)
         self._anim.start()
+
+    def set_border_color(self, color: str):
+        """Update normal border color (theme support)."""
+        self._border_color_normal = color
+        if self._border_color_current != self._border_color_hover:
+            self._border_color_current = color
+        self._apply_style()
+
+    def update_colors(
+        self,
+        icon_color_normal: str | None = None,
+        icon_color_hover: str | None = None,
+        border_color: str | None = None,
+    ):
+        """Update theme colors without changing the icon shape."""
+        if icon_color_normal is not None or icon_color_hover is not None:
+            self.set_icon_pair(self._icon_name, icon_color_normal, icon_color_hover)
+        if border_color is not None:
+            self.set_border_color(border_color)
 
     def _apply_bg(self, color: QColor):
         self._current_bg = color

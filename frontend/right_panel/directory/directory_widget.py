@@ -53,6 +53,7 @@ from .directory_history import DirectoryHistory
 from .directory_preview import DirectoryPreviewController
 from .directory_store_sync import DirectoryStoreSync
 from . import directory_ui
+from frontend.styles import theme
 
 import os
 import logging
@@ -96,6 +97,12 @@ class DirectoryWidget(QWidget):
     def _build_ui(self):
         # Construction UI centralisee dans directory_ui.py (layout + widgets).
         directory_ui.build_directory_widget_ui(self)
+        theme.manager.themeChanged.connect(self._on_theme_changed)
+
+    def _on_theme_changed(self, _name: str):
+        directory_ui.apply_styles(self)
+        for item_widget in self._items_by_id.values():
+            directory_ui.restyle_item(item_widget)
 
     def open_directory(self, path: str) -> None:
         """Set current directory, refresh list and update history."""

@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
+from frontend.styles import theme
 
 
 class SampleCardUIBuilder:
@@ -55,76 +56,13 @@ class SampleCardUIBuilder:
         c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         # Style global de la carte
-        c.setStyleSheet("""
-        SampleCard {
-            background-color: #1b1b1b;
-            border: 1px solid #2a2a2a;
-            border-radius: 10px;
-        }
-        SampleCard:hover {
-            background-color: #202020;
-            border-color: #3a3a3a;
-        }
-        SampleCard[focused="true"] {
-            /* Garder la meme epaisseur de bordure pour eviter les "sauts" de layout */
-            border: 1px solid #f2c94c;
-        }
-        SampleCard[checked="true"] {
-            background-color: #232a33;
-            border-color: #f2c94c;
-        }
-        SampleCard[concatPreview="true"] {
-            border: 1px solid #2cc6cf;
-        }
-        QLabel#SampleName {
-            font-weight: 600;
-            font-size: 14px;
-            color: #f5f5f5;
-        }
-        QLabel#MetaLabel {
-            color: #b9b9b9;
-            font-size: 11px;
-        }
-        QLabel#StatusLabel {
-            color: #a6a6a6;
-            font-size: 11px;
-        }
-        QLabel#TimeLabel {
-            color: #e6e6e6;
-            font-size: 11px;
-        }
-        QLabel#DateChip {
-            background-color: #2a2a2a;
-            color: #cfcfcf;
-            border-radius: 10px;
-            padding: 2px 10px;
-        }
-        QLabel#IdChip {
-            background-color: #2a2a2a;
-            color: #cfcfcf;
-            border-radius: 10px;
-            padding: 2px 10px;
-        }
-        QLineEdit#RenameInput {
-            background-color: #2a2a2a;
-            color: #ffffff;
-            border: 1px solid #f2c94c;
-            padding: 4px 6px;
-            border-radius: 4px;
-        }
-        QComboBox#DirCombo {
-            background-color: #222222;
-            color: #e6e6e6;
-            border: 1px solid #333333;
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-        """)
+        self._apply_card_stylesheet(c)
 
         btn_size = 24
         btn_icon = 10
-        icon_normal = "#cfcfcf"
-        icon_hover = "#121212"
+        p = theme.manager.p
+        icon_normal = p.TEXT_MUTED
+        icon_hover = "#111111"
 
         # ---- Widgets
         c.checkbox = QCheckBox()
@@ -149,7 +87,7 @@ class SampleCardUIBuilder:
         c.check_button = self._make_round_btn(
             "fa5s.check",
             "Valider le renommage",
-            color_normal="#9bd18f",
+            color_normal=p.SUCCESS,
             color_hover=icon_hover,
             size=btn_size,
             icon_size=btn_icon,
@@ -169,7 +107,7 @@ class SampleCardUIBuilder:
         c.concat_button = self._make_round_btn(
             "fa5s.arrow-down",
             "Concatener avec le sample precedent",
-            color_normal="#2cc6cf",
+            color_normal=p.RETRO,
             color_hover=icon_hover,
             size=btn_size,
             icon_size=btn_icon,
@@ -180,7 +118,7 @@ class SampleCardUIBuilder:
         c.concat_cancel_button = self._make_round_btn(
             "fa5s.times",
             "Garder separe (ne pas concatener)",
-            color_normal="#b97a7a",
+            color_normal=p.ERROR,
             color_hover=icon_hover,
             size=btn_size,
             icon_size=btn_icon,
@@ -191,7 +129,7 @@ class SampleCardUIBuilder:
         c.delete_button = self._make_round_btn(
             "fa5s.trash-alt",
             "Supprimer",
-            color_normal="#d77a7a",
+            color_normal=p.ERROR,
             color_hover=icon_hover,
             size=btn_size,
             icon_size=btn_icon,
@@ -211,7 +149,7 @@ class SampleCardUIBuilder:
         c.normalize_button = self._make_round_btn(
             "fa5s.bolt",
             "Normaliser le sample",
-            color_normal="#c9a75a",
+            color_normal=p.WARNING,
             color_hover=icon_hover,
             size=btn_size,
             icon_size=btn_icon,
@@ -459,29 +397,7 @@ class SampleCardUIBuilder:
         # La logique playback est branchee dans SampleCardPlayback
 
         # Style du playback_slider
-        c.playback_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                height: 6px;
-                background: #2f2f2f;
-                margin: 0px;
-                border-radius: 3px;
-            }
-            QSlider::sub-page:horizontal {
-                background: #8e8e8e;
-                border-radius: 3px;
-            }
-            QSlider::add-page:horizontal {
-                background: #2f2f2f;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b0b0b0, stop:1 #7e7e7e);
-                border: 1px solid #4a4a4a;
-                width: 12px;
-                margin: -3px 0;
-                border-radius: 6px;
-            }
-        """)
+        self._apply_slider_stylesheet(c)
 
         # Installer l'event filter sur tous les enfants pour gerer le focus visuel
         for child in c.findChildren(QWidget):
@@ -502,9 +418,123 @@ class SampleCardUIBuilder:
             icon_size=icon_size,
             icon_color_normal=color_normal,
             icon_color_hover=color_hover,
-            border_color="#2a2a2a",
+            border_color=theme.manager.p.BG_CARD,
             parent=self.card,
         )
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         return btn
+
+    @staticmethod
+    def _apply_card_stylesheet(card):
+        p = theme.manager.p
+        card.setStyleSheet(f"""
+        SampleCard {{
+            background-color: {p.BG_MEDIUM};
+            border: 1px solid {p.BORDER};
+            border-radius: 10px;
+        }}
+        SampleCard:hover {{
+            background-color: {p.BG_HOVER};
+            border-color: {p.BORDER_LIGHT};
+        }}
+        SampleCard[focused="true"] {{
+            border: 1px solid {p.WARNING};
+        }}
+        SampleCard[checked="true"] {{
+            background-color: {p.BG_HOVER};
+            border-color: {p.WARNING};
+        }}
+        SampleCard[concatPreview="true"] {{
+            border: 1px solid {p.RETRO};
+        }}
+        QLabel#SampleName {{
+            font-weight: 600;
+            font-size: 14px;
+            color: {p.TEXT};
+        }}
+        QLabel#MetaLabel {{
+            color: {p.TEXT_MUTED};
+            font-size: 11px;
+        }}
+        QLabel#StatusLabel {{
+            color: {p.TEXT_MUTED};
+            font-size: 11px;
+        }}
+        QLabel#TimeLabel {{
+            color: {p.TEXT};
+            font-size: 11px;
+        }}
+        QLabel#DateChip {{
+            background-color: {p.BG_CARD};
+            color: {p.TEXT_MUTED};
+            border-radius: 10px;
+            padding: 2px 10px;
+        }}
+        QLabel#IdChip {{
+            background-color: {p.BG_CARD};
+            color: {p.TEXT_MUTED};
+            border-radius: 10px;
+            padding: 2px 10px;
+        }}
+        QLineEdit#RenameInput {{
+            background-color: {p.BG_CARD};
+            color: {p.TEXT};
+            border: 1px solid {p.WARNING};
+            padding: 4px 6px;
+            border-radius: 4px;
+        }}
+        QComboBox#DirCombo {{
+            background-color: {p.BG_MEDIUM};
+            color: {p.TEXT};
+            border: 1px solid {p.BORDER};
+            padding: 2px 6px;
+            border-radius: 4px;
+        }}
+        """)
+
+    @staticmethod
+    def _apply_slider_stylesheet(card):
+        p = theme.manager.p
+        card.playback_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 6px;
+                background: {p.BORDER};
+                margin: 0px;
+                border-radius: 3px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {p.TEXT_MUTED};
+                border-radius: 3px;
+            }}
+            QSlider::add-page:horizontal {{
+                background: {p.BORDER};
+                border-radius: 3px;
+            }}
+            QSlider::handle:horizontal {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {p.TEXT_MUTED}, stop:1 {p.BORDER_LIGHT});
+                border: 1px solid {p.BORDER_LIGHT};
+                width: 12px;
+                margin: -3px 0;
+                border-radius: 6px;
+            }}
+        """)
+
+    @staticmethod
+    def restyle(card):
+        """Re-applique le style selon le theme courant. Appeler sur themeChanged."""
+        SampleCardUIBuilder._apply_card_stylesheet(card)
+        SampleCardUIBuilder._apply_slider_stylesheet(card)
+        p = theme.manager.p
+        border = p.BG_CARD
+        icon_hover = "#111111"
+        card.check_button.update_colors(p.SUCCESS, icon_hover, border)
+        card.cancel_button.update_colors(p.TEXT_MUTED, icon_hover, border)
+        card.concat_button.update_colors(p.RETRO, icon_hover, border)
+        card.concat_cancel_button.update_colors(p.ERROR, icon_hover, border)
+        card.delete_button.update_colors(p.ERROR, icon_hover, border)
+        card.archive_button.update_colors(p.TEXT_MUTED, icon_hover, border)
+        card.normalize_button.update_colors(p.WARNING, icon_hover, border)
+        card.waveform_button.update_colors(p.TEXT_MUTED, icon_hover, border)
+        card.play_button.update_colors(p.TEXT_MUTED, icon_hover, border)

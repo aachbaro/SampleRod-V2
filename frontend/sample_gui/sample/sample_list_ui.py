@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 import qtawesome as qta
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
+from frontend.styles import theme
 
 class SampleListUIBuilder:
     def __init__(self, widget):
@@ -31,70 +32,7 @@ class SampleListUIBuilder:
         w = self.widget
         # Global container for the list area + header.
         w.setObjectName("SampleListRoot")
-        w.setStyleSheet(
-            """
-            QWidget#SampleListRoot {
-                background-color: #121212;
-            }
-            /* Unified panel that wraps toolbar + list + pagination */
-            QWidget#SampleListPanel {
-                background-color: #1b1b1b;
-                border: 1px solid #2a2a2a;
-                border-radius: 10px;
-            }
-            /* Toolbar lives inside the panel and should feel like a header */
-            QToolBar#SampleToolbar {
-                background: transparent;
-                border: none;
-                spacing: 6px;
-                padding: 6px 8px 4px 8px;
-            }
-            QToolBar#SampleToolbar::separator {
-                background: #2a2a2a;
-                width: 1px;
-                margin: 0 6px;
-            }
-            QScrollArea#SampleScroll {
-                background: transparent;
-                border: none;
-            }
-            QWidget#SampleListContent {
-                background: transparent;
-            }
-            QLabel#PaginationLabel {
-                color: #cfcfcf;
-            }
-            QMenu {
-                background: #1b1b1b;
-                color: #eaeaea;
-                border: 1px solid #2a2a2a;
-            }
-            QMenu::item:selected {
-                background: #2a2a2a;
-            }
-            QScrollBar:vertical {
-                background: #141414;
-                width: 10px;
-                margin: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: #2b2b2b;
-                border-radius: 4px;
-                min-height: 20px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #3a3a3a;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical,
-            QScrollBar::sub-page:vertical {
-                background: none;
-            }
-            """
-        )
+        SampleListUIBuilder._apply_stylesheet(w)
 
         main_layout = QVBoxLayout(w)
         main_layout.setContentsMargins(8, 8, 8, 8)
@@ -194,16 +132,100 @@ class SampleListUIBuilder:
         panel_layout.addLayout(w.pagination_layout)
 
     def _make_round_btn(self, icon_name: str, tooltip: str) -> HoverIconButton:
-        # Round 24px button with 10px icon, same style as waveform UI.
+        p = theme.manager.p
         btn = HoverIconButton(
             icon_name=icon_name,
             size=24,
             icon_size=10,
-            icon_color_normal="#cfcfcf",
-            icon_color_hover="#121212",
-            border_color="#2a2a2a",
+            icon_color_normal=p.TEXT_MUTED,
+            icon_color_hover="#111111",
+            border_color=p.BG_CARD,
             parent=self.widget.toolbar,
         )
         btn.setToolTip(tooltip)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         return btn
+
+    @staticmethod
+    def _apply_stylesheet(widget):
+        p = theme.manager.p
+        widget.setStyleSheet(
+            f"""
+            QWidget#SampleListRoot {{
+                background-color: {p.BG_DARK};
+            }}
+            QWidget#SampleListPanel {{
+                background-color: {p.BG_MEDIUM};
+                border: 1px solid {p.BORDER};
+                border-radius: 10px;
+            }}
+            QToolBar#SampleToolbar {{
+                background: transparent;
+                border: none;
+                spacing: 6px;
+                padding: 6px 8px 4px 8px;
+            }}
+            QToolBar#SampleToolbar::separator {{
+                background: {p.BORDER};
+                width: 1px;
+                margin: 0 6px;
+            }}
+            QScrollArea#SampleScroll {{
+                background: transparent;
+                border: none;
+            }}
+            QWidget#SampleListContent {{
+                background: transparent;
+            }}
+            QLabel#PaginationLabel {{
+                color: {p.TEXT_MUTED};
+            }}
+            QMenu {{
+                background: {p.BG_MEDIUM};
+                color: {p.TEXT};
+                border: 1px solid {p.BORDER};
+            }}
+            QMenu::item:selected {{
+                background: {p.BG_CARD};
+            }}
+            QScrollBar:vertical {{
+                background: {p.BG_DARK};
+                width: 10px;
+                margin: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {p.BORDER};
+                border-radius: 4px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {p.BORDER_LIGHT};
+            }}
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+            """
+        )
+
+    @staticmethod
+    def restyle(widget):
+        """Re-applique le style selon le theme courant. Appeler sur themeChanged."""
+        SampleListUIBuilder._apply_stylesheet(widget)
+        p = theme.manager.p
+        border = p.BG_CARD
+        neutral = p.TEXT_MUTED
+        icon_hover = "#111111"
+        for btn in [
+            widget.add_files_btn,
+            widget.select_all_btn,
+            widget.deselect_all_btn,
+            widget.actions_btn,
+            widget.prev_button,
+            widget.next_button,
+        ]:
+            btn.update_colors(neutral, icon_hover, border)

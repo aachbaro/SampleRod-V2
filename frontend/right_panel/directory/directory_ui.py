@@ -31,27 +31,22 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
+from frontend.styles import theme
 
 from .directory_list_widget import DirectoryListWidget
 
-# ----------------------------------------------------------------------------- tokens
-# Palette (coherente avec SampleCard / Waveform)
-BG_PANEL = "#1b1b1b"
-BG_PANEL_HOVER = "#202020"
-BORDER_PANEL = "#2a2a2a"
-BORDER_PANEL_HOVER = "#3a3a3a"
-TEXT_PRIMARY = "#f5f5f5"
-TEXT_MUTED = "#b9b9b9"
-
+# ----------------------------------------------------------------------------- tokens (non-color)
 BTN_SIZE = 24
 BTN_ICON = 10
-ICON_NORMAL = "#cfcfcf"
-ICON_HOVER = "#121212"
-ICON_DELETE_NORMAL = "#d77a7a"
 
 ICON_PLAY = "fa5s.play"
 ICON_PAUSE = "fa5s.pause"
 ICON_DELETE = "fa5s.trash-alt"
+
+# Kept for backward-compat callsites that might reference these directly
+# (remove once all callers use theme.manager.p.*)
+ICON_NORMAL = "#cfcfcf"
+ICON_HOVER = "#111111"
 
 
 # ----------------------------------------------------------------------------- builders
@@ -124,13 +119,14 @@ def build_directory_item_ui(
     item_widget.rename_input.editingFinished.connect(on_submit_rename)
 
     # Boutons: meme look & feel que le waveform editor (HoverIconButton 24px / icone 10px)
+    p = theme.manager.p
     item_widget.play_button = HoverIconButton(
         icon_name=ICON_PLAY,
         size=BTN_SIZE,
         icon_size=BTN_ICON,
-        icon_color_normal=ICON_NORMAL,
-        icon_color_hover=ICON_HOVER,
-        border_color=BORDER_PANEL,
+        icon_color_normal=p.TEXT_MUTED,
+        icon_color_hover="#111111",
+        border_color=p.BORDER,
         parent=item_widget,
     )
     item_widget.play_button.clicked.connect(on_toggle_preview)
@@ -141,9 +137,9 @@ def build_directory_item_ui(
         icon_name=ICON_DELETE,
         size=BTN_SIZE,
         icon_size=BTN_ICON,
-        icon_color_normal=ICON_DELETE_NORMAL,
-        icon_color_hover=ICON_HOVER,
-        border_color=BORDER_PANEL,
+        icon_color_normal=p.ERROR,
+        icon_color_hover="#111111",
+        border_color=p.BORDER,
         parent=item_widget,
     )
     item_widget.delete_button.clicked.connect(on_delete)
@@ -165,15 +161,23 @@ def build_directory_item_ui(
 
 def set_item_playing(item_widget, playing: bool) -> None:
     """Met a jour l'icone play/pause sans dupliquer les tokens dans le widget."""
+    p = theme.manager.p
     icon_name = ICON_PAUSE if playing else ICON_PLAY
     if hasattr(item_widget.play_button, "set_icon_pair"):
         item_widget.play_button.set_icon_pair(
             icon_name,
-            icon_color_normal=ICON_NORMAL,
-            icon_color_hover=ICON_HOVER,
+            icon_color_normal=p.TEXT_MUTED,
+            icon_color_hover="#111111",
         )
     else:
         item_widget.play_button.setIcon(qta.icon(icon_name, color="lightgray"))
+
+
+def restyle_item(item_widget) -> None:
+    """Re-applique le style d'une ligne selon le theme courant."""
+    p = theme.manager.p
+    item_widget.play_button.update_colors(p.TEXT_MUTED, "#111111", p.BORDER)
+    item_widget.delete_button.update_colors(p.ERROR, "#111111", p.BORDER)
 
 
 # ----------------------------------------------------------------------------- style
@@ -186,11 +190,10 @@ def apply_styles(widget) -> None:
       pour ne pas impacter le reste de l'application.
     - Les widgets "rows" (DirectoryRow) heritent de ce stylesheet.
     """
+    p = theme.manager.p
     widget.setStyleSheet(
         f"""
         QWidget#DirectoryWidget {{
-            /* Le "cadre" global est porte par RightToolsPanel (carte globale).
-               Ici on garde le contenu transparent pour eviter d'empiler les bordures. */
             background: transparent;
             border: none;
         }}
@@ -206,34 +209,31 @@ def apply_styles(widget) -> None:
             margin: 0px;
             background: transparent;
         }}
-        /* Retire la selection visuelle par defaut (on affiche des widgets custom). */
         QListWidget#DirectoryList::item:selected {{
             background: transparent;
         }}
 
         QWidget#DirectoryRow {{
-            background-color: #1f1f1f;
-            border: 1px solid {BORDER_PANEL};
+            background-color: {p.BG_MEDIUM};
+            border: 1px solid {p.BORDER};
             border-radius: 10px;
         }}
         QWidget#DirectoryRow:hover {{
-            background-color: #232323;
-            border-color: {BORDER_PANEL_HOVER};
+            background-color: {p.BG_HOVER};
+            border-color: {p.BORDER_LIGHT};
         }}
 
         QLabel#DirectoryItemName {{
-            color: {TEXT_PRIMARY};
+            color: {p.TEXT};
             font-size: 12px;
             font-weight: 600;
         }}
         QLineEdit#DirectoryRenameInput {{
-            background-color: #2a2a2a;
-            color: #ffffff;
-            border: 1px solid #f2c94c;
+            background-color: {p.BG_CARD};
+            color: {p.TEXT};
+            border: 1px solid {p.WARNING};
             border-radius: 6px;
             padding: 4px 6px;
         }}
-
-        /* Les boutons "row actions" utilisent HoverIconButton (style inline) */
         """
     )

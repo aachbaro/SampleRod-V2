@@ -38,6 +38,7 @@ from frontend.sample_gui.sample.sample_card_selection import SampleCardSelection
 from frontend.sample_gui.sample.sample_card_status import SampleCardStatus
 from frontend.sample_gui.sample.sample_card_ui import SampleCardUIBuilder
 from frontend.sample_gui.sample.sample_card_waveform import SampleCardWaveform
+from frontend.styles import theme
 
 logger = logging.getLogger("sample_card")
 
@@ -79,6 +80,7 @@ class SampleCard(QWidget):
 
         # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
         self.settings.librariesChanged.connect(self.updateLibraryCombo)
+        theme.manager.themeChanged.connect(self._on_theme_changed)
 
         # ---- UI + Controllers
         self.init_ui()
@@ -97,6 +99,9 @@ class SampleCard(QWidget):
         """Construit l'UI (widgets + layout) via SampleCardUIBuilder."""
         self.ui_builder = SampleCardUIBuilder(self)
         self.ui_builder.build()
+
+    def _on_theme_changed(self, _name: str):
+        SampleCardUIBuilder.restyle(self)
 
     def _build_shortcuts(self):
         """Raccourcis actifs seulement quand la carte (ou un enfant) a le focus."""
