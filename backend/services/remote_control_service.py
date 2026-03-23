@@ -207,17 +207,18 @@ class RemoteControlService:
         if not (ui_root / "package.json").exists():
             logger.info("[RemoteControl] No package.json, skip UI build")
             return
-        if shutil.which("npm") is None:
+        npm_exe = shutil.which("npm")
+        if npm_exe is None:
             logger.warning("[RemoteControl] npm not found in PATH. Install Node.js to enable UI build.")
             return
 
         node_modules = ui_root / "node_modules"
         if not node_modules.exists():
             logger.info("[RemoteControl] npm install...")
-            subprocess.run(["npm", "install"], cwd=str(ui_root), check=True)
+            subprocess.run([npm_exe, "install"], cwd=str(ui_root), check=True)
 
         logger.info("[RemoteControl] npm run build...")
-        subprocess.run(["npm", "run", "build"], cwd=str(ui_root), check=True)
+        subprocess.run([npm_exe, "run", "build"], cwd=str(ui_root), check=True)
         # Laisse au FS une micro-fenetre pour ecrire les timestamps
         time.sleep(0.1)
 
