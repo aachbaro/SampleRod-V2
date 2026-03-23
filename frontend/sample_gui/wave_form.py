@@ -175,6 +175,13 @@ class WaveformWidget(QWidget):
 
     # -- Loader (waveform_loader.py)
     def _load_audio(self, path):
+        # Déconnecter l'ancien thread s'il tourne encore pour ignorer son résultat.
+        # deleteLater() (connecté dans __init__) assure la destruction dans le bon thread.
+        if hasattr(self, "loader") and self.loader is not None:
+            try:
+                self.loader.waveformReady.disconnect(self.set_waveform_data)
+            except RuntimeError:
+                pass  # déjà déconnecté
         self.loader = WaveformLoaderThread(path)
         self.loader.waveformReady.connect(self.set_waveform_data)
         self.loader.start()
