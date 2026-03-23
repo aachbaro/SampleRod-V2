@@ -158,6 +158,7 @@ class _CaptureThread(threading.Thread):
     def __init__(
         self,
         mic_info,
+        device_name: str,
         sample_rate: int,
         block_size: int,
         audio_ring: deque,
@@ -166,6 +167,9 @@ class _CaptureThread(threading.Thread):
     ):
         super().__init__(name="SampleRod-Capture", daemon=True)
         self._mic_info = mic_info
+        # Nom mis en cache ici (thread principal) pour éviter un appel COM
+        # depuis le thread secondaire avant CoInitialize.
+        self._device_name = device_name
         self._sample_rate = sample_rate
         self._block_size = block_size
         self._audio_ring = audio_ring
@@ -173,9 +177,18 @@ class _CaptureThread(threading.Thread):
         self._error = error_event
 
     def run(self) -> None:
+        # COM doit être initialisé sur chaque thread qui utilise MediaFoundation.
+        # COINIT_MULTITHREADED (0x0) convient pour un thread de capture sans UI.
+        import sys
+        import ctypes
+        _com_init = False
+        if sys.platform.startswith("win"):
+            hr = ctypes.windll.ole32.CoInitializeEx(None, 0)
+            _com_init = hr in (0, 1)  # S_OK ou S_FALSE (déjà init sur ce thread)
+
         logger.info(
             "[capture] Démarrage sur '%s' @ %d Hz / bloc %d",
-            self._mic_info.name, self._sample_rate, self._block_size,
+            self._device_name, self._sample_rate, self._block_size,
         )
         try:
             with self._mic_info.recorder(samplerate=self._sample_rate) as mic:
@@ -188,6 +201,8 @@ class _CaptureThread(threading.Thread):
                 logger.error("[capture] Erreur inattendue : %s", exc)
                 self._error.set()
         finally:
+            if _com_init:
+                ctypes.windll.ole32.CoUninitialize()
             logger.info("[capture] Thread terminé.")
 
 
@@ -328,12 +343,15 @@ def recorder_worker(
     def _open_capture():
         """Démarre _CaptureThread sur le device courant."""
         mic_info = _find_microphone(selected_device_name)
+        # Résoudre le nom ici (thread principal, COM déjà init) pour éviter
+        # tout appel COM depuis le thread de capture avant sa propre init COM.
+        device_name = mic_info.name
         ring: deque = deque(maxlen=_AUDIO_RING_MAXBLOCKS)
         stop_evt = threading.Event()
         err_evt = threading.Event()
-        ct = _CaptureThread(mic_info, sample_rate, block_size, ring, stop_evt, err_evt)
+        ct = _CaptureThread(mic_info, device_name, sample_rate, block_size, ring, stop_evt, err_evt)
         ct.start()
-        return ct, ring, stop_evt, err_evt, mic_info.name
+        return ct, ring, stop_evt, err_evt, device_name
 
     def _stop_capture(ct: _CaptureThread, stop_evt: threading.Event) -> None:
         stop_evt.set()
