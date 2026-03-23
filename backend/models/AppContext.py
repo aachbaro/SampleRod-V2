@@ -63,11 +63,13 @@ class AppContext:
         # Service de parametres globaux (config utilisateur)
         self.settings = SettingsService(self)
 
-        # Service d'enregistrement audio avec parametres fixes
+        # Service d'enregistrement audio avec parametres fixes.
+        # block_size=1024 (~23ms) : réduit les discontinuités WASAPI par rapport
+        # à 512 (~11ms) en donnant plus de marge au scheduler Windows.
         self.recorder = RecorderService(
             self,
             sample_rate=44100,
-            block_size=512
+            block_size=1024
         )
         
         # Lecteur audio local (pygame)
