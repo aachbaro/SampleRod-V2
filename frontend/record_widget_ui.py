@@ -152,9 +152,9 @@ class RecordWidgetUIBuilder:
             f"""
             QLabel {{
                 background: transparent;
-                color: {p.BG_DARK};
+                color: {p.BG_CARD};
                 border: none;
-                font-size: 12px;
+                font-size: 11px;
                 font-weight: 700;
             }}
             """

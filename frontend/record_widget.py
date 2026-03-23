@@ -244,10 +244,11 @@ class RecordWidgetWindow(QMainWindow):
                 color: {text_color};
                 border: 1px solid {border};
                 border-radius: {button_radius}px;
+                font-size: 11px;
                 font-weight: 700;
             }}
             QPushButton:hover {{
-                border-color: #ffffff;
+                border-color: {p.TEXT};
             }}
             """
         )
@@ -257,7 +258,7 @@ class RecordWidgetWindow(QMainWindow):
             self.recordButton.setText(str(self.retro_time_selected))
         else:
             self.recordButton.setText("")
-            dot_color = theme.RECORDING if is_recording else "#ffffff"
+            dot_color = p.RECORDING if is_recording else p.TEXT
             self.recordButton.setIcon(qta.icon("fa5s.circle", color=dot_color))
 
         status = "Enregistrement en cours" if is_recording else "Pret"
