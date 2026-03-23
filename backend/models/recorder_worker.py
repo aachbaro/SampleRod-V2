@@ -173,8 +173,9 @@ class _CaptureThread(threading.Thread):
         self._sample_rate = sample_rate
         self._block_size = block_size
         self._audio_ring = audio_ring
-        self._stop = stop_event
-        self._error = error_event
+        # Noms préfixés "cap_" pour éviter le conflit avec threading.Thread._stop()
+        self._cap_stop = stop_event
+        self._cap_error = error_event
 
     def run(self) -> None:
         # COM doit être initialisé sur chaque thread qui utilise MediaFoundation.
@@ -192,14 +193,14 @@ class _CaptureThread(threading.Thread):
         )
         try:
             with self._mic_info.recorder(samplerate=self._sample_rate) as mic:
-                while not self._stop.is_set():
+                while not self._cap_stop.is_set():
                     data = mic.record(numframes=self._block_size)
                     # append() est atomique sous le GIL CPython
                     self._audio_ring.append(data)
         except Exception as exc:
-            if not self._stop.is_set():
+            if not self._cap_stop.is_set():
                 logger.error("[capture] Erreur inattendue : %s", exc)
-                self._error.set()
+                self._cap_error.set()
         finally:
             if _com_init:
                 ctypes.windll.ole32.CoUninitialize()
