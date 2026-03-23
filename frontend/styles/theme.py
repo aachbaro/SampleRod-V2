@@ -17,7 +17,7 @@
 #   theme.manager.themeChanged.connect(my_restyle_slot)
 # -----------------------------------------------------------------------------
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QSettings
 from PySide6.QtWidgets import QApplication
 
 # ---------------------------------------------------------------------------
@@ -90,9 +90,11 @@ class ThemeManager(QObject):
 
     def __init__(self):
         super().__init__()
-        self._name    = "dark"
-        self._palette = DARK
-        self.p        = _PaletteProxy(DARK)
+        saved = QSettings("SampleRod", "Main").value("ui/theme", "dark", type=str)
+        name = saved if saved in ("dark", "light") else "dark"
+        self._name    = name
+        self._palette = DARK if name == "dark" else LIGHT
+        self.p        = _PaletteProxy(self._palette)
 
     @property
     def palette(self) -> dict[str, str]:
@@ -114,8 +116,16 @@ class ThemeManager(QObject):
         self._name    = name
         self._palette = DARK if name == "dark" else LIGHT
         self.p._update(self._palette)
+        QSettings("SampleRod", "Main").setValue("ui/theme", name)
+        # Bloquer les repaints intermediaires : tout s'applique en un seul frame
+        app = QApplication.instance()
+        top_level = app.topLevelWidgets() if app else []
+        for w in top_level:
+            w.setUpdatesEnabled(False)
         self._apply_global_qss()
         self.themeChanged.emit(name)
+        for w in top_level:
+            w.setUpdatesEnabled(True)
 
     def apply(self):
         """Appliquer le theme au demarrage (sans emettre le signal)."""
@@ -134,7 +144,7 @@ class ThemeManager(QObject):
 def build_global_qss(p: dict[str, str]) -> str:
     """Genere le QSS applique a QApplication pour couvrir les widgets standard."""
     return f"""
-    /* --- Base --- */
+    /* === Base === */
     QMainWindow, QDialog {{
         background-color: {p['BG']};
         color: {p['TEXT']};
@@ -142,22 +152,26 @@ def build_global_qss(p: dict[str, str]) -> str:
     QWidget {{
         background-color: {p['BG']};
         color: {p['TEXT']};
-        font-size: 13px;
     }}
 
-    /* --- Labels --- */
+    /* === Labels === */
     QLabel {{
         background: transparent;
         color: {p['TEXT']};
     }}
+    QLabel#SettingsDesc {{
+        color: {p['TEXT_MUTED']};
+        font-size: 12px;
+    }}
 
-    /* --- Boutons --- */
+    /* === Boutons === */
     QPushButton {{
         background-color: {p['BG_CARD']};
         color: {p['TEXT']};
         border: 1px solid {p['BORDER']};
-        border-radius: 4px;
-        padding: 4px 10px;
+        border-radius: 6px;
+        padding: 5px 12px;
+        font-weight: 500;
     }}
     QPushButton:hover {{
         background-color: {p['BG_HOVER']};
@@ -174,7 +188,7 @@ def build_global_qss(p: dict[str, str]) -> str:
     QToolButton {{
         background-color: transparent;
         color: {p['TEXT']};
-        border: 1px solid {p['BORDER_LIGHT']};
+        border: none;
         border-radius: 4px;
         padding: 2px;
     }}
@@ -182,35 +196,41 @@ def build_global_qss(p: dict[str, str]) -> str:
         background-color: {p['BG_HOVER']};
     }}
 
-    /* --- Onglets --- */
+    /* === Onglets (style underline moderne) === */
     QTabWidget::pane {{
-        border: 1px solid {p['BORDER']};
+        border: none;
+        border-top: 1px solid {p['BORDER']};
         background-color: {p['BG']};
+    }}
+    QTabBar {{
+        background: transparent;
     }}
     QTabBar::tab {{
-        background-color: {p['BG_MEDIUM']};
+        background: transparent;
         color: {p['TEXT_MUTED']};
-        border: 1px solid {p['BORDER']};
-        border-bottom: none;
-        padding: 6px 14px;
+        border: none;
+        border-bottom: 2px solid transparent;
+        padding: 8px 16px;
         margin-right: 2px;
+        font-weight: 500;
     }}
     QTabBar::tab:selected {{
-        background-color: {p['BG']};
         color: {p['TEXT']};
-        border-bottom: 1px solid {p['BG']};
+        border-bottom: 2px solid {p['RETRO']};
     }}
     QTabBar::tab:hover:!selected {{
-        background-color: {p['BG_HOVER']};
         color: {p['TEXT']};
+        background-color: {p['BG_HOVER']};
+        border-radius: 4px 4px 0 0;
     }}
 
-    /* --- Listes --- */
+    /* === Listes === */
     QListWidget, QListView, QTreeView {{
         background-color: {p['BG_MEDIUM']};
         color: {p['TEXT']};
         border: 1px solid {p['BORDER']};
-        alternate-background-color: {p['BG_CARD']};
+        border-radius: 6px;
+        outline: none;
     }}
     QListWidget::item:hover, QListView::item:hover {{
         background-color: {p['BG_HOVER']};
@@ -220,16 +240,16 @@ def build_global_qss(p: dict[str, str]) -> str:
         color: {p['TEXT']};
     }}
 
-    /* --- Scrollbar --- */
+    /* === Scrollbars (fines et discretes) === */
     QScrollBar:vertical {{
-        background: {p['BG_DARK']};
-        width: 8px;
+        background: transparent;
+        width: 6px;
         margin: 0;
     }}
     QScrollBar::handle:vertical {{
         background: {p['BORDER']};
-        border-radius: 4px;
-        min-height: 20px;
+        border-radius: 3px;
+        min-height: 24px;
     }}
     QScrollBar::handle:vertical:hover {{
         background: {p['TEXT_MUTED']};
@@ -237,15 +257,18 @@ def build_global_qss(p: dict[str, str]) -> str:
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
         height: 0;
     }}
+    QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+        background: transparent;
+    }}
     QScrollBar:horizontal {{
-        background: {p['BG_DARK']};
-        height: 8px;
+        background: transparent;
+        height: 6px;
         margin: 0;
     }}
     QScrollBar::handle:horizontal {{
         background: {p['BORDER']};
-        border-radius: 4px;
-        min-width: 20px;
+        border-radius: 3px;
+        min-width: 24px;
     }}
     QScrollBar::handle:horizontal:hover {{
         background: {p['TEXT_MUTED']};
@@ -253,14 +276,17 @@ def build_global_qss(p: dict[str, str]) -> str:
     QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
         width: 0;
     }}
+    QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+        background: transparent;
+    }}
 
-    /* --- Inputs --- */
+    /* === Inputs === */
     QLineEdit, QTextEdit, QPlainTextEdit {{
         background-color: {p['BG_CARD']};
         color: {p['TEXT']};
         border: 1px solid {p['BORDER']};
-        border-radius: 4px;
-        padding: 4px 6px;
+        border-radius: 6px;
+        padding: 5px 8px;
         selection-background-color: {p['INFO']};
     }}
     QLineEdit:focus, QTextEdit:focus {{
@@ -271,61 +297,81 @@ def build_global_qss(p: dict[str, str]) -> str:
         background-color: {p['BG_CARD']};
         color: {p['TEXT']};
         border: 1px solid {p['BORDER']};
-        border-radius: 4px;
-        padding: 3px 6px;
+        border-radius: 6px;
+        padding: 4px 8px;
+        min-height: 24px;
     }}
     QSpinBox::up-button, QSpinBox::down-button {{
         background-color: {p['BG_MEDIUM']};
         border: none;
+        width: 16px;
     }}
     QComboBox::drop-down {{
         border: none;
         background: {p['BG_MEDIUM']};
+        width: 20px;
+        border-radius: 0 6px 6px 0;
     }}
     QComboBox QAbstractItemView {{
         background-color: {p['BG_CARD']};
         color: {p['TEXT']};
         border: 1px solid {p['BORDER']};
+        border-radius: 6px;
         selection-background-color: {p['BG_HOVER']};
+        outline: none;
     }}
 
-    /* --- Checkbox --- */
+    /* === Checkbox === */
     QCheckBox {{
         color: {p['TEXT']};
         spacing: 6px;
+        background: transparent;
     }}
     QCheckBox::indicator {{
-        width: 14px;
-        height: 14px;
-        border: 1px solid {p['BORDER']};
-        border-radius: 3px;
+        width: 15px;
+        height: 15px;
+        border: 1.5px solid {p['BORDER']};
+        border-radius: 4px;
         background: {p['BG_CARD']};
     }}
     QCheckBox::indicator:checked {{
         background: {p['INFO']};
         border-color: {p['INFO']};
     }}
+    QCheckBox::indicator:hover {{
+        border-color: {p['TEXT_MUTED']};
+    }}
 
-    /* --- GroupBox --- */
+    /* === GroupBox === */
     QGroupBox {{
-        color: {p['TEXT_MUTED']};
+        color: {p['TEXT']};
         border: 1px solid {p['BORDER']};
-        border-radius: 4px;
-        margin-top: 8px;
-        padding-top: 8px;
-        font-size: 11px;
+        border-radius: 10px;
+        margin-top: 12px;
+        padding: 14px 12px 12px 12px;
+        background-color: {p['BG_MEDIUM']};
     }}
     QGroupBox::title {{
         subcontrol-origin: margin;
-        left: 8px;
-        padding: 0 4px;
+        left: 12px;
+        top: -6px;
+        padding: 2px 8px;
+        background-color: {p['BG_MEDIUM']};
+        border-radius: 4px;
     }}
 
-    /* --- Menus --- */
+    /* === Menus === */
     QMenu {{
         background-color: {p['BG_MEDIUM']};
         color: {p['TEXT']};
         border: 1px solid {p['BORDER']};
+        border-radius: 8px;
+        padding: 4px;
+    }}
+    QMenu::item {{
+        padding: 6px 20px 6px 12px;
+        border-radius: 4px;
+        margin: 1px 4px;
     }}
     QMenu::item:selected {{
         background-color: {p['BG_CARD']};
@@ -333,10 +379,10 @@ def build_global_qss(p: dict[str, str]) -> str:
     QMenu::separator {{
         height: 1px;
         background: {p['BORDER']};
-        margin: 2px 0;
+        margin: 4px 8px;
     }}
 
-    /* --- Splitter --- */
+    /* === Splitter === */
     QSplitter::handle {{
         background-color: {p['BORDER']};
     }}
@@ -345,6 +391,15 @@ def build_global_qss(p: dict[str, str]) -> str:
     }}
     QSplitter::handle:vertical {{
         height: 1px;
+    }}
+
+    /* === Tooltips === */
+    QToolTip {{
+        background-color: {p['BG_MEDIUM']};
+        color: {p['TEXT']};
+        border: 1px solid {p['BORDER']};
+        border-radius: 6px;
+        padding: 4px 8px;
     }}
     """
 

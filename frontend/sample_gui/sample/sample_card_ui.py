@@ -280,16 +280,19 @@ class SampleCardUIBuilder:
         info_layout.setSpacing(0)
 
         left_box = QWidget()
+        left_box.setObjectName("InfoLeft")
         left_layout = QHBoxLayout(left_box)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addWidget(c.change_dir_combobox, alignment=Qt.AlignmentFlag.AlignLeft)
 
         center_box = QWidget()
+        center_box.setObjectName("InfoCenter")
         center_layout = QHBoxLayout(center_box)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.addWidget(c.date_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         right_box = QWidget()
+        right_box.setObjectName("InfoRight")
         right_layout = QHBoxLayout(right_box)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addWidget(c.status_label, alignment=Qt.AlignmentFlag.AlignRight)
@@ -328,17 +331,20 @@ class SampleCardUIBuilder:
         # Base layer: slider + spacer reserve la place du time label pour que
         # la barre ne "passe pas dessous".
         base = QWidget()
+        base.setObjectName("TimelineBase")
         base_layout = QHBoxLayout(base)
         base_layout.setContentsMargins(0, 0, 0, 0)
         base_layout.setSpacing(0)
         base_layout.addWidget(c.playback_slider, 1)
         c.timeline_right_spacer = QWidget()
+        c.timeline_right_spacer.setObjectName("TimelineRightSpacer")
         # Reserve strictement la place du time label (pas plus).
         c.timeline_right_spacer.setFixedWidth(c.time_label.width())
         base_layout.addWidget(c.timeline_right_spacer)
 
         # Overlay layer: time label aligne a droite.
         overlay = QWidget()
+        overlay.setObjectName("TimelineOverlay")
         overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         overlay_layout = QHBoxLayout(overlay)
         overlay_layout.setContentsMargins(0, 0, 0, 0)
@@ -448,6 +454,14 @@ class SampleCardUIBuilder:
         SampleCard[concatPreview="true"] {{
             border: 1px solid {p.RETRO};
         }}
+        /* Conteneurs internes transparents — evitent l'artefact BG vs BG_MEDIUM */
+        QWidget#PlaybackContainer, QWidget#EditorContainer,
+        QWidget#WaveformContainer, QWidget#TimelineContainer,
+        QWidget#TimelineBase, QWidget#TimelineOverlay,
+        QWidget#TimelineRightSpacer,
+        QWidget#InfoLeft, QWidget#InfoCenter, QWidget#InfoRight {{
+            background: transparent;
+        }}
         QLabel#SampleName {{
             font-weight: 600;
             font-size: 14px;
@@ -497,6 +511,9 @@ class SampleCardUIBuilder:
     def _apply_slider_stylesheet(card):
         p = theme.manager.p
         card.playback_slider.setStyleSheet(f"""
+            QSlider {{
+                background: transparent;
+            }}
             QSlider::groove:horizontal {{
                 height: 6px;
                 background: {p.BORDER};

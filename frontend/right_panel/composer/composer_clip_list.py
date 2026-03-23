@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
+from frontend.styles import theme
 from .composer_dnd import has_slice, has_sample_card, parse_slice_mime, parse_sample_card_mime
 
 logger = logging.getLogger("sample_composer_clip_list")
@@ -176,13 +177,13 @@ class ComposerClipRow(QWidget):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(6)
 
+        p = theme.manager.p
         self.play_btn = HoverIconButton(
             "fa5s.play",
             size=24,
             icon_size=10,
-            icon_color_normal="#cfcfcf",
-            icon_color_hover="#121212",
-            # border_color="#2A2A2A",
+            icon_color_normal=p.TEXT_MUTED,
+            icon_color_hover=p.BG_DARK,
             parent=self.actions_wrap,
         )
         self.play_btn.setToolTip("Lire ce segment")
@@ -191,9 +192,8 @@ class ComposerClipRow(QWidget):
             "fa5s.plus",
             size=24,
             icon_size=10,
-            icon_color_normal="#cfcfcf",
-            icon_color_hover="#121212",
-            # border_color="#2A2A2A",
+            icon_color_normal=p.TEXT_MUTED,
+            icon_color_hover=p.BG_DARK,
             parent=self.actions_wrap,
         )
         self.silence_btn.setToolTip("Ajouter 1s de silence après ce segment")
@@ -202,9 +202,8 @@ class ComposerClipRow(QWidget):
             "fa5s.trash-alt",
             size=24,
             icon_size=10,
-            icon_color_normal="#d77a7a",
-            icon_color_hover="#121212",
-            # border_color="#2A2A2A",
+            icon_color_normal=p.ERROR,
+            icon_color_hover=p.BG_DARK,
             parent=self.actions_wrap,
         )
         self.delete_btn.setToolTip("Supprimer ce segment")
@@ -233,6 +232,16 @@ class ComposerClipRow(QWidget):
         self.play_btn.clicked.connect(lambda: self.playRequested.emit(self.clip_id))
         self.silence_btn.clicked.connect(lambda: self.silenceRequested.emit(self.clip_id))
         self.delete_btn.clicked.connect(lambda: self.removeRequested.emit(self.clip_id))
+
+        theme.manager.themeChanged.connect(lambda _: self._restyle_buttons())
+
+    # ------------------------------------------------------------------ restyle
+    def _restyle_buttons(self) -> None:
+        p = theme.manager.p
+        self.play_btn.update_colors(p.TEXT_MUTED, p.BG_DARK)
+        self.silence_btn.update_colors(p.TEXT_MUTED, p.BG_DARK)
+        self.delete_btn.update_colors(p.ERROR, p.BG_DARK)
+        self.update()
 
     # ------------------------------------------------------------------ state
     def set_selected(self, selected: bool) -> None:
@@ -291,12 +300,13 @@ class ComposerClipRow(QWidget):
         # Couleurs (harmonisees avec composer_ui.py)
         bg = QColor(0, 0, 0, 0)  # transparent
         border = QColor(0, 0, 0, 0)
+        p = theme.manager.p
         if self.property("selected"):
-            bg = QColor(0x2b, 0x2b, 0x2b)
-            border = QColor(0x3a, 0x3a, 0x3a)
+            bg = QColor(p.BG_CARD)
+            border = QColor(p.BORDER)
         elif self._hovered:
-            bg = QColor(0x23, 0x23, 0x23)
-            border = QColor(0x3a, 0x3a, 0x3a)
+            bg = QColor(p.BG_HOVER)
+            border = QColor(p.BORDER_LIGHT)
 
         painter.setBrush(bg)
         painter.setPen(QPen(border, 1))

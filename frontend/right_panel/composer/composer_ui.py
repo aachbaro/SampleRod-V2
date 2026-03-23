@@ -19,21 +19,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QSizePolicy
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
+from frontend.styles import theme
 
 from .composer_clip_list import ComposerClipListWidget
 
-# ----------------------------------------------------------------------------- tokens (coherents avec le reste de l'app)
-BG_PANEL = "#1b1b1b"
-BORDER = "#2a2a2a"
-BORDER_HOVER = "#3a3a3a"
-TEXT_PRIMARY = "#f5f5f5"
-TEXT_MUTED = "#b9b9b9"
-
 BTN_SIZE = 24
 BTN_ICON = 10
-ICON_NORMAL = "#cfcfcf"
-ICON_HOVER = "#121212"
-ICON_DELETE_NORMAL = "#d77a7a"
 
 
 def build_composer_widget_ui(widget) -> None:
@@ -60,17 +51,17 @@ def build_composer_widget_ui(widget) -> None:
 
     widget.info_label = QLabel("Drop des slices (markers) pour composer un sample")
     widget.info_label.setObjectName("ComposerInfoLabel")
-    widget.info_label.setStyleSheet(f"color: {TEXT_MUTED};")
 
     header.addWidget(widget.info_label, 1)
 
+    p = theme.manager.p
     widget.save_comp_btn = HoverIconButton(
         icon_name="fa5s.save",
         size=BTN_SIZE,
         icon_size=BTN_ICON,
-        icon_color_normal=ICON_NORMAL,
-        icon_color_hover=ICON_HOVER,
-        border_color=BORDER,
+        icon_color_normal=p.TEXT_MUTED,
+        icon_color_hover="#111111",
+        border_color=p.BORDER,
         parent=widget,
     )
     widget.save_comp_btn.setToolTip("Sauvegarder la composition")
@@ -81,9 +72,9 @@ def build_composer_widget_ui(widget) -> None:
         icon_name="fa5s.times",
         size=BTN_SIZE,
         icon_size=BTN_ICON,
-        icon_color_normal=ICON_NORMAL,
-        icon_color_hover=ICON_HOVER,
-        border_color=BORDER,
+        icon_color_normal=p.TEXT_MUTED,
+        icon_color_hover="#111111",
+        border_color=p.BORDER,
         parent=widget,
     )
     widget.clear_btn.setToolTip("Vider la composition")
@@ -127,31 +118,33 @@ def build_composer_widget_ui(widget) -> None:
     layout.addWidget(preview, 1)
 
     apply_styles(widget)
+    theme.manager.themeChanged.connect(lambda _: restyle(widget))
 
 
 def apply_styles(widget) -> None:
+    p = theme.manager.p
     widget.setStyleSheet(
         f"""
         QLabel#ComposerInfoLabel {{
+            color: {p.TEXT_MUTED};
             font-size: 11px;
         }}
         QLabel#ComposerTimeLabel {{
-            color: {TEXT_MUTED};
+            color: {p.TEXT_MUTED};
             font-size: 10px;
         }}
 
         QWidget#ComposerToolCard[focused="true"] {{
-            border: 1px solid #f2c94c;
+            border: 1px solid {p.WARNING};
         }}
         QWidget#ComposerToolCard[dropActive="true"] {{
-            border: 1px solid #f2c94c;
-            background-color: #202020;
+            border: 1px solid {p.WARNING};
+            background-color: {p.BG_HOVER};
         }}
 
-        /* Clip list = meme style que DirectoryWidget (rows custom) */
         QListWidget#ComposerClipList {{
             background: transparent;
-            border: 1px solid {BORDER};
+            border: 1px solid {p.BORDER_LIGHT};
             border-radius: 10px;
             padding: 4px;
             outline: none;
@@ -175,26 +168,19 @@ def apply_styles(widget) -> None:
         QWidget#ComposerClipRow {{
             background-color: transparent;
             border: none;
-            border-radius: 0px;
-        }}
-        QWidget#ComposerClipRow:hover {{
-            background-color: transparent;
-            border: none;
-        }}
-        QWidget#ComposerClipRow[selected="true"] {{
-            background-color: transparent;
-            border: none;
         }}
         QLabel#ComposerClipLabel {{
-            color: {TEXT_PRIMARY};
+            color: {p.TEXT};
             font-size: 12px;
             font-weight: 600;
         }}
-        QToolTip {{
-            border: 1px solid #3a3a3a;
-            padding: 4px 6px;
-        }}
         """
-            # color: #f2f2f2;
-            # background-color: #1e1e1e;
     )
+
+
+def restyle(widget) -> None:
+    """Re-applique les styles selon le theme courant."""
+    apply_styles(widget)
+    p = theme.manager.p
+    widget.save_comp_btn.update_colors(p.TEXT_MUTED, "#111111", p.BORDER)
+    widget.clear_btn.update_colors(p.TEXT_MUTED, "#111111", p.BORDER)

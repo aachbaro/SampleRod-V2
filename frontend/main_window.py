@@ -76,20 +76,7 @@ class MainWindow(QMainWindow):
         # etc.) soient coherents avec le reste (SampleCard / SampleList / Waveform).
         # On limite volontairement le scope via des objectName pour eviter des effets de bord.
         self.setObjectName("MainWindow")
-        self.setStyleSheet(
-            """
-            QMainWindow#MainWindow {
-                background-color: #121212;
-            }
-            QTabWidget#MainTabWidget {
-                background-color: #121212;
-            }
-            QTabWidget#MainTabWidget::pane {
-                border: none;
-                background-color: #121212;
-            }
-            """
-        )
+        self._apply_window_stylesheet()
         self.setCentralWidget(self.tab_widget)
 
         # --- Onglet 'Enregistrement' (pop-up flottant)
@@ -286,12 +273,29 @@ class MainWindow(QMainWindow):
         self._was_maximized_before_fullscreen = self.isMaximized()
         self.showFullScreen()
 
+    def _apply_window_stylesheet(self):
+        p = theme.manager.p
+        self.setStyleSheet(f"""
+            QMainWindow#MainWindow {{
+                background-color: {p.BG_DARK};
+            }}
+            QTabWidget#MainTabWidget {{
+                background-color: {p.BG_DARK};
+            }}
+            QTabWidget#MainTabWidget::pane {{
+                border: none;
+                background-color: {p.BG_DARK};
+            }}
+        """)
+
     def _update_theme_button_icon(self):
         icon_name = "fa5s.sun" if theme.manager.is_dark() else "fa5s.moon"
-        self.theme_button.setIcon(qta.icon(icon_name, color="lightgray"))
+        color = "lightgray" if theme.manager.is_dark() else "#555555"
+        self.theme_button.setIcon(qta.icon(icon_name, color=color))
 
     def _on_theme_changed(self, _name: str):
         self._update_theme_button_icon()
+        self._apply_window_stylesheet()
 
     def closeEvent(self, event):
         """Nettoyage lors de la fermeture de la fenÃªtre principale"""
@@ -331,7 +335,7 @@ class MainWindow(QMainWindow):
         if description:
             desc_label = QLabel(description)
             desc_label.setWordWrap(True)
-            desc_label.setStyleSheet("color: #6b6b6b;")
+            desc_label.setObjectName("SettingsDesc")
             layout.addWidget(desc_label)
 
         layout.addWidget(widget)

@@ -138,17 +138,6 @@ if __name__ == '__main__':
     except Exception:
         pass
 
-    gui.setStyleSheet(
-        """
-        QToolTip {
-            background-color: #1e1e1e;
-            color: #f2f2f2;
-            border: 1px solid #3a3a3a;
-            padding: 4px 6px;
-        }
-        """
-    )
-
     splash.set_status("Construction de l'interface...")
     main_window = MainWindow(app_context)
 
