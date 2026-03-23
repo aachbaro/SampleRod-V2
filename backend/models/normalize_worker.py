@@ -12,6 +12,8 @@
 # backend/models/normalize_worker.py
 
 import os
+import tempfile
+import time
 import numpy as np
 import soundfile as sf
 import logging
@@ -161,15 +163,52 @@ class NormalizeWorker(QThread):
             # Mode inconnu : on ne fait rien
             logger.info(f"[NormalizeWorker] Mode inconnu '{self.mode}' pour {self.file_path}")
 
-        # 4) Réécriture du fichier WAV normalisé (écrase l’original)
+        # 4) Réécriture du fichier WAV normalisé (écrase l'original).
+#
+        # Sur Windows, écrire directement sur le fichier original échoue si un
+        # autre handle l'a ouvert (pygame mixer, WaveformLoaderThread, etc.).
+        # Pattern sûr : écrire dans un fichier temp du même dossier, puis
+        # os.replace() avec retries courts pour absorber les locks temporaires.
+        folder = os.path.dirname(self.file_path)
+        tmp_path = None
         try:
-            sf.write(self.file_path, data, sr)
-            logger.info(f"[NormalizeWorker] Normalisation terminée pour {self.file_path}")
-            self.finishedNormalization.emit(self.sample_id)
+            fd, tmp_path = tempfile.mkstemp(suffix='.wav', dir=folder)
+            os.close(fd)
+            sf.write(tmp_path, data, sr)
         except Exception as e:
-            err = f"Écriture impossible : {e}"
-            logger.info(f"[NormalizeWorker] {err}")
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+            err = f'Ecriture impossible : {e}'
+            logger.error('[NormalizeWorker] %s', err)
             self.normalizationFailed.emit(self.sample_id, err)
+            return
 
-        # 5) Signal de fin de normalisation
+        # os.replace() peut echouer si la cible est encore verrouillee :
+        # on retente jusqu'a 5 fois avec un delai croissant (50 -> 400 ms).
+        replaced = False
+        delay = 0.05
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, self.file_path)
+                replaced = True
+                break
+            except OSError:
+                if attempt < 4:
+                    time.sleep(delay)
+                    delay *= 2
+
+        if not replaced:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+            err = 'Fichier verrouille par un autre processus (pygame / lecteur actif ?)'
+            logger.error('[NormalizeWorker] %s', err)
+            self.normalizationFailed.emit(self.sample_id, err)
+            return
+
+        logger.info('[NormalizeWorker] Normalisation terminee pour %s', self.file_path)
         self.finishedNormalization.emit(self.sample_id)
