@@ -57,6 +57,7 @@ class HoverIconButton(QToolButton):
         icon_color_hover: str,
         border_color: str = "#2A2A2A",
         border_color_hover: str = "#FFFFFF",
+        bg_hover: "QColor | None" = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -74,7 +75,7 @@ class HoverIconButton(QToolButton):
         self._border_color_hover = border_color_hover
         self._border_color_current = border_color
         self._bg_normal = QColor(255, 255, 255, 0)
-        self._bg_hover = QColor(255, 255, 255, 255)
+        self._bg_hover = bg_hover if bg_hover is not None else QColor(255, 255, 255, 255)
         self._current_bg = QColor(self._bg_normal)
         self._anim = QVariantAnimation(self)
         self._anim.setDuration(140)
@@ -141,6 +142,10 @@ class HoverIconButton(QToolButton):
         self._anim.setStartValue(start)
         self._anim.setEndValue(end)
         self._anim.start()
+
+    def set_bg_hover(self, color: QColor):
+        """Update hover background color (theme support)."""
+        self._bg_hover = color
 
     def set_border_color(self, color: str):
         """Update normal border color (theme support)."""

@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QLabel,
     QHBoxLayout,
@@ -418,6 +419,10 @@ class SampleCardUIBuilder:
         size: int,
         icon_size: int,
     ) -> HoverIconButton:
+        bg_hover = (
+            QColor(255, 255, 255, 210) if theme.manager.is_dark()
+            else QColor(30, 30, 30, 55)
+        )
         btn = HoverIconButton(
             icon_name=icon_name,
             size=size,
@@ -425,6 +430,7 @@ class SampleCardUIBuilder:
             icon_color_normal=color_normal,
             icon_color_hover=color_hover,
             border_color=theme.manager.p.BG_CARD,
+            bg_hover=bg_hover,
             parent=self.card,
         )
         btn.setToolTip(tooltip)
@@ -546,6 +552,16 @@ class SampleCardUIBuilder:
         p = theme.manager.p
         border = p.BG_CARD
         icon_hover = "#111111"
+        bg_hover = (
+            QColor(255, 255, 255, 210) if theme.manager.is_dark()
+            else QColor(30, 30, 30, 55)
+        )
+        for btn in (
+            card.check_button, card.cancel_button, card.concat_button,
+            card.concat_cancel_button, card.delete_button, card.archive_button,
+            card.normalize_button, card.waveform_button, card.play_button,
+        ):
+            btn.set_bg_hover(bg_hover)
         card.check_button.update_colors(p.SUCCESS, icon_hover, border)
         card.cancel_button.update_colors(p.TEXT_MUTED, icon_hover, border)
         card.concat_button.update_colors(p.RETRO, icon_hover, border)

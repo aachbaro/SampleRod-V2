@@ -43,7 +43,7 @@ Ce decoupage prepare l'arrivee d'autres outils dans le Right Panel (ex: Sample C
 """
 
 from PySide6.QtWidgets import QWidget, QSizePolicy, QListWidgetItem
-from PySide6.QtCore import Signal, QSettings
+from PySide6.QtCore import Signal, QSettings, QPropertyAnimation, QEasingCurve, QSize
 import wave
 
 from backend.services.directory_service import DirectoryService
@@ -153,11 +153,36 @@ class DirectoryWidget(QWidget):
     def _add_row(self, path: str, sample_id: int | None) -> None:
         item_widget = DirectoryListItemWidget(path, self, sample_id)
         list_item = QListWidgetItem(self.list_widget)
-        list_item.setSizeHint(item_widget.sizeHint())
+        target_h = max(1, item_widget.sizeHint().height())
+        item_widget.setMaximumHeight(0)
+        list_item.setSizeHint(QSize(0, 0))
         self.list_widget.addItem(list_item)
         self.list_widget.setItemWidget(list_item, item_widget)
         if sample_id is not None:
             self._items_by_id[sample_id] = (list_item, item_widget)
+
+        lw = self.list_widget
+        anim = QPropertyAnimation(item_widget, b"maximumHeight", lw)
+        anim.setDuration(200)
+        anim.setStartValue(0)
+        anim.setEndValue(target_h)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        def _hint(h):
+            try:
+                list_item.setSizeHint(QSize(lw.viewport().width(), h))
+            except RuntimeError:
+                pass
+
+        anim.valueChanged.connect(_hint)
+        anim.finished.connect(
+            lambda: (
+                item_widget.setMaximumHeight(16777215),
+                _hint(target_h),
+            )
+        )
+        anim.start()
+        item_widget._anim_in = anim
 
     def _update_row(self, sample_id: int, new_path: str) -> None:
         item = self._items_by_id.get(sample_id)
@@ -179,14 +204,51 @@ class DirectoryWidget(QWidget):
     def _remove_widget(self, widget: 'DirectoryListItemWidget') -> None:
         # IMPORTANT: si le widget etait en preview, on detache/stoppe proprement avant destruction.
         self.preview.on_widget_removed(widget)
+
+        target_item = None
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             if self.list_widget.itemWidget(item) is widget:
-                self.list_widget.takeItem(i)
-                widget.deleteLater()
+                target_item = item
                 break
+
         if widget.sample_id is not None:
             self._items_by_id.pop(widget.sample_id, None)
+
+        if target_item is None:
+            return
+
+        start_h = max(1, widget.height())
+        lw = self.list_widget
+
+        anim = QPropertyAnimation(widget, b"maximumHeight", lw)
+        anim.setDuration(160)
+        anim.setStartValue(start_h)
+        anim.setEndValue(0)
+        anim.setEasingCurve(QEasingCurve.Type.InCubic)
+
+        def _hint(h):
+            try:
+                target_item.setSizeHint(QSize(lw.viewport().width(), h))
+            except RuntimeError:
+                pass
+
+        def _finalize():
+            try:
+                row = lw.row(target_item)
+                if row >= 0:
+                    lw.takeItem(row)
+            except RuntimeError:
+                pass
+            try:
+                widget.deleteLater()
+            except RuntimeError:
+                pass
+
+        anim.valueChanged.connect(_hint)
+        anim.finished.connect(_finalize)
+        anim.start()
+        widget._anim_out = anim
 
     @staticmethod
     def remove_from_history(path: str) -> None:

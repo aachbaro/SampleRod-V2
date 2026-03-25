@@ -16,6 +16,10 @@
 import sys
 import os
 os.environ.setdefault('PYQTGRAPH_QT_LIB', 'PySide6')
+if os.getenv("SAMPLEROD_DISABLE_SCALE", "0") != "1":
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
+    os.environ.setdefault("QT_AUTO_SCREEN_SCALE_FACTOR", "0")
+    os.environ.setdefault("QT_SCALE_FACTOR", "1")
 import subprocess
 import multiprocessing as mp
 from pathlib import Path
@@ -83,12 +87,6 @@ if __name__ == '__main__':
     except RuntimeError:
         # Peut deja etre defini ailleurs
         pass
-    # Force un scale stable entre dev et exe (evite tailles UI differentes)
-    if os.getenv("SAMPLEROD_DISABLE_SCALE", "0") != "1":
-        try:
-            QApplication.setAttribute(Qt.ApplicationAttribute.AA_DisableHighDpiScaling, True)
-        except Exception:
-            pass
     if not _acquire_single_instance("SampleRod.SingleInstance"):
         sys.exit(0)
     gui = QApplication(sys.argv)

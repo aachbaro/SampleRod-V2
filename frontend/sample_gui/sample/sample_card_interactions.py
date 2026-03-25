@@ -11,9 +11,9 @@ import pickle
 
 import logging
 
-from PySide6.QtCore import Qt, QEvent, QMimeData
+from PySide6.QtCore import Qt, QEvent, QMimeData, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect
 
 logger = logging.getLogger("sample_card_dnd")
 
@@ -61,6 +61,20 @@ class SampleCardInteractions:
         self.card.setProperty("focused", True)
         self.card.style().unpolish(self.card)
         self.card.style().polish(self.card)
+        self._flash_focus()
+
+    def _flash_focus(self):
+        """Brief opacity flash (0.55 → 1.0, 150 ms) for a snappy focus feel."""
+        effect = QGraphicsOpacityEffect(self.card)
+        self.card.setGraphicsEffect(effect)
+        anim = QPropertyAnimation(effect, b"opacity", self.card)
+        anim.setDuration(150)
+        anim.setStartValue(0.55)
+        anim.setEndValue(1.0)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        anim.finished.connect(lambda: self.card.setGraphicsEffect(None))
+        self.card._focus_anim = anim  # keep reference to avoid GC
+        anim.start()
 
     def focus_out(self, event):
         fw = QApplication.focusWidget()
