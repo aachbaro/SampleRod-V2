@@ -1,59 +1,717 @@
-# Drum Detector Prototype
+# Drum Detector / Break Generator
 
-This prototype is intentionally isolated from the main `samplerod` runtime.
+Ce document sert de vue d'ensemble du proto `drum_detector`.
+L'idee n'est pas seulement de dire "comment le lancer", mais surtout
+"comment il fonctionne", afin de pouvoir l'ameliorer plus facilement.
 
-That keeps the drum / break heuristics easy to iterate on without coupling them
-too early to the full desktop app.
+Le systeme couvre 4 blocs relies entre eux :
 
-## What it does
+1. detection globale du sample (`one_shot`, `loop`, `drum`, `fx`, `break`, etc.)
+2. detection / classification des hits individuels
+3. extraction de sequences de hits reutilisables
+4. generation d'un nouveau break a partir des hits et sequences detectes
 
-- detects `one_shot` vs `loop`
-- estimates `drum`, `tonal`, `fx`, or `hybrid`
-- ranks drum labels such as `kick`, `snare`, `closed_hat`, `open_hat`, `crash`, `tom`, `perc`
-- ranks loop labels such as `break`, `drum_loop`, `top_loop`, `perc_loop`
-- detects transient hits and places markers on the embedded SampleRod waveform
+## Objectif du proto
 
-## Usage
+Le proto essaie de repondre a cette boucle de travail :
 
-Install deps first if needed:
+1. charger un sample ou un break
+2. detecter des markers / slices pertinents
+3. attribuer a chaque slice un type de hit exploitable
+4. corriger manuellement si besoin
+5. reutiliser ces slices pour:
+   - preview un break retime / quantize
+   - generer un nouveau pattern aleatoire
+   - iterer rapidement sur les markers, labels et parametres
 
-```powershell
-python -m pip install -r requirements.txt
+Autrement dit :
+
+- l'analyse sert a "pecher" des materiaux jouables
+- le generateur sert a recombiner ces materiaux sur une grille
+- l'UI sert a faire le pont entre heuristiques automatiques et correction humaine
+
+## Carte rapide des modules
+
+- [analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py)
+  coeur de l'analyse audio, segmentation, scoring des hits, roles
+- [pattern_generator.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py)
+  generation de breaks a partir des hits classes
+- [preview.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/preview.py)
+  rendu audio des previews retime, quantize et pattern
+- [ui.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/ui.py)
+  mini app PyQt qui expose l'analyse, l'edition et la generation
+- [cli.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/cli.py)
+  point d'entree CLI
+
+## Flux global
+
+Le flux complet ressemble a ca :
+
+```text
+audio source
+  -> detection d'onsets / markers
+  -> segmentation en hits
+  -> scoring local de chaque hit
+  -> rerank contextuel entre hits
+  -> inference de labels secondaires / layering
+  -> attribution d'un role musical
+  -> extraction de sequences rythmiques
+  -> correction manuelle eventuelle
+  -> constitution de pools de slices et de sequences
+  -> generation d'un nouveau pattern
+  -> preview audio du resultat
 ```
 
-CLI on one file:
+## 1. Analyse globale du sample
 
-```powershell
-python -m prototypes.drum_detector.cli .\path\to\sample.wav
-```
+Le point d'entree principal est `detect_drum_from_audio(...)` dans
+[analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L276)
+et la construction du resultat passe par
+[analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L380).
 
-CLI on a folder:
+Le sample est d'abord traite globalement :
 
-```powershell
-python -m prototypes.drum_detector.cli .\samples --recursive
-```
+- separation harmonique / percussive
+- extraction de features globales
+- estimation du tempo / pulse / regularite
+- calcul d'un score de loop
+- estimation de la famille generale:
+  - `drum`
+  - `tonal`
+  - `fx`
+  - `hybrid`
 
-JSON output:
+Ensuite le systeme choisit une forme :
 
-```powershell
-python -m prototypes.drum_detector.cli .\samples\break.wav --json
-```
+- `one_shot`
+- `loop`
 
-Launch the mini UI:
+Et en fonction de cette forme, il produit des candidats :
+
+- pour un one-shot drum :
+  - `kick`, `snare`, `closed_hat`, etc.
+- pour une loop drum :
+  - `break`, `drum_loop`, `top_loop`, `perc_loop`
+- pour le non-drum :
+  - candidats adaptes au profil `tonal/fx/hybrid`
+
+Le resultat complet est stocke dans `DrumDetectionResult` dans
+[analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L57).
+
+## 2. Segmentation en hits
+
+La segmentation se fait dans `_detect_transient_hits(...)` puis remonte dans
+`_build_detection_result(...)`.
+
+L'idee n'est pas de faire de la separation de sources. On ne "split" pas un
+break en stems. On decoupe plutot le sample en segments temporels plausibles
+autour des transients.
+
+Chaque hit detecte devient un `TransientHit` dans
+[analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L28)
+avec :
+
+- `start_s`, `end_s`
+- `label`
+- `confidence`
+- ratios d'energie grave / medium / aigu
+- `secondary_labels`
+- `layer_score`
+- `role`
+- `rhythmic_position`
+
+Ce point est important :
+
+- un hit = une slice temporelle jouable
+- mais cette slice peut deja contenir plusieurs couches sonores
+- le systeme accepte donc qu'un hit ait un label principal + des labels secondaires
+- il garde aussi la classe de sa position d'origine sur la grille source :
+  - `downbeat`
+  - `backbeat`
+  - `offbeat`
+  - `subdivision`
+
+## 3. Classification locale des hits
+
+Le scoring brut d'un hit se fait dans
+[_score_hit_candidates(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1545).
+
+Le systeme s'appuie sur un melange de features :
+
+- duree / decay
+- contenu spectral grave / medium / aigu
+- bruit / flatness
+- attaque
+- centroid spectral
+- indices lies au transient lui-meme
+
+En sortie, on obtient un score par label. Les labels actuellement supportes
+par le proto sont aussi ceux exposes dans l'UI :
+
+- `kick`
+- `kick_ghost`
+- `snare`
+- `snare_ghost`
+- `snare_ruff`
+- `clap`
+- `closed_hat`
+- `open_hat`
+- `crash`
+- `ride`
+- `tom`
+- `perc`
+
+## 4. Rerank contextuel entre hits
+
+La classification ne se fait pas uniquement hit par hit.
+Il y a une passe contextuelle dans
+[_resolve_contextual_hits(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1000).
+
+Cette passe compare les hits entre eux pour produire des decisions plus
+coherentes a l'echelle du break.
+
+Pourquoi c'est utile :
+
+- les hits les plus graves / portants tendent a devenir les meilleurs candidats `kick`
+- les hits plus mid/noisy tendent a etre rerankes vers `snare` / `clap`
+- les hits tres aigus / courts tendent a mieux ressortir en `hat`
+- les breaks repetitifs profitent d'une meilleure coherence interne
+
+En pratique, c'est la meilleure defense actuelle contre :
+
+- `snare` / `clap`
+- `closed_hat` / `snare_ruff`
+- `open_hat` / `crash`
+- petits hits layeres sur la queue d'un kick
+
+## 5. Layering : labels secondaires et score de couche
+
+Le proto ne pretend pas faire une vraie decomposition de couches.
+En revanche, il essaie d'expliciter quand un hit semble hybride.
+
+Ca se fait ici :
+
+- selection des secondaires :
+  [_select_secondary_labels(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1156)
+- autorisation de certaines paires :
+  [_layer_pair_allowed(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1170)
+- estimation d'un `layer_score` :
+  [_estimate_layer_score(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1189)
+
+Exemples de paires autorisees :
+
+- `kick + closed_hat`
+- `kick + open_hat`
+- `kick + crash`
+- `snare + clap`
+- `snare + open_hat`
+- `open_hat + crash`
+
+Interpretation :
+
+- `label` = couche principale a utiliser en premier
+- `secondary_labels` = couches plausibles superposees
+- `layer_score` = a quel point cette lecture "layered" semble credible
+
+Aujourd'hui, le generateur exploite surtout bien le label principal.
+Le layering sert deja un peu a la resolution de debut de mesure, mais il y a
+encore de la marge pour en faire un vrai moteur multi-couches.
+
+## 5.bis Sequences extraites
+
+En plus des hits individuels, l'analyse extrait maintenant des suites de hits
+consecutifs reutilisables comme blocs.
+
+Le but est simple :
+
+- ne pas perdre la micro-dynamique d'un petit motif deja bon dans le break source
+- reinjecter certains enchainements "en bloc" plutot que note par note
+
+Les sequences sont construites a partir de n-grams de `2` a `12` hits
+consecutifs. Chaque sequence conserve :
+
+- les slices source dans l'ordre
+- leurs offsets relatifs en steps
+- leurs intervalles relatifs
+- leurs ratios de velocite internes
+- leur duree totale en steps
+
+Chaque sequence recoit aussi un role global :
+
+- `groove`
+- `anticipation`
+- `fill`
+- `cadence`
+
+Le stockage se fait dans `hit_sequences` sur `DrumDetectionResult`.
+
+## 6. Roles musicaux
+
+Au-dela du type brut, chaque hit recoit aussi un role musical.
+
+La logique de base est dans
+[_default_role_for_label(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1196)
+et l'ajustement rythmique se fait dans
+[_assign_hit_roles(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1212).
+
+Roles utilises :
+
+- `pillar`
+  structure portante du groove
+  ex: `kick`, `snare`, `clap`
+- `texture`
+  continuite rythmique
+  ex: `closed_hat`, `ride`
+- `accent`
+  accent ponctuel
+  ex: `open_hat`
+- `punctuation`
+  ponctuation de phrase
+  ex: `crash`, certains `open_hat`
+- `tension`
+  petits coups de relance
+  ex: `kick_ghost`, `snare_ghost`
+- `fill`
+  materiau de transition / fin de phrase
+  ex: `snare_ruff`, `perc`, `tom`
+
+Le role depend :
+
+- du label
+- du tempo estime
+- de la position du hit sur une grille 16 steps
+
+Ce role est central pour la generation.
+
+En parallele, chaque hit garde une `rhythmic_position` inferree depuis la
+grille 16 steps du break source :
+
+- step `1` / `9` -> `downbeat`
+- step `5` / `13` -> `backbeat`
+- step `3` / `7` / `11` / `15` -> `offbeat`
+- le reste -> `subdivision`
+
+Cette information ne remplace pas le role musical. Elle sert surtout de memoire
+structurelle pour guider le replacage dans le generateur.
+
+## 7. Ce que l'UI permet de corriger
+
+L'UI dans [ui.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/ui.py)
+sert autant d'outil d'analyse que d'outil de correction.
+
+Fonctions importantes :
+
+- edition des markers
+  - ajout
+  - suppression
+  - deplacement
+  - rebuild des hits depuis la liste de markers
+- decoupe manuelle
+  - cut de selection dans la waveform
+  - undo / redo
+  - split sample equally via menu contextuel
+- correction manuelle des labels
+  - la colonne `Label` de la table de hits peut etre redefinie
+- preview audio
+  - playback waveform
+  - preview retime / quantize
+  - preview du pattern genere
+
+Ce point est volontaire :
+
+- l'analyse est heuristique
+- la correction humaine fait partie du workflow normal
+
+## 8. Preview retime / quantize
+
+Le rendu audio des previews est dans
+[preview.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/preview.py).
+
+Deux familles de preview existent pour les hits detectes :
+
+1. `retime`
+   - garde la vitesse des slices
+   - change seulement leurs temps de depart selon le BPM cible
+2. `quantize`
+   - meme base que `retime`
+   - mais les declenchements sont rapproches d'une grille
+   - grille dispo: `1/8`, `1/16`, `1/32`
+   - force de quantize reglable
+
+Le point d'entree est
+[build_retimed_preview(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/preview.py#L52).
+
+L'idee generale :
+
+- on prend les slices source
+- on calcule un planning de declenchement
+- on recompose un buffer audio
+- on expose aussi les segments planifies pour synchroniser la tete de lecture UI
+
+## 9. Generateur de break
+
+Le coeur est dans
+[generate_break_pattern(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L113).
+
+### 9.1 Entree du generateur
+
+Le generateur prend :
+
+- une liste de `TransientHit`
+- une liste optionnelle de `HitSequence`
+- un objet `BreakPatternParams`
+
+Les parametres exposes sont :
+
+- `energy`
+- `kick_weight`
+- `snare_weight`
+- `hat_density`
+- `ghost_density`
+- `fill_strength`
+- `sequence_density`
+- `sequence_max_len`
+- `sequence_role_lock`
+- `velocity_spread`
+- `swing`
+- `anti_repeat`
+- `breath_factor`
+- `position_fidelity`
+- `seed`
+- `bars`
+
+`energy` agit comme une macro qui rebalance les autres parametres.
+
+L'UI ajoute aussi une ligne `Anchor` au-dessus de la grille generee.
+Elle permet de figer certains steps en :
+
+- `kick`
+- `snare`
+- `clap`
+- `hat`
+- `ghost`
+- `other`
+- `silence`
+
+Cette ligne sert a verrouiller un squelette rythmique simple
+(ex: kick sur `1`, snare sur `5` et `13`), puis laisser le generateur
+construire le reste autour.
+
+Les parametres sequences servent a choisir combien de fois le generateur
+essaie d'utiliser un bloc de hits deja observe au lieu de repartir en pur mode
+atomique.
+
+`position_fidelity` regle a quel point le generateur respecte la classe
+rythmique d'origine des slices :
+
+- `0.0` -> ce biais est ignore
+- `1.0` -> un hit `downbeat` sera fortement favorise sur un `downbeat`,
+  un `backbeat` sur un `backbeat`, etc.
+
+Ce n'est pas une contrainte dure. C'est un poids preferentiel.
+
+### 9.2 Pools de slices
+
+Avant de generer, le systeme construit des pools dans
+[_build_pools(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L173).
+
+Exemples :
+
+- `kick`
+- `kick_ghost`
+- `snare`
+- `clap`
+- `snare_ghost`
+- `snare_ruff`
+- `ride`
+- `snareish`
+- `hatish`
+- `otherish`
+
+Le but est que la generation pioche dans des buckets fonctionnels plutot que
+de balancer des slices au hasard.
+
+Il existe maintenant un deuxieme niveau de pool :
+
+- les pools de sequences `groove`
+- les pools de sequences `anticipation`
+- les pools de sequences `fill`
+- les pools de sequences `cadence`
+
+### 9.3 Generation du squelette
+
+Le pattern est genere sur une grille de 16 steps par mesure.
+
+Le generateur decide d'abord une famille d'evenement par step via
+[_step_family_weights(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L221).
+
+Mais avant de tomber sur ce mode atomique, il peut maintenant essayer de poser
+une sequence en bloc si `sequence_density > 0`.
+
+Familles principales :
+
+- `kick`
+- `snare`
+- `hat`
+- `ghost`
+- `other`
+- `silence`
+
+La decision depend :
+
+- de la position rythmique
+  - temps forts
+  - backbeats
+  - offbeats
+  - subdivisions
+- des deux steps precedents
+- de la respiration apres un kick
+- de l'anti-repeat
+- de la densite locale
+- de la disponibilite reelle des pools
+- de la position rythmique d'origine si `position_fidelity > 0`
+- des ancres de steps posees manuellement dans la ligne `Anchor`
+
+Si une sequence est choisie :
+
+- elle doit tenir dans les steps restants de la mesure
+- elle doit correspondre a la zone rythmique autorisee
+- elle reserve aussi ses silences / gaps internes
+- son hit de depart est compare a la classe rythmique cible
+- le generateur avance alors par bloc plutot que step par step
+
+Le point cle pour les sequences :
+
+- seul l'ancrage de depart est biaise par `rhythmic_position`
+- les hits suivants se deploient ensuite via leurs offsets relatifs
+- on ne recalcule pas leur position un par un apres coup
+
+Si une ancre de step existe :
+
+- elle agit comme une contrainte forte
+- le generateur tente de choisir une slice compatible avec cette ancre
+- `silence` peut forcer un trou meme en zone de fill
+- une sequence incompatible avec cette ancre est rejetee
+- en fin de passe, les ancres sont reappliquees pour eviter qu'un fill ou une
+  resolution ne les ecrase
+
+### 9.4 Ghost notes
+
+Les ghosts sont injectes apres la premiere passe dans
+[_inject_ghost_notes(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L500).
+
+Idee :
+
+- trouver des zones plausibles autour des snares
+- remplacer certains silences / hats par des ghosts
+- utiliser si possible de vrais `snare_ghost` ou `kick_ghost`
+- fallback sur des slices proches si la source est pauvre
+
+### 9.5 Fills
+
+Les fills ne sont plus uniquement traites step par step.
+Il y a une logique de bloc de fin de mesure dans
+[_apply_fill_blocks(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L549)
+et surtout dans
+[_apply_bar_end_fill(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L565).
+
+L'idee actuelle :
+
+- step 13 :
+  backbeat de fin de phrase
+- step 14 :
+  `lift`
+  souvent texture / ouverture / petit mouvement
+- step 15 :
+  `drive`
+  hit de relance ou coeur du fill
+- step 16 :
+  `release`
+  pas forcement un crash brutal
+  plutot une ouverture, un relachement, ou un silence
+- step 1 suivant :
+  `resolution`
+  retour plus propre sur un downbeat via
+  [_apply_bar_start_resolutions(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L633)
+
+Ca a ete ajoute pour eviter l'impression de fills "a l'envers", en particulier :
+
+- crash trop tardif en fin de mesure
+- hihat ouvert au mauvais endroit
+- retour sur le `1` pas assez ancre
+
+### 9.6 Velocite et swing
+
+Une fois les labels choisis, le proto finalise les vitesses dans
+[_finalize_step_velocity(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L855).
+
+Les vitesses sont influencees par :
+
+- la classe du hit
+- la position dans la mesure
+- l'activite recente
+- la presence d'un silence avant
+- la densite locale
+- le spread de velocite
+
+Le swing est ensuite applique au moment du rendu de preview du pattern dans
+[build_pattern_preview(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/preview.py#L185).
+
+### 9.7 Reroll
+
+Le generateur sait aussi reroll un step specifique sans refaire tout le pattern
+via [reroll_break_pattern_step(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L138).
+
+L'idee n'est pas seulement "regenerer aleatoirement", mais permettre un usage
+plus proche d'un tracker / groovebox :
+
+- pattern qui joue en boucle
+- un step est rerolle
+- le reste du pattern reste stable
+
+La ligne `Anchor` s'integre aussi a ce workflow :
+
+- tu poses une ancre sur un step
+- tu reroll seulement ce step
+- le generateur respecte l'ancre sans reconstruire tout le pattern
+
+## 10. Relation entre detection et generation
+
+Le generateur n'est pas independant du detecteur.
+Il herite directement de ses qualites et de ses erreurs.
+
+Si la detection se trompe :
+
+- un snare peut finir dans un pool de `perc`
+- un open hat peut etre pris pour un crash
+- un hit layeré peut etre utilise comme slice principale la ou il faudrait une
+  autre couche
+
+Du coup, la boucle de travail ideale est :
+
+1. analyser
+2. ajuster markers si besoin
+3. corriger les labels faux
+4. regenerer le pattern
+5. ecouter
+6. reaffiner
+
+## 11. Limites actuelles
+
+Le proto reste heuristique.
+
+Les limites les plus importantes sont :
+
+- pas de vrai stem separation
+- pas de vrai multipitch / multilabel profond
+- `secondary_labels` encore sous-exploites en generation
+- ambiguites frequentes :
+  - `snare` / `clap`
+  - `closed_hat` / `snare_ruff`
+  - `open_hat` / `crash`
+  - petits ghosts faibles
+- la qualite depend beaucoup de la segmentation initiale
+- les breaks tres process / compresses / sales restent durs a lire
+
+## 12. Axes d'amelioration les plus prometteurs
+
+Si on veut continuer a faire progresser le systeme, les chantiers les plus
+rentables sont probablement :
+
+### A. Mieux classer les hits
+
+- renforcer encore la comparaison inter-hits
+- faire du clustering de hits similaires
+- apprendre des profils de break par famille
+- utiliser davantage les corrections manuelles comme signal faible
+
+### B. Mieux exploiter le layering
+
+- transformer `secondary_labels` en vraie logique de generation multi-couches
+- permettre des substitutions par role
+  - ex: pas de crash -> open hat long
+- distinguer plus clairement "hit principal" et "ornement superpose"
+
+### C. Mieux modeliser les fills
+
+- exposer plusieurs styles de fill
+  - `resolve`
+  - `ruff`
+  - `double_kick`
+  - `perc_burst`
+- mieux controler les transitions entre mesures
+- introduire des fills generes en bloc plus explicites
+
+### D. Mieux modeliser les styles
+
+- presets `amen`, `jungle`, `boom bap`, etc.
+- differencier davantage les roles selon le style
+- faire varier la ponctuation de phrase selon le genre
+
+### E. Mieux rendre le systeme editable
+
+- conserver l'historique des corrections manuelles
+- afficher plus clairement :
+  - label principal
+  - secondaires
+  - role
+  - confiance
+- permettre des overrides de role en plus des overrides de label
+
+## 13. Commandes utiles
+
+Lancer l'UI :
 
 ```powershell
 python -m prototypes.drum_detector.ui
 ```
 
-Or:
+Ou :
 
 ```powershell
 .\scripts\run_drum_detector_ui.ps1
 ```
 
-## Current limits
+CLI sur un fichier :
 
-- this is heuristic, not ML-backed, so layered or very processed sounds stay ambiguous
-- `snare` vs `clap` vs bright `perc` can still overlap
-- `break` detection is a groove score, not a guarantee of classic breakbeat semantics
-- transient markers are onset-based, not a full stem separation
+```powershell
+python -m prototypes.drum_detector.cli .\path\to\sample.wav
+```
+
+CLI JSON :
+
+```powershell
+python -m prototypes.drum_detector.cli .\path\to\sample.wav --json
+```
+
+Tests utiles :
+
+```powershell
+.\venv\Scripts\python.exe -m unittest tests.test_pattern_generator tests.test_drum_preview tests.test_drum_detector tests.test_scale_detector tests.test_note_segments
+```
+
+## 14. Lecture rapide si on veut iterer dessus
+
+Si tu veux modifier le systeme sans tout relire, l'ordre le plus utile est :
+
+1. lire [analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L380)
+   pour comprendre la construction du resultat
+2. lire [analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1545)
+   pour la classification locale des hits
+3. lire [analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1000)
+   pour la passe contextuelle
+4. lire [analyzer.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/analyzer.py#L1212)
+   pour les roles
+5. lire [pattern_generator.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L113)
+   pour le generateur
+6. lire [pattern_generator.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L565)
+   pour les fills
+7. lire [preview.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/preview.py#L52)
+   et [preview.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/preview.py#L185)
+   pour le rendu audio
+8. finir par [ui.py](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/ui.py)
+   pour voir comment tout s'enchaine dans le workflow utilisateur
+
+Ce README doit rester un document vivant.
+Si le systeme change, l'ideal est de le mettre a jour en meme temps, sinon on
+perd vite la vision globale qui le rend ameliorable.

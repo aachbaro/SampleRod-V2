@@ -4,6 +4,8 @@ from .analyzer import (
     DEFAULT_SPLIT_DENSITY,
     DrumCandidate,
     DrumDetectionResult,
+    HitSequence,
+    HitSequenceEvent,
     TransientHit,
     analyze_file,
     analyze_file_from_markers,
@@ -15,6 +17,8 @@ from .preview import RetimedPreview, RetimedPreviewSegment, build_retimed_previe
 __all__ = [
     "DrumCandidate",
     "DrumDetectionResult",
+    "HitSequence",
+    "HitSequenceEvent",
     "RetimedPreview",
     "RetimedPreviewSegment",
     "TransientHit",

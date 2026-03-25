@@ -25,7 +25,12 @@ def _silence_test_warnings() -> None:
 
 _silence_test_warnings()
 
-from prototypes.drum_detector.analyzer import analyze_audio_with_preview, detect_drum_from_audio, detect_drum_from_markers
+from prototypes.drum_detector.analyzer import (
+    MAX_SEQUENCE_HIT_COUNT,
+    analyze_audio_with_preview,
+    detect_drum_from_audio,
+    detect_drum_from_markers,
+)
 
 
 def setUpModule() -> None:
@@ -74,6 +79,8 @@ class DrumDetectorTests(unittest.TestCase):
         self.assertEqual(result.form, "one_shot")
         self.assertEqual(result.family, "drum")
         self.assertEqual(result.label, "kick")
+        self.assertTrue(result.transient_hits)
+        self.assertEqual(result.transient_hits[0].role, "pillar")
 
     def test_classifies_closed_hat_one_shot(self) -> None:
         sample_rate = 22050
@@ -106,11 +113,32 @@ class DrumDetectorTests(unittest.TestCase):
         self.assertGreaterEqual(result.onset_count, 9)
 
         labels = [hit.label for hit in result.transient_hits]
+        rhythmic_positions = {hit.rhythmic_position for hit in result.transient_hits}
         self.assertGreaterEqual(sum(1 for label in labels if label == "kick"), 2)
         self.assertGreaterEqual(sum(1 for label in labels if label in {"snare", "clap"}), 1)
         self.assertGreaterEqual(
             sum(1 for label in labels if label in {"closed_hat", "open_hat", "crash"}),
             3,
+        )
+        self.assertIn("downbeat", rhythmic_positions)
+        self.assertIn("backbeat", rhythmic_positions)
+        self.assertIn("offbeat", rhythmic_positions)
+        roles = {hit.role for hit in result.transient_hits}
+        self.assertIn("pillar", roles)
+        self.assertTrue({"texture", "accent", "punctuation"} & roles)
+        self.assertTrue(result.hit_sequences)
+        self.assertTrue(all(2 <= sequence.hit_count <= MAX_SEQUENCE_HIT_COUNT for sequence in result.hit_sequences))
+        self.assertTrue(
+            {sequence.role for sequence in result.hit_sequences}
+            & {"groove", "anticipation", "fill", "cadence"}
+        )
+        self.assertTrue(all(sequence.events[0].start_offset_steps == 0 for sequence in result.hit_sequences))
+        self.assertTrue(
+            all(
+                event.rhythmic_position in {"downbeat", "backbeat", "offbeat", "subdivision"}
+                for sequence in result.hit_sequences
+                for event in sequence.events
+            )
         )
 
     def test_recovers_hat_over_kick_tail(self) -> None:
