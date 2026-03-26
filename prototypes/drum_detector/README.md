@@ -236,6 +236,14 @@ consecutifs. Chaque sequence conserve :
 - leurs ratios de velocite internes
 - leur duree totale en steps
 
+Ces sequences ne sont pas extraites depuis le timing brut du break, mais depuis
+une version quantifiee de sa grille source :
+
+- la grille est ancree sur le premier hit detecte du break
+- les offsets internes sont mesures sur cette grille 16 steps quantifiee
+- les petites avances / retards du break source ne deformaient donc plus les
+  hints rythmiques des sequences
+
 Chaque sequence recoit aussi un role global :
 
 - `groove`
@@ -284,7 +292,7 @@ Le role depend :
 Ce role est central pour la generation.
 
 En parallele, chaque hit garde une `rhythmic_position` inferree depuis la
-grille 16 steps du break source :
+grille 16 steps quantifiee du break source :
 
 - step `1` / `9` -> `downbeat`
 - step `5` / `13` -> `backbeat`
@@ -293,6 +301,13 @@ grille 16 steps du break source :
 
 Cette information ne remplace pas le role musical. Elle sert surtout de memoire
 structurelle pour guider le replacage dans le generateur.
+
+Important :
+
+- la position est calculee par rapport au premier hit du break, pas par rapport
+  au debut brut du fichier
+- du coup, `rhythmic_position`, `start_step_hint` et les offsets de sequences
+  suivent tous la meme lecture quantifiee du break
 
 ## 7. Ce que l'UI permet de corriger
 
@@ -369,6 +384,14 @@ Les parametres exposes sont :
 - `hat_density`
 - `ghost_density`
 - `fill_strength`
+- `repeat_density`
+- `repeat_span`
+- `repeat_rate`
+- `reverse_density`
+- `kick_roll_density`
+- `kick_roll_span`
+- `kick_roll_contrast`
+- `gate`
 - `sequence_density`
 - `sequence_max_len`
 - `sequence_role_lock`
@@ -381,6 +404,55 @@ Les parametres exposes sont :
 - `bars`
 
 `energy` agit comme une macro qui rebalance les autres parametres.
+
+Notes utiles :
+
+- `repeat_density`
+  controle combien de zones de repeat glitch apparaissent dans le pattern
+- `repeat_span`
+  controle la longueur probable des zones de repeat sur la timeline
+- `repeat_rate`
+  controle si les retriggers internes sont plutot en `x2` ou en `x4`
+- `reverse_density`
+  injecte des queues reverse apres certains `kick` / `snare` / `clap`
+  sur les subdivisions entre reperes rythmiques
+  la slice reverse reutilise la source du hit juste avant et reste contenue
+  dans le slot qui mene vers le repere suivant
+- `kick_roll_density`
+  controle la frequence des kick rolls
+  un kick roll est ici une petite rafale du meme kick sur plusieurs steps
+  consecutifs, declenchee directement sur un beat pair du bar
+  et etalee ensuite sur les steps suivants, avec une velocite uniforme
+  sur toute la succession, premier kick compris
+- `kick_roll_span`
+  controle la longueur probable des zones de kick roll
+  la V1 reste volontairement sur des spans paires et courtes,
+  calees sur les fenetres `5-8` et `13-16`
+- `kick_roll_contrast`
+  controle le niveau global de velocite du roll
+  bas = roll plus doux, haut = roll plus fort
+- `gate`
+  raccourcit globalement la longueur jouee des slices au moment de la preview du pattern
+
+Dans l'UI, les effets sont visibles discretement dans la grille du
+pattern :
+
+- teinte legere sur les steps concernes
+- marqueur `[` au debut de zone et `]` a la fin dans l'entete de timeline
+- marqueur `{` au debut de kick roll et `}` a la fin
+- teinte plus chaude pour les steps `reverse`
+- teinte cuivre pour les steps `kick_roll`
+- ligne `FX` dans la timeline pour lire explicitement `Rpt x2/x4`, `Rev<-K/S/C` et `KRoll`
+
+L'UI expose aussi un petit tableau de probabilites d'effets :
+
+- `Repeat`
+  chance heuristique de voir apparaitre une zone de retrigger glitch
+- `Reverse`
+  chance heuristique d'injecter une queue reverse sur une classe de position
+- `K.Roll`
+  chance heuristique de lancer une rafale de kicks sur plusieurs steps
+  a partir d'un kick deja present
 
 L'UI ajoute aussi une ligne `Anchor` au-dessus de la grille generee.
 Elle permet de figer certains steps en :

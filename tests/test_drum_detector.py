@@ -27,6 +27,9 @@ _silence_test_warnings()
 
 from prototypes.drum_detector.analyzer import (
     MAX_SEQUENCE_HIT_COUNT,
+    TransientHit,
+    _assign_hit_roles,
+    _extract_hit_sequences,
     analyze_audio_with_preview,
     detect_drum_from_audio,
     detect_drum_from_markers,
@@ -231,6 +234,69 @@ class DrumDetectorTests(unittest.TestCase):
         self.assertEqual(len(preview.marker_times), preview.onset_count)
         self.assertLess(preview.marker_times[0], 0.03)
         self.assertEqual(result.onset_count, preview.onset_count)
+
+    def test_sequences_follow_quantized_break_grid_not_raw_audio_offsets(self) -> None:
+        hits = [
+            TransientHit(
+                index=1,
+                start_s=0.09,
+                end_s=0.15,
+                label="kick",
+                confidence=0.9,
+                peak_db=-3.0,
+                low_ratio=0.8,
+                mid_ratio=0.15,
+                high_ratio=0.05,
+            ),
+            TransientHit(
+                index=2,
+                start_s=0.34,
+                end_s=0.39,
+                label="closed_hat",
+                confidence=0.82,
+                peak_db=-8.0,
+                low_ratio=0.05,
+                mid_ratio=0.3,
+                high_ratio=0.65,
+            ),
+            TransientHit(
+                index=3,
+                start_s=0.59,
+                end_s=0.68,
+                label="snare",
+                confidence=0.88,
+                peak_db=-4.0,
+                low_ratio=0.15,
+                mid_ratio=0.65,
+                high_ratio=0.2,
+            ),
+        ]
+
+        updated_hits = _assign_hit_roles(hits, tempo_bpm=120.0, regularity=0.95)
+        sequences = _extract_hit_sequences(
+            updated_hits,
+            tempo_bpm=120.0,
+            regularity=0.95,
+            min_len=3,
+            max_len=3,
+        )
+
+        self.assertEqual(
+            [hit.rhythmic_position for hit in updated_hits],
+            ["downbeat", "offbeat", "backbeat"],
+        )
+        self.assertEqual(len(sequences), 1)
+        sequence = sequences[0]
+        self.assertEqual(sequence.start_step_hint, 1)
+        self.assertEqual(sequence.end_step_hint, 5)
+        self.assertEqual(
+            [event.start_offset_steps for event in sequence.events],
+            [0, 2, 4],
+        )
+        self.assertEqual(
+            [event.rhythmic_position for event in sequence.events],
+            ["downbeat", "offbeat", "backbeat"],
+        )
 
 
 if __name__ == "__main__":

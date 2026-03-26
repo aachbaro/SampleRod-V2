@@ -188,6 +188,7 @@ def build_pattern_preview(
     pattern: GeneratedBreakPattern,
     *,
     target_bpm: float,
+    gate: float | None = None,
     fade_in_ms: float = 0.75,
     fade_out_ms: float = 5.0,
 ) -> RetimedPreview:
@@ -203,51 +204,75 @@ def build_pattern_preview(
     scheduled_segments: list[RetimedPreviewSegment] = []
     rendered_segments: list[tuple[int, np.ndarray]] = []
     step_duration_s = (60.0 / float(target_bpm)) / 4.0
+    pattern_gate = getattr(getattr(pattern, "params", None), "gate", 1.0)
+    raw_gate = pattern_gate if gate is None else gate
+    try:
+        resolved_gate = float(np.clip(float(raw_gate), 0.05, 1.0))
+    except (TypeError, ValueError):
+        resolved_gate = 1.0
     channel_count = normalized.shape[1]
     output_length = 0
 
     for row_index, step in enumerate(pattern.steps, start=1):
         if step.source_start_s is None or step.source_end_s is None or step.label == "silence":
             continue
+        repeat_count = _pattern_step_repeat_count(step)
+        reverse_step = _pattern_step_is_reverse(step)
         start_time = float(step.source_start_s)
         end_time = max(float(step.source_end_s), start_time + 0.012)
+        effective_duration_s = end_time - start_time
+        if resolved_gate < 0.999:
+            effective_duration_s = max(0.012, effective_duration_s * resolved_gate)
+        if repeat_count > 1:
+            retrigger_interval_s = step_duration_s / float(repeat_count)
+            effective_duration_s = min(effective_duration_s, max(0.012, retrigger_interval_s * 0.82))
+        if reverse_step:
+            reverse_slot_s = step_duration_s / float(max(1, repeat_count))
+            effective_duration_s = min(effective_duration_s, max(0.012, reverse_slot_s * 0.98))
+        end_time = min(end_time, start_time + effective_duration_s)
         start_index = int(np.clip(round(start_time * sample_rate), 0, max(normalized.shape[0] - 1, 0)))
         end_index = int(np.clip(round(end_time * sample_rate), start_index + 1, normalized.shape[0]))
         if end_index <= start_index:
             continue
-
-        segment = normalized[start_index:end_index].copy()
-        gain = float(np.clip(step.velocity / 100.0, 0.12, 1.2)) if step.velocity is not None else 1.0
-        segment *= np.float32(gain)
-        _apply_edge_fades(
-            segment,
-            sample_rate=sample_rate,
-            fade_in_ms=fade_in_ms,
-            fade_out_ms=fade_out_ms,
-        )
 
         preview_start_s = _pattern_step_start_seconds(
             step.step_index,
             step_duration_s=step_duration_s,
             swing=pattern.swing,
         )
-        preview_end_s = preview_start_s + (float(segment.shape[0]) / float(sample_rate))
-        scheduled_segments.append(
-            RetimedPreviewSegment(
-                index=row_index,
-                source_start_s=start_time,
-                source_end_s=end_time,
-                preview_start_s=preview_start_s,
-                preview_end_s=preview_end_s,
-                label=step.label,
-                step_index=step.step_index,
-                source_index=step.source_hit_index,
-                velocity=step.velocity,
+        repeat_interval_s = step_duration_s / float(repeat_count)
+        for repeat_index in range(repeat_count):
+            segment = normalized[start_index:end_index].copy()
+            if reverse_step:
+                segment = np.flip(segment, axis=0)
+            gain = float(np.clip(step.velocity / 100.0, 0.12, 1.2)) if step.velocity is not None else 1.0
+            gain *= _pattern_repeat_gain(repeat_index, repeat_count)
+            segment *= np.float32(gain)
+            _apply_edge_fades(
+                segment,
+                sample_rate=sample_rate,
+                fade_in_ms=fade_in_ms,
+                fade_out_ms=fade_out_ms,
             )
-        )
-        new_start = int(round(preview_start_s * sample_rate))
-        rendered_segments.append((new_start, segment))
-        output_length = max(output_length, new_start + segment.shape[0])
+
+            repeated_preview_start_s = preview_start_s + (float(repeat_index) * repeat_interval_s)
+            repeated_preview_end_s = repeated_preview_start_s + (float(segment.shape[0]) / float(sample_rate))
+            scheduled_segments.append(
+                RetimedPreviewSegment(
+                    index=len(scheduled_segments) + 1,
+                    source_start_s=start_time,
+                    source_end_s=end_time,
+                    preview_start_s=repeated_preview_start_s,
+                    preview_end_s=repeated_preview_end_s,
+                    label=step.label,
+                    step_index=step.step_index,
+                    source_index=step.source_hit_index,
+                    velocity=int(round((step.velocity or 0) * _pattern_repeat_gain(repeat_index, repeat_count))),
+                )
+            )
+            new_start = int(round(repeated_preview_start_s * sample_rate))
+            rendered_segments.append((new_start, segment))
+            output_length = max(output_length, new_start + segment.shape[0])
 
     if not rendered_segments or output_length <= 0:
         raise ValueError("Need at least one generated event with a valid source slice to build a preview")
@@ -324,6 +349,41 @@ def _build_segment_schedule(
             )
         )
     return schedule
+
+
+def _pattern_step_repeat_count(step: object) -> int:
+    tags = _pattern_step_tags(step)
+    if not tags:
+        return 1
+    for tag in tags:
+        text = str(tag)
+        if not text.startswith("repeat_count_"):
+            continue
+        try:
+            return max(1, int(text.removeprefix("repeat_count_")))
+        except ValueError:
+            return 1
+    return 1
+
+
+def _pattern_step_is_reverse(step: object) -> bool:
+    return "reverse" in _pattern_step_tags(step)
+
+
+def _pattern_step_tags(step: object) -> tuple[str, ...]:
+    raw_tags = getattr(step, "tags", ())
+    if not isinstance(raw_tags, (tuple, list, set, frozenset)):
+        return ()
+    return tuple(str(tag) for tag in raw_tags)
+
+
+def _pattern_repeat_gain(repeat_index: int, repeat_count: int) -> float:
+    if repeat_count <= 1:
+        return 1.0
+    if repeat_count == 2:
+        return 1.0 if repeat_index == 0 else 0.82
+    decay = 1.0 - (0.14 * float(repeat_index))
+    return float(np.clip(decay, 0.48, 1.0))
 
 
 def _resolve_preview_mode(mode: str) -> str:

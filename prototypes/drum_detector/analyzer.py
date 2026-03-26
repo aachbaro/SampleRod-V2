@@ -1273,7 +1273,7 @@ def _assign_hit_roles(
     if not hits:
         return hits
 
-    if tempo_bpm <= 1.0 or regularity < 0.2:
+    if len(hits) < 2:
         return [
             replace(
                 hit,
@@ -1283,7 +1283,7 @@ def _assign_hit_roles(
             for hit in hits
         ]
 
-    step_duration_s = (60.0 / float(tempo_bpm)) / 4.0
+    step_duration_s = _sequence_step_duration_s(hits, tempo_bpm=tempo_bpm, regularity=regularity)
     if step_duration_s <= 1e-6:
         return [
             replace(
@@ -1294,9 +1294,10 @@ def _assign_hit_roles(
             for hit in hits
         ]
 
+    quantized_steps = _quantized_hit_step_indices(hits, step_duration_s=step_duration_s)
     updated: list[TransientHit] = []
-    for hit in hits:
-        local_step = int(round(hit.start_s / step_duration_s)) % 16 + 1
+    for hit, quantized_step in zip(hits, quantized_steps):
+        local_step = (int(quantized_step) % 16) + 1
         rhythmic_position = _rhythmic_position_for_step(local_step)
         role = _default_role_for_label(hit.label)
         if hit.label in {"kick", "snare", "clap"} and local_step in {1, 5, 9, 13}:
@@ -1330,6 +1331,7 @@ def _extract_hit_sequences(
     if step_duration_s <= 1e-6:
         return []
 
+    quantized_steps = _quantized_hit_step_indices(hits, step_duration_s=step_duration_s)
     extracted: list[HitSequence] = []
     sequence_index = 1
     upper_len = max(min_len, min(max_len, len(hits)))
@@ -1341,7 +1343,7 @@ def _extract_hit_sequences(
             sequence = _build_hit_sequence(
                 hits[start_index:end_index],
                 sequence_index=sequence_index,
-                step_duration_s=step_duration_s,
+                quantized_steps=quantized_steps[start_index:end_index],
             )
             if sequence is None:
                 continue
@@ -1354,20 +1356,23 @@ def _build_hit_sequence(
     window: list[TransientHit],
     *,
     sequence_index: int,
-    step_duration_s: float,
+    quantized_steps: list[int],
 ) -> HitSequence | None:
     if len(window) < 2:
         return None
 
-    start_time = float(window[0].start_s)
-    offsets = [int(round(max(0.0, float(hit.start_s) - start_time) / step_duration_s)) for hit in window]
+    if len(quantized_steps) != len(window):
+        return None
+
+    base_step = int(quantized_steps[0])
+    offsets = [max(0, int(step) - base_step) for step in quantized_steps]
     if any(offsets[index] <= offsets[index - 1] for index in range(1, len(offsets))):
         return None
 
     amplitudes = [float(10.0 ** (float(hit.peak_db) / 20.0)) for hit in window]
     peak_amplitude = max(max(amplitudes), 1e-6)
     velocity_ratios = [float(np.clip(amplitude / peak_amplitude, 0.05, 1.0)) for amplitude in amplitudes]
-    local_steps = [int(round(float(hit.start_s) / step_duration_s)) % 16 + 1 for hit in window]
+    local_steps = [(int(step) % 16) + 1 for step in quantized_steps]
     total_steps = max(1, offsets[-1] + 1)
     role = _infer_hit_sequence_role(window, local_steps=local_steps, offsets=offsets, total_steps=total_steps)
 
@@ -1426,6 +1431,23 @@ def _sequence_step_duration_s(
     if hits:
         return float(max(0.03, np.median([max(0.03, float(hit.end_s) - float(hit.start_s)) for hit in hits])))
     return 0.0
+
+
+def _quantized_hit_step_indices(
+    hits: list[TransientHit],
+    *,
+    step_duration_s: float,
+) -> list[int]:
+    if not hits or step_duration_s <= 1e-6:
+        return []
+
+    base_time = float(hits[0].start_s)
+    quantized_steps: list[int] = []
+    for hit in hits:
+        relative_start_s = max(0.0, float(hit.start_s) - base_time)
+        quantized_step = int(np.floor((relative_start_s / step_duration_s) + 0.5))
+        quantized_steps.append(max(0, quantized_step))
+    return quantized_steps
 
 
 def _infer_hit_sequence_role(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
@@ -91,11 +92,15 @@ class _FakeSounddevice:
 class _FakeMarkerItem:
     def __init__(self, time_s: float) -> None:
         self._payload = {"time": float(time_s)}
+        self._tooltip = ""
 
     def data(self, role):
         if role == Qt.ItemDataRole.UserRole:
             return self._payload
         return None
+
+    def setToolTip(self, text: str) -> None:
+        self._tooltip = str(text)
 
 
 class _FakeMarkerList:
@@ -148,6 +153,7 @@ class _FakeWaveformWidget:
         self.plot = _FakePlot(*visible_range)
         self.duration = float(duration)
         self.waveform_data = np.zeros(100, dtype=np.float32)
+        self.audio_file_path: str | None = None
         self.markers = [float(time_s) for time_s in marker_times]
         self.marker_lines = {float(time_s): object() for time_s in marker_times}
         self.current_marker_idx = 0
@@ -180,6 +186,10 @@ class _FakeWaveformWidget:
 
     def _refresh_marker_list(self) -> None:
         self.marker_list = _FakeMarkerList(self.markers)
+
+    def set_waveform_data(self, waveform_data, sample_rate: int, duration_s: float) -> None:
+        self.waveform_data = np.asarray(waveform_data)
+        self.duration = float(duration_s)
 
 
 
@@ -421,6 +431,120 @@ class DrumPreviewTests(unittest.TestCase):
         self.assertIsNotNone(preview.loop_audio)
         self.assertEqual(preview.loop_audio.shape[0], 2000)
         self.assertGreater(float(np.max(preview.loop_audio[:60])), 0.1)
+
+    def test_generated_pattern_preview_gate_shortens_slice_lengths(self) -> None:
+        sample_rate = 1000
+        audio = np.zeros(400, dtype=np.float32)
+        audio[0:200] = 1.0
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=1,
+                source_start_s=0.0,
+                source_end_s=0.2,
+                label="kick",
+                velocity=100,
+                source_hit_index=1,
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(audio, sample_rate, pattern, target_bpm=120.0, gate=0.5)
+
+        self.assertAlmostEqual(preview.segments[0].source_end_s, 0.1, places=3)
+        self.assertAlmostEqual(preview.segments[0].preview_end_s, 0.1, places=3)
+        self.assertEqual(preview.audio.shape[0], 100)
+
+    def test_generated_pattern_preview_retriggers_repeat_glitch_within_same_step(self) -> None:
+        sample_rate = 1000
+        audio = np.zeros(400, dtype=np.float32)
+        audio[0:200] = 1.0
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=3,
+                source_start_s=0.0,
+                source_end_s=0.2,
+                label="closed_hat",
+                velocity=100,
+                source_hit_index=1,
+                tags=("offbeat", "repeat", "repeat_glitch", "repeat_count_4"),
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(audio, sample_rate, pattern, target_bpm=120.0)
+
+        self.assertEqual(preview.segment_count, 4)
+        self.assertTrue(all(segment.step_index == 3 for segment in preview.segments))
+        self.assertAlmostEqual(preview.segments[0].preview_start_s, 0.25, places=3)
+        self.assertAlmostEqual(preview.segments[1].preview_start_s, 0.28125, places=3)
+        self.assertLess(preview.segments[0].source_end_s - preview.segments[0].source_start_s, 0.2)
+
+    def test_generated_pattern_preview_reverses_audio_for_reverse_tagged_step(self) -> None:
+        sample_rate = 100
+        audio = np.asarray([0.05, 0.1, 0.15, 0.2], dtype=np.float32)
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=1,
+                source_start_s=0.0,
+                source_end_s=0.04,
+                label="snare",
+                velocity=100,
+                source_hit_index=1,
+                tags=("strong", "reverse"),
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(
+            audio,
+            sample_rate,
+            pattern,
+            target_bpm=120.0,
+            fade_in_ms=0.0,
+            fade_out_ms=0.0,
+        )
+
+        np.testing.assert_allclose(preview.audio[:4], np.asarray([0.2, 0.15, 0.1, 0.05], dtype=np.float32))
+
+    def test_generated_pattern_preview_caps_reverse_tail_to_step_slot(self) -> None:
+        sample_rate = 1000
+        audio = np.ones(400, dtype=np.float32)
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=2,
+                source_start_s=0.0,
+                source_end_s=0.2,
+                label="kick",
+                velocity=100,
+                source_hit_index=1,
+                tags=("subdivision", "reverse", "effect_reverse"),
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(
+            audio,
+            sample_rate,
+            pattern,
+            target_bpm=120.0,
+            fade_in_ms=0.0,
+            fade_out_ms=0.0,
+        )
+
+        self.assertAlmostEqual(preview.segments[0].preview_start_s, 0.125, places=3)
+        self.assertLessEqual(preview.segments[0].source_end_s - preview.segments[0].source_start_s, 0.123)
 
     def test_pattern_preview_locator_tracks_silence_steps_without_jumping_to_start(self) -> None:
         from prototypes.drum_detector import ui as drum_ui
@@ -1144,6 +1268,217 @@ class DrumPreviewTests(unittest.TestCase):
             except OSError:
                 pass
 
+    def test_saved_hit_analysis_restores_automatically_when_waveform_loads(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        handle.close()
+        sample_path = handle.name
+        shared_settings = _FakeSettings()
+        try:
+            result = DrumDetectionResult(
+                source_path=sample_path,
+                label="break",
+                form="loop",
+                family="drum",
+                confidence=0.82,
+                loop_score=0.77,
+                drum_score=0.91,
+                break_score=0.66,
+                duration_s=1.2,
+                sample_rate=44100,
+                tempo_bpm=168.0,
+                pulse_score=0.73,
+                regularity=0.61,
+                onset_count=2,
+                onset_density=1.6,
+                percussive_ratio=0.88,
+                harmonic_ratio=0.12,
+                decay_s=0.18,
+                spectral_centroid_hz=2400.0,
+                spectral_flatness=0.41,
+                band_energies={"low": 0.4, "mid": 0.35, "high": 0.25},
+                transient_hits=(
+                    TransientHit(1, 0.0, 0.08, "kick", 0.9, -1.0, 0.8, 0.1, 0.1, role="pillar"),
+                    TransientHit(2, 0.25, 0.33, "closed_hat", 0.8, -4.0, 0.1, 0.2, 0.7, role="texture"),
+                ),
+                candidates=(DrumCandidate("break", 0.82, "demo"),),
+            )
+
+            with (
+                mock.patch.object(drum_ui, "QSettings", lambda *_args, **_kwargs: shared_settings),
+                mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+            ):
+                saver = drum_ui.DrumDetectorWindow()
+                self.assertTrue(saver._persist_detection_result(result))
+                saver.close()
+
+                window = drum_ui.DrumDetectorWindow()
+                window._waveform_widget = _FakeWaveformWidget([], duration=1.0, visible_range=(0.0, 1.0))
+                load_result = drum_ui.WaveformLoadResult(
+                    path=sample_path,
+                    samples=np.zeros(128, dtype=np.float32),
+                    waveform_data=np.zeros(128, dtype=np.float32),
+                    sample_rate=44100,
+                    duration_s=1.2,
+                )
+
+                window._on_waveform_loaded(load_result, window._waveform_load_token)
+
+                self.assertIsNotNone(window._result)
+                self.assertEqual([hit.label for hit in window._result.transient_hits], ["kick", "closed_hat"])
+                self.assertEqual(window.hits_table.rowCount(), 2)
+                self.assertEqual(window._waveform_widget.markers, [0.0, 0.25])
+                self.assertIn("analyse et les labels", window.waveform_status_label.text().lower())
+                window.close()
+        finally:
+            try:
+                os.unlink(sample_path)
+            except OSError:
+                pass
+
+    def test_saved_hit_analysis_is_skipped_when_restored_markers_diverge(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        handle.close()
+        sample_path = handle.name
+        shared_settings = _FakeSettings()
+        try:
+            result = DrumDetectionResult(
+                source_path=sample_path,
+                label="break",
+                form="loop",
+                family="drum",
+                confidence=0.82,
+                loop_score=0.77,
+                drum_score=0.91,
+                break_score=0.66,
+                duration_s=1.2,
+                sample_rate=44100,
+                tempo_bpm=168.0,
+                pulse_score=0.73,
+                regularity=0.61,
+                onset_count=2,
+                onset_density=1.6,
+                percussive_ratio=0.88,
+                harmonic_ratio=0.12,
+                decay_s=0.18,
+                spectral_centroid_hz=2400.0,
+                spectral_flatness=0.41,
+                band_energies={"low": 0.4, "mid": 0.35, "high": 0.25},
+                transient_hits=(
+                    TransientHit(1, 0.0, 0.08, "kick", 0.9, -1.0, 0.8, 0.1, 0.1),
+                    TransientHit(2, 0.25, 0.33, "snare", 0.8, -4.0, 0.1, 0.2, 0.7),
+                ),
+                candidates=(DrumCandidate("break", 0.82, "demo"),),
+            )
+
+            with (
+                mock.patch.object(drum_ui, "QSettings", lambda *_args, **_kwargs: shared_settings),
+                mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+            ):
+                saver = drum_ui.DrumDetectorWindow()
+                self.assertTrue(saver._persist_detection_result(result))
+                self.assertTrue(saver._persist_marker_times_for_path(sample_path, [0.0, 0.4]))
+                saver.close()
+
+                window = drum_ui.DrumDetectorWindow()
+                window._waveform_widget = _FakeWaveformWidget([], duration=1.0, visible_range=(0.0, 1.0))
+                load_result = drum_ui.WaveformLoadResult(
+                    path=sample_path,
+                    samples=np.zeros(128, dtype=np.float32),
+                    waveform_data=np.zeros(128, dtype=np.float32),
+                    sample_rate=44100,
+                    duration_s=1.2,
+                )
+
+                window._on_waveform_loaded(load_result, window._waveform_load_token)
+
+                self.assertIsNone(window._result)
+                self.assertEqual(window.hits_table.rowCount(), 0)
+                self.assertEqual(window._waveform_widget.markers, [0.0, 0.4])
+                self.assertIn("markers sauvegardes", window.waveform_status_label.text().lower())
+                window.close()
+        finally:
+            try:
+                os.unlink(sample_path)
+            except OSError:
+                pass
+
+    def test_recent_files_restore_across_windows(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        handle_a = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        handle_b = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        handle_a.close()
+        handle_b.close()
+        sample_a = str(Path(handle_a.name).resolve())
+        sample_b = str(Path(handle_b.name).resolve())
+        shared_settings = _FakeSettings()
+        try:
+            with (
+                mock.patch.object(drum_ui, "QSettings", lambda *_args, **_kwargs: shared_settings),
+                mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+                mock.patch.object(drum_ui.DrumDetectorWindow, "_sync_waveform_path", autospec=True) as sync_waveform,
+            ):
+                first = drum_ui.DrumDetectorWindow()
+                first._handle_path_selected(sample_a)
+                first._handle_path_selected(sample_b)
+
+                self.assertEqual(first.recent_files_combo.itemData(1), sample_b)
+                self.assertEqual(first.recent_files_combo.itemData(2), sample_a)
+                first.close()
+
+                restored = drum_ui.DrumDetectorWindow()
+
+                self.assertEqual(restored.path_input.text(), sample_b)
+                self.assertEqual(restored.recent_files_combo.itemData(1), sample_b)
+                self.assertEqual(restored.recent_files_combo.itemData(2), sample_a)
+                self.assertEqual(restored.recent_files_combo.currentData(), sample_b)
+                sync_waveform.assert_any_call(restored, sample_b)
+                restored.close()
+        finally:
+            for path in (sample_a, sample_b):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+    def test_selecting_recent_file_moves_it_to_top(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        handle_a = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        handle_b = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        handle_a.close()
+        handle_b.close()
+        sample_a = str(Path(handle_a.name).resolve())
+        sample_b = str(Path(handle_b.name).resolve())
+        shared_settings = _FakeSettings()
+        try:
+            with (
+                mock.patch.object(drum_ui, "QSettings", lambda *_args, **_kwargs: shared_settings),
+                mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+                mock.patch.object(drum_ui.DrumDetectorWindow, "_sync_waveform_path", autospec=True),
+            ):
+                window = drum_ui.DrumDetectorWindow()
+                window._handle_path_selected(sample_a)
+                window._handle_path_selected(sample_b)
+
+                window._on_recent_file_selected(2)
+
+                self.assertEqual(window.path_input.text(), sample_a)
+                self.assertEqual(window.recent_files_combo.itemData(1), sample_a)
+                self.assertEqual(window.recent_files_combo.itemData(2), sample_b)
+                self.assertEqual(window.recent_files_combo.currentData(), sample_a)
+                window.close()
+        finally:
+            for path in (sample_a, sample_b):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
     def test_waveform_shortcuts_follow_samplerod_playback_scheme(self) -> None:
         from prototypes.drum_detector import ui as drum_ui
 
@@ -1232,10 +1567,270 @@ class DrumPreviewTests(unittest.TestCase):
             self.assertEqual(beat_header.background().color().name(), "#21343c")
             self.assertEqual(subdivision_header.background().color().name(), "#101318")
 
-            bar_button = window.generator_sequence_table.cellWidget(5, 0)
-            beat_button = window.generator_sequence_table.cellWidget(5, 4)
+            bar_button = window.generator_sequence_table.cellWidget(6, 0)
+            beat_button = window.generator_sequence_table.cellWidget(6, 4)
             self.assertEqual(bar_button.property("generatorStepRole"), "bar_start")
             self.assertEqual(beat_button.property("generatorStepRole"), "beat")
+            window.close()
+
+    def test_generated_sequence_marks_repeat_zone_boundaries_in_header(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        steps = tuple(
+            GeneratedPatternStep(
+                step_index=index,
+                label="closed_hat" if index in {2, 3, 4} else "silence",
+                velocity=72 if index in {2, 3, 4} else 0,
+                source_hit_index=1 if index in {2, 3, 4} else None,
+                source_label="closed_hat" if index in {2, 3, 4} else None,
+                source_start_s=0.1 if index in {2, 3, 4} else None,
+                source_end_s=0.18 if index in {2, 3, 4} else None,
+                tags=(
+                    ("subdivision", "repeat", "repeat_glitch", "repeat_count_4", "repeat_zone", "repeat_zone_span_3", "repeat_zone_start")
+                    if index == 2
+                    else ("offbeat", "repeat", "repeat_glitch", "repeat_count_4", "repeat_zone", "repeat_zone_span_3")
+                    if index == 3
+                    else ("subdivision", "repeat", "repeat_glitch", "repeat_count_4", "repeat_zone", "repeat_zone_span_3", "repeat_zone_end")
+                    if index == 4
+                    else ("subdivision",)
+                ),
+            )
+            for index in range(1, 17)
+        )
+        pattern = GeneratedBreakPattern(
+            bars=1,
+            step_count=16,
+            seed=123,
+            swing=0.0,
+            params=BreakPatternParams(),
+            event_count=3,
+            summary="closed_hat:3",
+            steps=steps,
+        )
+
+        with (
+            mock.patch.object(drum_ui, "QSettings", _FakeSettings),
+            mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+        ):
+            window = drum_ui.DrumDetectorWindow()
+            window._generated_pattern = pattern
+            window._populate_generated_pattern(pattern)
+
+            self.assertEqual(window.generator_sequence_table.horizontalHeaderItem(1).text(), "[2")
+            self.assertEqual(window.generator_sequence_table.horizontalHeaderItem(2).text(), "3")
+            self.assertEqual(window.generator_sequence_table.horizontalHeaderItem(3).text(), "4]")
+            self.assertIn("Debut repeat", window.generator_sequence_table.horizontalHeaderItem(1).toolTip())
+            self.assertIn("Fin repeat", window.generator_sequence_table.horizontalHeaderItem(3).toolTip())
+            self.assertEqual(window.generator_sequence_table.item(5, 1).text(), "Rpt x4")
+            window.close()
+
+    def test_generated_sequence_fx_row_displays_reverse_tail_and_effect_probabilities(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+        )
+        steps = (
+            GeneratedPatternStep(
+                step_index=1,
+                label="kick",
+                velocity=96,
+                source_hit_index=1,
+                source_label="kick",
+                source_start_s=0.0,
+                source_end_s=0.12,
+                tags=("strong",),
+            ),
+            GeneratedPatternStep(
+                step_index=2,
+                label="kick",
+                velocity=64,
+                source_hit_index=1,
+                source_label="kick",
+                source_start_s=0.0,
+                source_end_s=0.12,
+                tags=("subdivision", "reverse", "effect", "effect_reverse", "reverse_transition", "reverse_from_kick"),
+            ),
+        ) + tuple(
+            GeneratedPatternStep(
+                step_index=index,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=("subdivision",),
+            )
+            for index in range(3, 17)
+        )
+        pattern = GeneratedBreakPattern(
+            bars=1,
+            step_count=16,
+            seed=123,
+            swing=0.0,
+            params=BreakPatternParams(reverse_density=1.0),
+            event_count=2,
+            summary="kick:2",
+            steps=steps,
+        )
+
+        with (
+            mock.patch.object(drum_ui, "QSettings", _FakeSettings),
+            mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+        ):
+            window = drum_ui.DrumDetectorWindow()
+            window._result = DrumDetectionResult(
+                source_path="demo.wav",
+                label="break",
+                form="loop",
+                family="drum",
+                confidence=0.8,
+                loop_score=0.7,
+                drum_score=0.9,
+                break_score=0.7,
+                duration_s=1.0,
+                sample_rate=44100,
+                tempo_bpm=170.0,
+                pulse_score=0.7,
+                regularity=0.6,
+                onset_count=3,
+                onset_density=3.0,
+                percussive_ratio=0.9,
+                harmonic_ratio=0.1,
+                decay_s=0.15,
+                spectral_centroid_hz=2000.0,
+                spectral_flatness=0.4,
+                band_energies={"low": 0.4, "mid": 0.35, "high": 0.25},
+                transient_hits=hits,
+                candidates=(DrumCandidate("break", 0.8, "demo"),),
+            )
+            window._generated_pattern = pattern
+            window._populate_generated_pattern(pattern)
+            window._refresh_generator_probability_preview()
+
+            self.assertEqual(window.generator_sequence_table.rowCount(), 7)
+            self.assertEqual(window.generator_sequence_table.verticalHeaderItem(5).text(), "FX")
+            self.assertEqual(window.generator_sequence_table.item(5, 1).text(), "Rev<-K")
+            self.assertIn("reverse tail", window.generator_sequence_table.item(5, 1).toolTip().lower())
+            self.assertEqual(window.generator_effect_probability_table.columnCount(), 3)
+            self.assertEqual(window.generator_effect_probability_table.item(3, 1).text()[-1], "%")
+            self.assertEqual(window.generator_effect_probability_table.item(3, 2).text()[-1], "%")
+            window.close()
+
+    def test_generated_sequence_fx_row_displays_kick_roll_zone(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        hits = (
+            TransientHit(1, 0.0, 0.1, "kick", 0.9, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.33, "snare", 0.8, -2.0, 0.1, 0.7, 0.2),
+        )
+        steps = (
+            GeneratedPatternStep(
+                step_index=1,
+                label="kick",
+                velocity=104,
+                source_hit_index=1,
+                source_label="kick",
+                source_start_s=0.0,
+                source_end_s=0.1,
+                tags=("strong",),
+            ),
+            GeneratedPatternStep(
+                step_index=2,
+                label="kick",
+                velocity=92,
+                source_hit_index=1,
+                source_label="kick",
+                source_start_s=0.0,
+                source_end_s=0.1,
+                tags=("subdivision", "effect", "effect_kick_roll", "kick_roll", "kick_roll_zone", "kick_roll_zone_span_4", "kick_roll_zone_start", "kick_roll_hi"),
+                relative_velocity_ratio=1.0,
+            ),
+            GeneratedPatternStep(
+                step_index=3,
+                label="kick",
+                velocity=54,
+                source_hit_index=1,
+                source_label="kick",
+                source_start_s=0.0,
+                source_end_s=0.1,
+                tags=("offbeat", "effect", "effect_kick_roll", "kick_roll", "kick_roll_zone", "kick_roll_zone_span_4", "kick_roll_lo"),
+                relative_velocity_ratio=0.38,
+            ),
+            GeneratedPatternStep(
+                step_index=4,
+                label="kick",
+                velocity=88,
+                source_hit_index=1,
+                source_label="kick",
+                source_start_s=0.0,
+                source_end_s=0.1,
+                tags=("subdivision", "effect", "effect_kick_roll", "kick_roll", "kick_roll_zone", "kick_roll_zone_span_4", "kick_roll_zone_end", "kick_roll_hi"),
+                relative_velocity_ratio=0.94,
+            ),
+        ) + tuple(
+            GeneratedPatternStep(
+                step_index=index,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=("subdivision",),
+            )
+            for index in range(5, 17)
+        )
+        pattern = GeneratedBreakPattern(
+            bars=1,
+            step_count=16,
+            seed=222,
+            swing=0.0,
+            params=BreakPatternParams(kick_roll_density=1.0),
+            event_count=4,
+            summary="kick:4",
+            steps=steps,
+        )
+
+        with (
+            mock.patch.object(drum_ui, "QSettings", _FakeSettings),
+            mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+        ):
+            window = drum_ui.DrumDetectorWindow()
+            window._result = DrumDetectionResult(
+                source_path="demo.wav",
+                label="break",
+                form="loop",
+                family="drum",
+                confidence=0.8,
+                loop_score=0.7,
+                drum_score=0.9,
+                break_score=0.7,
+                duration_s=1.0,
+                sample_rate=44100,
+                tempo_bpm=170.0,
+                pulse_score=0.7,
+                regularity=0.6,
+                onset_count=2,
+                onset_density=2.0,
+                percussive_ratio=0.9,
+                harmonic_ratio=0.1,
+                decay_s=0.15,
+                spectral_centroid_hz=2000.0,
+                spectral_flatness=0.4,
+                band_energies={"low": 0.4, "mid": 0.35, "high": 0.25},
+                transient_hits=hits,
+                candidates=(DrumCandidate("break", 0.8, "demo"),),
+            )
+            window._generated_pattern = pattern
+            window._populate_generated_pattern(pattern)
+
+            self.assertEqual(window.generator_sequence_table.item(5, 1).text(), "KRoll 4")
+            self.assertIn("kick roll", window.generator_sequence_table.item(5, 1).toolTip().lower())
+            self.assertIn("Debut kick roll", window.generator_sequence_table.horizontalHeaderItem(1).toolTip())
             window.close()
 
     def test_split_waveform_equally_replaces_markers_with_even_grid(self) -> None:

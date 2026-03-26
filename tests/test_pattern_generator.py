@@ -11,6 +11,7 @@ from prototypes.drum_detector.pattern_generator import (
     _pick_sequence_for_step,
     _pick_weighted_hit,
     _resolve_params,
+    estimate_pattern_effect_probabilities,
     estimate_pattern_family_probabilities,
     generate_break_pattern,
     reroll_break_pattern_step,
@@ -78,6 +79,144 @@ class PatternGeneratorTests(unittest.TestCase):
         self.assertGreater(preview.rows["downbeat"]["snare"], 0.0)
         self.assertGreater(preview.rows["downbeat"]["other"], 0.0)
 
+    def test_probability_preview_allows_kick_and_snare_on_offbeats(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+        )
+
+        preview = estimate_pattern_family_probabilities(
+            hits,
+            BreakPatternParams(
+                seed=21,
+                kick_weight=1.0,
+                snare_weight=1.0,
+                hat_density=1.0,
+                ghost_density=0.0,
+                breath_factor=0.0,
+            ),
+        )
+
+        self.assertGreater(preview.rows["offbeat"]["kick"], 0.0)
+        self.assertGreater(preview.rows["offbeat"]["snare"], 0.0)
+
+    def test_probability_preview_allows_hat_and_ghost_on_downbeats_and_backbeats(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+        )
+
+        preview = estimate_pattern_family_probabilities(
+            hits,
+            BreakPatternParams(
+                seed=31,
+                kick_weight=1.0,
+                snare_weight=1.0,
+                hat_density=1.0,
+                ghost_density=1.0,
+                breath_factor=0.0,
+            ),
+        )
+
+        self.assertGreater(preview.rows["downbeat"]["hat"], 0.0)
+        self.assertGreater(preview.rows["downbeat"]["ghost"], 0.0)
+        self.assertGreater(preview.rows["backbeat"]["hat"], 0.0)
+        self.assertGreater(preview.rows["backbeat"]["ghost"], 0.0)
+
+    def test_effect_probability_preview_favors_repeat_on_offbeats_and_fx_between_main_beats(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+            TransientHit(4, 0.375, 0.43, "perc", 0.75, -4.0, 0.1, 0.4, 0.5),
+        )
+
+        preview = estimate_pattern_effect_probabilities(
+            hits,
+            BreakPatternParams(
+                seed=21,
+                repeat_density=1.0,
+                reverse_density=1.0,
+                kick_roll_density=1.0,
+                hat_density=1.0,
+                snare_weight=1.0,
+                kick_weight=1.0,
+                breath_factor=0.0,
+            ),
+        )
+
+        self.assertGreater(preview.rows["offbeat"]["repeat"], preview.rows["downbeat"]["repeat"])
+        self.assertGreater(preview.rows["subdivision"]["reverse"], 0.0)
+        self.assertGreater(preview.rows["subdivision"]["kick_roll"], 0.0)
+        self.assertGreater(preview.rows["subdivision"]["kick_roll"], 0.18)
+        self.assertGreater(preview.rows["offbeat"]["kick_roll"], 0.18)
+        self.assertGreater(preview.rows["backbeat"]["kick_roll"], 0.55)
+        self.assertAlmostEqual(preview.rows["downbeat"]["reverse"], 0.0, places=6)
+        self.assertAlmostEqual(preview.rows["backbeat"]["reverse"], 0.0, places=6)
+        self.assertAlmostEqual(preview.rows["offbeat"]["reverse"], 0.0, places=6)
+        self.assertAlmostEqual(preview.rows["downbeat"]["kick_roll"], 0.0, places=6)
+        self.assertGreater(preview.rows["backbeat"]["kick_roll"], preview.rows["subdivision"]["kick_roll"])
+
+    def test_kick_roll_density_marks_even_length_kick_roll_zones(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+            TransientHit(4, 0.375, 0.43, "closed_hat", 0.78, -3.0, 0.1, 0.2, 0.82),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(
+                seed=717,
+                kick_roll_density=1.0,
+                kick_roll_span=1.0,
+                kick_roll_contrast=1.0,
+                repeat_density=0.0,
+                reverse_density=0.0,
+                fill_strength=0.0,
+                sequence_density=0.0,
+                hat_density=1.0,
+                ghost_density=0.0,
+                snare_weight=0.0,
+            ),
+            anchors={1: "kick", 5: "kick", 9: "kick", 13: "kick"},
+        )
+
+        kick_roll_steps = [step for step in pattern.steps if "kick_roll" in step.tags]
+
+        self.assertTrue(kick_roll_steps)
+        self.assertTrue(all("effect_kick_roll" in step.tags for step in kick_roll_steps))
+        self.assertTrue(all(step.label in {"kick", "kick_ghost"} for step in kick_roll_steps))
+        self.assertTrue(any("kick_roll_zone_start" in step.tags for step in kick_roll_steps))
+        self.assertTrue(any("kick_roll_zone_end" in step.tags for step in kick_roll_steps))
+        self.assertTrue(all(any(tag.startswith("kick_roll_zone_span_") for tag in step.tags) for step in kick_roll_steps))
+
+        spans = []
+        relative_ratios = []
+        velocities = []
+        for step in kick_roll_steps:
+            for tag in step.tags:
+                text = str(tag)
+                if text.startswith("kick_roll_zone_span_"):
+                    spans.append(int(text.removeprefix("kick_roll_zone_span_")))
+            if step.relative_velocity_ratio is not None:
+                relative_ratios.append(float(step.relative_velocity_ratio))
+            velocities.append(int(step.velocity))
+        self.assertTrue(spans)
+        self.assertTrue(all(span % 2 == 0 for span in spans))
+        self.assertGreaterEqual(max(spans), 4)
+        self.assertTrue(relative_ratios)
+        self.assertEqual(len({round(value, 4) for value in relative_ratios}), 1)
+        self.assertEqual(len(set(velocities)), 1)
+        self.assertTrue(all((((step.step_index - 1) % 16) + 1) in {5, 6, 7, 8, 13, 14, 15, 16} for step in kick_roll_steps))
+        zone_starts = [step for step in kick_roll_steps if "kick_roll_zone_start" in step.tags]
+        self.assertTrue(zone_starts)
+        self.assertGreaterEqual(len(zone_starts), 2)
+        self.assertTrue(all((((step.step_index - 1) % 16) + 1) in {5, 13} for step in zone_starts))
+
     def test_zero_kick_weight_removes_automatic_kicks_from_skeleton(self) -> None:
         hits = (
             TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
@@ -101,6 +240,125 @@ class PatternGeneratorTests(unittest.TestCase):
         )
 
         self.assertFalse(any(step.label == "kick" for step in pattern.steps))
+
+    def test_repeat_density_marks_repeat_zones_with_configurable_rate(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+            TransientHit(4, 0.375, 0.43, "closed_hat", 0.78, -3.0, 0.1, 0.2, 0.82),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(
+                seed=123,
+                repeat_density=1.0,
+                repeat_span=1.0,
+                repeat_rate=1.0,
+                fill_strength=0.0,
+                ghost_density=0.0,
+                sequence_density=0.0,
+                breath_factor=0.0,
+            ),
+        )
+
+        repeated_steps = [step for step in pattern.steps if "repeat" in step.tags]
+
+        self.assertTrue(repeated_steps)
+        self.assertTrue(all("repeat_zone" in step.tags for step in repeated_steps))
+        self.assertTrue(all("repeat_count_4" in step.tags for step in repeated_steps))
+        self.assertTrue(any("repeat_zone_start" in step.tags for step in repeated_steps))
+        self.assertTrue(any("repeat_zone_end" in step.tags for step in repeated_steps))
+        self.assertTrue(any(any(tag.startswith("repeat_zone_span_") for tag in step.tags) for step in repeated_steps))
+        self.assertTrue(all("repeat_glitch" in step.tags for step in repeated_steps))
+        self.assertTrue(all(step.label != "silence" for step in repeated_steps))
+
+    def test_reverse_density_marks_some_steps_as_reversed(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+            TransientHit(4, 0.375, 0.43, "perc", 0.75, -4.0, 0.1, 0.4, 0.5),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(
+                seed=444,
+                reverse_density=1.0,
+                sequence_density=0.0,
+                repeat_density=0.0,
+                fill_strength=0.0,
+            ),
+        )
+
+        reversed_steps = [step for step in pattern.steps if "reverse" in step.tags]
+
+        self.assertTrue(reversed_steps)
+        self.assertTrue(all(step.label != "silence" for step in reversed_steps))
+
+    def test_reverse_effect_lands_on_subdivisions_after_kick_or_snare(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+            TransientHit(4, 0.375, 0.43, "perc", 0.75, -4.0, 0.1, 0.4, 0.5),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(
+                seed=912,
+                reverse_density=1.0,
+                sequence_density=0.0,
+                repeat_density=0.0,
+                fill_strength=0.0,
+                kick_weight=0.0,
+                snare_weight=0.0,
+                ghost_density=0.0,
+            ),
+            anchors={1: "kick", 5: "snare", 9: "kick", 13: "snare"},
+        )
+
+        reversed_steps = [step for step in pattern.steps if "reverse" in step.tags]
+
+        self.assertTrue(reversed_steps)
+        for step in reversed_steps:
+            local_step = ((step.step_index - 1) % 16) + 1
+            self.assertIn(local_step, {2, 4, 6, 8, 10, 12, 14, 16})
+            self.assertIn("effect_reverse", step.tags)
+            self.assertIn("reverse_transition", step.tags)
+            previous = pattern.steps[step.step_index - 2]
+            self.assertIn(previous.label, {"kick", "snare", "clap"})
+            self.assertEqual(step.source_hit_index, previous.source_hit_index)
+            self.assertEqual(step.source_start_s, previous.source_start_s)
+            self.assertEqual(step.source_end_s, previous.source_end_s)
+
+    def test_reverse_effect_does_not_appear_without_kick_or_snare_triggers(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.08, "closed_hat", 0.88, -3.0, 0.1, 0.2, 0.8),
+            TransientHit(2, 0.125, 0.18, "open_hat", 0.81, -4.0, 0.1, 0.2, 0.85),
+            TransientHit(3, 0.25, 0.31, "ride", 0.76, -4.0, 0.1, 0.2, 0.75),
+            TransientHit(4, 0.375, 0.44, "perc", 0.73, -5.0, 0.2, 0.4, 0.4),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(
+                seed=271,
+                reverse_density=1.0,
+                sequence_density=0.0,
+                repeat_density=0.0,
+                fill_strength=0.0,
+                kick_weight=0.0,
+                snare_weight=0.0,
+                hat_density=1.0,
+                ghost_density=0.0,
+            ),
+        )
+
+        self.assertFalse(any("reverse" in step.tags for step in pattern.steps))
 
     def test_reroll_break_pattern_step_only_changes_requested_step_index(self) -> None:
         hits = (
