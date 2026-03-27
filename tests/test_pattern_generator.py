@@ -6,14 +6,18 @@ import numpy as np
 from prototypes.drum_detector.analyzer import HitSequence, HitSequenceEvent, TransientHit
 from prototypes.drum_detector.pattern_generator import (
     BreakPatternParams,
+    UserMotif,
     _build_pools,
+    _build_hybrid_motif_anchors,
     _build_sequence_pools,
     _pick_sequence_for_step,
     _pick_weighted_hit,
     _resolve_params,
     estimate_pattern_effect_probabilities,
     estimate_pattern_family_probabilities,
+    estimate_user_motif_effective_probability,
     generate_break_pattern,
+    generate_break_pattern_hybrid,
     reroll_break_pattern_step,
 )
 
@@ -49,6 +53,106 @@ class PatternGeneratorTests(unittest.TestCase):
         self.assertEqual(pattern.step_count, 32)
         self.assertEqual(len(pattern.steps), 32)
         self.assertEqual(pattern.steps[-1].step_index, 32)
+
+    def test_user_motif_effective_probability_respects_motif_density(self) -> None:
+        motif = UserMotif(
+            steps=["kick", None, "snare", None],
+            base_prob=0.8,
+            role="groove",
+            dominant_type="mixed",
+            name="Kick Snare",
+        )
+
+        zero_density = estimate_user_motif_effective_probability(
+            motif,
+            BreakPatternParams(
+                motif_density=0.0,
+                kick_weight=1.0,
+                snare_weight=1.0,
+                hat_density=1.0,
+                ghost_density=1.0,
+            ),
+        )
+        full_density = estimate_user_motif_effective_probability(
+            motif,
+            BreakPatternParams(
+                motif_density=1.0,
+                kick_weight=1.0,
+                snare_weight=1.0,
+                hat_density=1.0,
+                ghost_density=1.0,
+            ),
+        )
+
+        self.assertAlmostEqual(zero_density, 0.0, places=6)
+        self.assertGreater(full_density, 0.0)
+
+    def test_hybrid_motif_anchor_builder_truncates_on_manual_anchor_collision(self) -> None:
+        motif = UserMotif(
+            steps=["kick", "hat", "snare", "hat"],
+            base_prob=1.0,
+            role="groove",
+            dominant_type="mixed",
+            name="Colliding motif",
+        )
+        params = BreakPatternParams(
+            seed=12,
+            motif_density=1.0,
+            kick_weight=1.0,
+            snare_weight=1.0,
+            hat_density=1.0,
+            ghost_density=0.0,
+        )
+        resolved = _resolve_params(params)
+
+        anchors, placements = _build_hybrid_motif_anchors(
+            (motif,),
+            params,
+            resolved,
+            step_count=4,
+            manual_anchors={3: "snare"},
+            rng=np.random.default_rng(12),
+        )
+
+        self.assertEqual(anchors, {1: "kick", 2: "hat"})
+        self.assertEqual(len(placements), 1)
+        self.assertEqual(placements[0].consumed_steps, 2)
+        self.assertEqual(placements[0].applied_anchors, ((1, "kick"), (2, "hat")))
+
+    def test_generate_break_pattern_hybrid_uses_user_motif_as_temporary_skeleton(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+        )
+        motif = UserMotif(
+            steps=["kick", None, "snare", None],
+            base_prob=1.0,
+            role="groove",
+            dominant_type="mixed",
+            name="Kick Snare",
+        )
+
+        pattern = generate_break_pattern_hybrid(
+            hits,
+            BreakPatternParams(
+                seed=77,
+                motif_density=1.0,
+                kick_weight=1.0,
+                snare_weight=1.0,
+                hat_density=0.8,
+                ghost_density=0.0,
+                fill_strength=0.0,
+                repeat_density=0.0,
+                reverse_density=0.0,
+                sequence_density=0.0,
+            ),
+            user_motifs=[motif],
+        )
+
+        self.assertEqual(pattern.step_count, 16)
+        self.assertIn(pattern.steps[0].label, {"kick", "kick_ghost"})
+        self.assertIn(pattern.steps[2].label, {"snare", "clap", "snare_ruff"})
 
     def test_falls_back_to_available_slice_types_when_pools_are_sparse(self) -> None:
         hits = (
@@ -140,6 +244,9 @@ class PatternGeneratorTests(unittest.TestCase):
                 repeat_density=1.0,
                 reverse_density=1.0,
                 kick_roll_density=1.0,
+                snare_stretch_density=1.0,
+                snare_stretch_span=1.0,
+                snare_stretch_amount=1.0,
                 hat_density=1.0,
                 snare_weight=1.0,
                 kick_weight=1.0,
@@ -158,6 +265,9 @@ class PatternGeneratorTests(unittest.TestCase):
         self.assertAlmostEqual(preview.rows["offbeat"]["reverse"], 0.0, places=6)
         self.assertAlmostEqual(preview.rows["downbeat"]["kick_roll"], 0.0, places=6)
         self.assertGreater(preview.rows["backbeat"]["kick_roll"], preview.rows["subdivision"]["kick_roll"])
+        self.assertGreater(preview.rows["backbeat"]["snare_stretch"], preview.rows["downbeat"]["snare_stretch"])
+        self.assertGreater(preview.rows["backbeat"]["snare_stretch"], 0.1)
+        self.assertGreater(preview.rows["offbeat"]["snare_stretch"], 0.02)
 
     def test_kick_roll_density_marks_even_length_kick_roll_zones(self) -> None:
         hits = (
@@ -216,6 +326,47 @@ class PatternGeneratorTests(unittest.TestCase):
         self.assertTrue(zone_starts)
         self.assertGreaterEqual(len(zone_starts), 2)
         self.assertTrue(all((((step.step_index - 1) % 16) + 1) in {5, 13} for step in zone_starts))
+
+    def test_snare_stretch_density_marks_snare_steps_with_stretch_metadata(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "clap", 0.8, -3.0, 0.1, 0.5, 0.4),
+            TransientHit(4, 0.375, 0.43, "closed_hat", 0.78, -3.0, 0.1, 0.2, 0.82),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(
+                seed=512,
+                snare_stretch_density=1.0,
+                snare_stretch_span=1.0,
+                snare_stretch_amount=1.0,
+                repeat_density=0.0,
+                reverse_density=0.0,
+                kick_roll_density=0.0,
+                fill_strength=0.0,
+                hat_density=0.0,
+                ghost_density=0.0,
+                kick_weight=0.0,
+                snare_weight=1.0,
+                sequence_density=0.0,
+            ),
+            anchors={5: "snare", 13: "snare"},
+        )
+
+        stretched_steps = [step for step in pattern.steps if "snare_stretch" in step.tags]
+        zone_steps = [step for step in pattern.steps if "snare_stretch_zone" in step.tags]
+
+        self.assertTrue(stretched_steps)
+        self.assertTrue(zone_steps)
+        self.assertTrue(all("effect_snare_stretch" in step.tags for step in stretched_steps))
+        self.assertTrue(all(step.label in {"snare", "clap", "snare_ruff"} for step in stretched_steps))
+        self.assertTrue(all("snare_stretch_zone_start" in step.tags for step in stretched_steps))
+        self.assertTrue(all(any(str(tag).startswith("snare_stretch_zone_span_") for tag in step.tags) for step in stretched_steps))
+        self.assertTrue(any((((step.step_index - 1) % 16) + 1) in {5, 13} for step in stretched_steps))
+        self.assertFalse(any("snare_stretch_hold" in step.tags for step in pattern.steps))
+        self.assertTrue(any("snare_stretch_zone_end" in step.tags for step in zone_steps))
 
     def test_zero_kick_weight_removes_automatic_kicks_from_skeleton(self) -> None:
         hits = (
@@ -712,6 +863,89 @@ class PatternGeneratorTests(unittest.TestCase):
         self.assertEqual(pattern.steps[1].label, "snare")
         self.assertIn("anchor_snare", pattern.steps[1].tags)
         self.assertNotIn("sequence_gap", pattern.steps[1].tags)
+
+    def test_default_probability_preview_keeps_structural_silence_lower_on_pillars(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.95, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.91, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.84, -3.0, 0.1, 0.2, 0.82),
+            TransientHit(4, 0.375, 0.48, "perc", 0.72, -5.0, 0.15, 0.45, 0.4),
+        )
+
+        preview = estimate_pattern_family_probabilities(hits, BreakPatternParams())
+
+        self.assertLess(preview.rows["downbeat"]["silence"], 0.18)
+        self.assertLess(preview.rows["backbeat"]["silence"], 0.2)
+        self.assertLess(preview.rows["downbeat"]["silence"], preview.rows["downbeat"]["kick"])
+        self.assertLess(preview.rows["backbeat"]["silence"], preview.rows["backbeat"]["snare"])
+
+    def test_sequences_are_protected_from_late_repeat_and_stretch_fx(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.95, -1.0, 0.8, 0.1, 0.1, role="pillar", rhythmic_position="downbeat"),
+            TransientHit(2, 0.125, 0.19, "closed_hat", 0.84, -3.0, 0.1, 0.2, 0.82, role="texture", rhythmic_position="subdivision"),
+            TransientHit(3, 0.25, 0.37, "snare", 0.91, -2.0, 0.1, 0.7, 0.2, role="pillar", rhythmic_position="backbeat"),
+            TransientHit(4, 0.375, 0.43, "snare_ruff", 0.82, -4.0, 0.15, 0.65, 0.2, role="fill", rhythmic_position="offbeat"),
+        )
+        sequence = HitSequence(
+            index=3,
+            role="groove",
+            hit_count=3,
+            total_steps=4,
+            source_start_s=0.0,
+            source_end_s=0.37,
+            start_step_hint=1,
+            end_step_hint=4,
+            labels=("kick", "snare", "closed_hat"),
+            events=(
+                HitSequenceEvent(0, 1, "kick", "pillar", 0, 0, 1.0, 0.0, 0.12, rhythmic_position="downbeat"),
+                HitSequenceEvent(1, 3, "snare", "pillar", 2, 2, 1.0, 0.25, 0.37, rhythmic_position="offbeat"),
+                HitSequenceEvent(2, 2, "closed_hat", "texture", 3, 1, 0.8, 0.125, 0.19, rhythmic_position="subdivision"),
+            ),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(
+                seed=22,
+                sequence_density=1.0,
+                sequence_max_len=4,
+                sequence_role_lock=True,
+                repeat_density=1.0,
+                snare_stretch_density=1.0,
+                reverse_density=1.0,
+                kick_roll_density=1.0,
+            ),
+            sequences=(sequence,),
+        )
+
+        sequence_steps = [step for step in pattern.steps if "sequence" in step.tags]
+        self.assertTrue(sequence_steps)
+        for step in sequence_steps:
+            self.assertNotIn("repeat", step.tags)
+            self.assertNotIn("snare_stretch", step.tags)
+            self.assertNotIn("snare_stretch_tail", step.tags)
+            self.assertNotIn("kick_roll", step.tags)
+            self.assertNotIn("reverse", step.tags)
+
+    def test_generated_pattern_exposes_break_quality_metrics(self) -> None:
+        hits = (
+            TransientHit(1, 0.0, 0.12, "kick", 0.92, -1.0, 0.8, 0.1, 0.1),
+            TransientHit(2, 0.25, 0.37, "snare", 0.84, -2.0, 0.1, 0.7, 0.2),
+            TransientHit(3, 0.125, 0.19, "closed_hat", 0.8, -3.0, 0.1, 0.2, 0.8),
+        )
+
+        pattern = generate_break_pattern(
+            hits,
+            BreakPatternParams(seed=123, fill_strength=0.4, repeat_density=0.2, bars=2),
+        )
+
+        self.assertIn("silence_ratio", pattern.metrics)
+        self.assertIn("post_fx_ratio", pattern.metrics)
+        self.assertIn("protected_ratio", pattern.metrics)
+        self.assertGreaterEqual(pattern.metrics["silence_ratio"], 0.0)
+        self.assertLessEqual(pattern.metrics["silence_ratio"], 1.0)
+        self.assertGreaterEqual(pattern.metrics["post_fx_ratio"], 0.0)
+        self.assertLessEqual(pattern.metrics["post_fx_ratio"], 1.0)
 
 
 if __name__ == "__main__":

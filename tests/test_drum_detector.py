@@ -26,13 +26,23 @@ def _silence_test_warnings() -> None:
 _silence_test_warnings()
 
 from prototypes.drum_detector.analyzer import (
+    DrumCandidate,
+    DrumDetectionResult,
     MAX_SEQUENCE_HIT_COUNT,
     TransientHit,
+    _FeatureVector,
+    _HitAnalysis,
+    _OnsetHint,
+    _TransientProfile,
     _assign_hit_roles,
+    _coalesce_false_split_onsets,
+    _estimate_hit_end_time,
     _extract_hit_sequences,
+    _resolve_contextual_hits,
     analyze_audio_with_preview,
     detect_drum_from_audio,
     detect_drum_from_markers,
+    requantize_detection_result,
 )
 
 
@@ -207,6 +217,174 @@ class DrumDetectorTests(unittest.TestCase):
         self.assertGreaterEqual(sparse.onset_count, 2)
         self.assertGreater(dense.onset_count, sparse.onset_count)
 
+    def test_low_band_false_split_is_coalesced_on_kick_tail(self) -> None:
+        sample_rate = 22050
+        duration_s = 0.5
+        audio = np.zeros(int(sample_rate * duration_s), dtype=np.float32)
+        kick = _make_kick(sample_rate, duration_s=0.28)
+        _place(audio, kick, 0.0, sample_rate)
+
+        starts = [0.0, 0.058, 0.24]
+        hints = [
+            _OnsetHint(time_s=0.0, combined_strength=0.95, low_strength=0.88, mid_strength=0.14, high_strength=0.05),
+            _OnsetHint(time_s=0.058, combined_strength=0.32, low_strength=0.26, mid_strength=0.12, high_strength=0.06),
+            _OnsetHint(time_s=0.24, combined_strength=0.78, low_strength=0.08, mid_strength=0.22, high_strength=0.74),
+        ]
+
+        kept_starts, kept_hints = _coalesce_false_split_onsets(
+            _normalize(audio),
+            sample_rate,
+            starts,
+            hints,
+            duration_s=duration_s,
+            split_density=15.0,
+        )
+
+        self.assertEqual(len(kept_starts), 2)
+        self.assertAlmostEqual(kept_starts[0], 0.0, places=3)
+        self.assertAlmostEqual(kept_starts[1], 0.24, places=3)
+        self.assertIsNotNone(kept_hints)
+        self.assertEqual(len(kept_hints), 2)
+
+    def test_hit_end_estimation_keeps_kick_longer_than_hat(self) -> None:
+        sample_rate = 22050
+        duration_s = 0.36
+        kick_buffer = np.zeros(int(sample_rate * duration_s), dtype=np.float32)
+        hat_buffer = np.zeros(int(sample_rate * duration_s), dtype=np.float32)
+        _place(kick_buffer, _make_kick(sample_rate, duration_s=0.24), 0.0, sample_rate)
+        _place(hat_buffer, _make_closed_hat(sample_rate, duration_s=0.08), 0.0, sample_rate)
+
+        kick_end_s = _estimate_hit_end_time(
+            _normalize(kick_buffer),
+            sample_rate,
+            0.0,
+            0.3,
+            hint=_OnsetHint(time_s=0.0, combined_strength=0.92, low_strength=0.84, mid_strength=0.12, high_strength=0.05),
+            duration_s=duration_s,
+            split_density=30.0,
+        )
+        hat_end_s = _estimate_hit_end_time(
+            _normalize(hat_buffer),
+            sample_rate,
+            0.0,
+            0.3,
+            hint=_OnsetHint(time_s=0.0, combined_strength=0.88, low_strength=0.05, mid_strength=0.16, high_strength=0.86),
+            duration_s=duration_s,
+            split_density=30.0,
+        )
+
+        self.assertGreater(kick_end_s, 0.12)
+        self.assertLess(hat_end_s, 0.16)
+        self.assertGreater(kick_end_s, hat_end_s + 0.04)
+
+    def test_contextual_similarity_pulls_ambiguous_hat_toward_hat_cluster(self) -> None:
+        def _features(
+            *,
+            duration_s: float,
+            low: float,
+            mid: float,
+            high: float,
+            centroid_hz: float,
+            decay_s: float,
+            attack_score: float,
+            noise: float,
+            peak_db: float,
+        ) -> _FeatureVector:
+            return _FeatureVector(
+                duration_s=duration_s,
+                low_ratio=low,
+                mid_ratio=mid,
+                high_ratio=high,
+                spectral_centroid_hz=centroid_hz,
+                spectral_flatness=noise,
+                zero_crossing_rate=min(0.95, noise * 0.3),
+                decay_s=decay_s,
+                attack_score=attack_score,
+                noise_score=noise,
+                peak_db=peak_db,
+            )
+
+        def _scores(**overrides: float) -> dict[str, float]:
+            labels = (
+                "kick",
+                "kick_ghost",
+                "snare",
+                "snare_ghost",
+                "snare_ruff",
+                "clap",
+                "closed_hat",
+                "open_hat",
+                "crash",
+                "ride",
+                "tom",
+                "perc",
+            )
+            base = {label: 0.04 for label in labels}
+            base.update(overrides)
+            return base
+
+        profile = _TransientProfile(low_ratio=0.03, mid_ratio=0.11, high_ratio=0.86, energy_rise=0.9, pre_level=0.08)
+        hint = _OnsetHint(time_s=0.0, combined_strength=0.82, low_strength=0.05, mid_strength=0.14, high_strength=0.88)
+        body = _features(
+            duration_s=0.08,
+            low=0.03,
+            mid=0.14,
+            high=0.83,
+            centroid_hz=6500.0,
+            decay_s=0.05,
+            attack_score=0.9,
+            noise=0.82,
+            peak_db=-9.0,
+        )
+        attack = _features(
+            duration_s=0.03,
+            low=0.02,
+            mid=0.12,
+            high=0.86,
+            centroid_hz=7200.0,
+            decay_s=0.03,
+            attack_score=0.95,
+            noise=0.88,
+            peak_db=-8.0,
+        )
+
+        analyses = [
+            _HitAnalysis(
+                index=1,
+                start_s=0.0,
+                end_s=0.07,
+                body=body,
+                attack=attack,
+                hint=hint,
+                profile=profile,
+                scores=_scores(closed_hat=0.71, open_hat=0.39, snare_ruff=0.28),
+            ),
+            _HitAnalysis(
+                index=2,
+                start_s=0.12,
+                end_s=0.19,
+                body=body,
+                attack=attack,
+                hint=hint,
+                profile=profile,
+                scores=_scores(closed_hat=0.68, open_hat=0.35, snare_ruff=0.29),
+            ),
+            _HitAnalysis(
+                index=3,
+                start_s=0.24,
+                end_s=0.31,
+                body=body,
+                attack=attack,
+                hint=hint,
+                profile=profile,
+                scores=_scores(closed_hat=0.39, open_hat=0.34, snare_ruff=0.44, snare=0.26),
+            ),
+        ]
+
+        resolved = _resolve_contextual_hits(analyses)
+
+        self.assertEqual(resolved[2].label, "closed_hat")
+
     def test_analysis_preview_callback_exposes_marker_times_before_final_result(self) -> None:
         sample_rate = 22050
         duration_s = 1.0
@@ -297,6 +475,96 @@ class DrumDetectorTests(unittest.TestCase):
             [event.rhythmic_position for event in sequence.events],
             ["downbeat", "offbeat", "backbeat"],
         )
+
+    def test_requantize_detection_result_rebuilds_positions_and_sequences_for_adjusted_tempo(self) -> None:
+        hits = [
+            TransientHit(
+                index=1,
+                start_s=0.09,
+                end_s=0.15,
+                label="kick",
+                confidence=0.9,
+                peak_db=-3.0,
+                low_ratio=0.8,
+                mid_ratio=0.15,
+                high_ratio=0.05,
+            ),
+            TransientHit(
+                index=2,
+                start_s=0.34,
+                end_s=0.39,
+                label="closed_hat",
+                confidence=0.82,
+                peak_db=-8.0,
+                low_ratio=0.05,
+                mid_ratio=0.3,
+                high_ratio=0.65,
+            ),
+            TransientHit(
+                index=3,
+                start_s=0.59,
+                end_s=0.68,
+                label="snare",
+                confidence=0.88,
+                peak_db=-4.0,
+                low_ratio=0.15,
+                mid_ratio=0.65,
+                high_ratio=0.2,
+            ),
+        ]
+        base_hits = tuple(_assign_hit_roles(hits, tempo_bpm=120.0, regularity=0.95))
+        base_sequences = tuple(
+            _extract_hit_sequences(
+                list(base_hits),
+                tempo_bpm=120.0,
+                regularity=0.95,
+                min_len=3,
+                max_len=3,
+            )
+        )
+        result = DrumDetectionResult(
+            source_path="demo.wav",
+            label="break",
+            form="loop",
+            family="drum",
+            confidence=0.9,
+            loop_score=0.8,
+            drum_score=0.9,
+            break_score=0.85,
+            duration_s=1.0,
+            sample_rate=44100,
+            tempo_bpm=120.0,
+            pulse_score=0.7,
+            regularity=0.95,
+            onset_count=3,
+            onset_density=3.0,
+            percussive_ratio=0.9,
+            harmonic_ratio=0.1,
+            decay_s=0.15,
+            spectral_centroid_hz=2000.0,
+            spectral_flatness=0.4,
+            band_energies={"low": 0.4, "mid": 0.35, "high": 0.25},
+            transient_hits=base_hits,
+            candidates=(DrumCandidate("break", 0.8, "demo"),),
+            hit_sequences=base_sequences,
+        )
+
+        requantized = requantize_detection_result(result, tempo_bpm=240.0)
+
+        self.assertEqual(round(requantized.tempo_bpm), 240)
+        self.assertEqual(
+            [hit.rhythmic_position for hit in requantized.transient_hits],
+            ["downbeat", "backbeat", "downbeat"],
+        )
+        matching_sequences = [
+            sequence
+            for sequence in requantized.hit_sequences
+            if sequence.hit_count == 3
+            and sequence.start_step_hint == 1
+            and sequence.end_step_hint == 9
+            and [event.start_offset_steps for event in sequence.events] == [0, 4, 8]
+        ]
+        self.assertTrue(matching_sequences)
 
 
 if __name__ == "__main__":

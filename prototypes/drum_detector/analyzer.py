@@ -188,6 +188,19 @@ class _HitAnalysis:
     scores: dict[str, float]
 
 
+def _hint_dominant_band(hint: _OnsetHint | None) -> str:
+    if hint is None:
+        return "mid"
+    low = float(hint.low_strength)
+    mid = float(hint.mid_strength)
+    high = float(hint.high_strength)
+    if low >= max(mid * 0.92, high * 1.1, 0.12):
+        return "low"
+    if high >= max(low * 1.1, mid * 1.02, 0.12):
+        return "high"
+    return "mid"
+
+
 @dataclass(frozen=True)
 class _SplitDensityConfig:
     strong_delta: float
@@ -377,6 +390,7 @@ def analyze_audio_with_preview(
         regularity=regularity,
         source_path=source_path,
         top_n=top_n,
+        split_density=split_density,
     )
 
 
@@ -411,6 +425,38 @@ def detect_drum_from_markers(
         top_n=top_n,
         prepend_start_zero=False,
         keep_manual_segments=True,
+        split_density=DEFAULT_SPLIT_DENSITY,
+    )
+
+
+def requantize_detection_result(
+    result: DrumDetectionResult,
+    *,
+    tempo_bpm: float | None = None,
+) -> DrumDetectionResult:
+    resolved_tempo = float(tempo_bpm if tempo_bpm is not None else result.tempo_bpm)
+    if not result.transient_hits:
+        return replace(result, tempo_bpm=resolved_tempo, hit_sequences=())
+
+    updated_hits = tuple(
+        _assign_hit_roles(
+            list(result.transient_hits),
+            tempo_bpm=resolved_tempo,
+            regularity=float(result.regularity),
+        )
+    )
+    updated_sequences = tuple(
+        _extract_hit_sequences(
+            list(updated_hits),
+            tempo_bpm=resolved_tempo,
+            regularity=float(result.regularity),
+        )
+    )
+    return replace(
+        result,
+        tempo_bpm=resolved_tempo,
+        transient_hits=updated_hits,
+        hit_sequences=updated_sequences,
     )
 
 
@@ -432,6 +478,7 @@ def _build_detection_result(
     top_n: int,
     prepend_start_zero: bool = True,
     keep_manual_segments: bool = False,
+    split_density: float = DEFAULT_SPLIT_DENSITY,
 ) -> DrumDetectionResult:
     duration_s = float(signal.size) / float(sample_rate)
     harmonic, percussive = _harmonic_percussive(signal)
@@ -447,6 +494,7 @@ def _build_detection_result(
         onset_hints,
         prepend_start_zero=prepend_start_zero,
         keep_low_energy_segments=keep_manual_segments,
+        split_density=split_density,
     )
     hits = _assign_hit_roles(hits, tempo_bpm=tempo_bpm, regularity=regularity)
     sequences = _extract_hit_sequences(hits, tempo_bpm=tempo_bpm, regularity=regularity)
@@ -972,6 +1020,135 @@ def _local_peak(signal: np.ndarray, sample_rate: int, time_s: float, *, window_s
     return float(np.max(np.abs(signal[start:end])))
 
 
+def _coalesce_false_split_onsets(
+    signal: np.ndarray,
+    sample_rate: int,
+    starts: list[float],
+    onset_hints: list[_OnsetHint] | None,
+    *,
+    duration_s: float,
+    split_density: float = DEFAULT_SPLIT_DENSITY,
+) -> tuple[list[float], list[_OnsetHint] | None]:
+    if len(starts) <= 1 or not onset_hints or len(onset_hints) != len(starts):
+        return starts, onset_hints
+
+    density = float(np.clip(split_density, 0.0, 100.0))
+    merge_bias = (50.0 - density) / 50.0
+
+    kept_starts: list[float] = [float(starts[0])]
+    kept_hints: list[_OnsetHint] = [onset_hints[0]]
+    previous_peak = _local_peak(signal, sample_rate, kept_starts[0])
+
+    for current_start, current_hint in zip(starts[1:], onset_hints[1:]):
+        previous_start = kept_starts[-1]
+        previous_hint = kept_hints[-1]
+        gap_s = float(current_start) - float(previous_start)
+        current_peak = _local_peak(signal, sample_rate, float(current_start))
+
+        previous_dominant = _hint_dominant_band(previous_hint)
+        current_dominant = _hint_dominant_band(current_hint)
+        weak_followup = float(current_hint.combined_strength) <= max(
+            0.1 - (0.02 * min(merge_bias, 0.0)),
+            (0.8 + (0.09 * merge_bias)) * float(previous_hint.combined_strength),
+        )
+        soft_followup_peak = current_peak <= max(0.05, previous_peak * (1.1 + (0.1 * merge_bias)))
+        low_tail_followup = (
+            previous_dominant == "low"
+            and current_dominant != "high"
+            and float(current_hint.low_strength)
+            >= max(0.08, float(current_hint.high_strength) * (0.82 - (0.08 * merge_bias)))
+        )
+        ultra_close_followup = gap_s <= (0.055 + (0.02 * merge_bias)) and current_dominant != "high"
+
+        if (
+            gap_s <= (0.11 + (0.04 * merge_bias))
+            and weak_followup
+            and soft_followup_peak
+            and (low_tail_followup or ultra_close_followup)
+        ):
+            continue
+
+        kept_starts.append(float(np.clip(current_start, 0.0, duration_s)))
+        kept_hints.append(current_hint)
+        previous_peak = current_peak
+
+    return kept_starts, kept_hints
+
+
+def _estimate_hit_end_time(
+    signal: np.ndarray,
+    sample_rate: int,
+    start_s: float,
+    next_start_s: float,
+    *,
+    hint: _OnsetHint | None,
+    duration_s: float,
+    split_density: float = DEFAULT_SPLIT_DENSITY,
+) -> float:
+    resolved_start_s = float(np.clip(start_s, 0.0, duration_s))
+    resolved_next_s = float(np.clip(next_start_s, resolved_start_s, duration_s))
+    gap_s = max(0.0, resolved_next_s - resolved_start_s)
+    if gap_s <= 0.036:
+        return float(min(duration_s, resolved_start_s + max(0.02, gap_s)))
+
+    dominant_band = _hint_dominant_band(hint)
+    density = float(np.clip(split_density, 0.0, 100.0))
+    detail_bias = (density - 50.0) / 50.0
+    if dominant_band == "low":
+        min_hold_s = 0.075 - (0.01 * detail_bias)
+        max_hold_s = 0.34 - (0.05 * detail_bias)
+        floor_ratio = 0.16 + (0.03 * detail_bias)
+    elif dominant_band == "high":
+        min_hold_s = 0.03 - (0.004 * detail_bias)
+        max_hold_s = 0.22 - (0.035 * detail_bias)
+        floor_ratio = 0.1 + (0.025 * detail_bias)
+    else:
+        min_hold_s = 0.045 - (0.006 * detail_bias)
+        max_hold_s = 0.28 - (0.04 * detail_bias)
+        floor_ratio = 0.13 + (0.025 * detail_bias)
+
+    min_hold_s = float(np.clip(min_hold_s, 0.026, 0.12))
+    max_hold_s = float(np.clip(max_hold_s, min_hold_s + 0.03, 0.4))
+    floor_ratio = float(np.clip(floor_ratio, 0.08, 0.22))
+
+    candidate_end_s = min(resolved_next_s, resolved_start_s + max_hold_s)
+    start_index = int(np.clip(round(resolved_start_s * sample_rate), 0, max(signal.size - 1, 0)))
+    end_index = int(np.clip(round(candidate_end_s * sample_rate), start_index + 1, signal.size))
+    segment = np.abs(signal[start_index:end_index]).astype(np.float32, copy=False)
+    if segment.size < 8:
+        return float(min(resolved_next_s, resolved_start_s + max(0.024, gap_s)))
+
+    window = max(8, int(sample_rate * 0.0035))
+    if window > 1:
+        kernel = np.ones(window, dtype=np.float32) / float(window)
+        envelope = np.convolve(segment, kernel, mode="same")
+    else:
+        envelope = segment
+
+    peak_search = max(1, min(envelope.size, int(sample_rate * 0.04)))
+    peak_index = int(np.argmax(envelope[:peak_search]))
+    peak_value = float(envelope[peak_index]) if envelope.size else 0.0
+    if peak_value <= 1e-6:
+        return float(min(resolved_next_s, resolved_start_s + max(min_hold_s, 0.024)))
+
+    floor = peak_value * float(floor_ratio)
+    min_hold_samples = max(1, int(round(min_hold_s * sample_rate)))
+    sustain_window = max(2, int(round(sample_rate * 0.006)))
+    search_start = min(envelope.size - 1, peak_index + min_hold_samples)
+
+    for index in range(search_start, envelope.size):
+        end_window = min(envelope.size, index + sustain_window)
+        if float(np.mean(envelope[index:end_window])) <= floor:
+            end_time_s = resolved_start_s + (float(index) / float(sample_rate))
+            return float(np.clip(end_time_s, resolved_start_s + 0.02, resolved_next_s))
+
+    if dominant_band == "high":
+        fallback_s = min(resolved_next_s, resolved_start_s + max(min_hold_s, min(gap_s, 0.11)))
+    else:
+        fallback_s = min(resolved_next_s, resolved_start_s + max(min_hold_s, min(gap_s, max_hold_s)))
+    return float(np.clip(fallback_s, resolved_start_s + 0.02, resolved_next_s))
+
+
 def _regularity_score(onset_times: np.ndarray) -> float:
     if onset_times.size < 3:
         return 0.0
@@ -991,6 +1168,7 @@ def _detect_transient_hits(
     *,
     prepend_start_zero: bool = True,
     keep_low_energy_segments: bool = False,
+    split_density: float = DEFAULT_SPLIT_DENSITY,
 ) -> list[TransientHit]:
     duration_s = float(signal.size) / float(sample_rate)
     starts = onset_times.tolist() if onset_times.size else [0.0]
@@ -998,12 +1176,32 @@ def _detect_transient_hits(
         starts.insert(0, 0.0)
     if not starts:
         starts = [0.0]
+    if not keep_low_energy_segments:
+        starts, onset_hints = _coalesce_false_split_onsets(
+            signal,
+            sample_rate,
+            starts,
+            onset_hints,
+            duration_s=duration_s,
+            split_density=split_density,
+        )
 
     analyses: list[_HitAnalysis] = []
     for index, start_s in enumerate(starts):
         hint = onset_hints[index] if onset_hints and index < len(onset_hints) else None
-        end_s = starts[index + 1] if index + 1 < len(starts) else duration_s
-        hit_end_s = max(end_s, min(duration_s, start_s + 0.035))
+        next_start_s = starts[index + 1] if index + 1 < len(starts) else duration_s
+        if keep_low_energy_segments:
+            hit_end_s = max(next_start_s, min(duration_s, start_s + 0.035))
+        else:
+            hit_end_s = _estimate_hit_end_time(
+                signal,
+                sample_rate,
+                float(start_s),
+                float(next_start_s),
+                hint=hint,
+                duration_s=duration_s,
+                split_density=split_density,
+            )
         start_index = int(max(0.0, start_s) * sample_rate)
         end_index = max(start_index + 1, int(hit_end_s * sample_rate))
         segment = signal[start_index:end_index]
@@ -1012,7 +1210,16 @@ def _detect_transient_hits(
         if float(np.max(np.abs(segment))) <= (1e-5 if keep_low_energy_segments else 0.015):
             continue
 
-        analysis_end_s = min(duration_s, start_s + min(0.18, max(0.08, (end_s - start_s) * 1.2)))
+        if keep_low_energy_segments:
+            analysis_end_s = hit_end_s
+        else:
+            dominant_band = _hint_dominant_band(hint)
+            analysis_window_s = {
+                "low": 0.3,
+                "mid": 0.22,
+                "high": 0.26,
+            }.get(dominant_band, 0.22)
+            analysis_end_s = min(duration_s, max(hit_end_s, start_s + min(analysis_window_s, max(0.08, (next_start_s - start_s) * 1.15))))
         analysis_end_index = max(start_index + 1, int(analysis_end_s * sample_rate))
         analysis_segment = signal[start_index:analysis_end_index]
         attack_end_index = max(start_index + 1, min(analysis_end_index, start_index + int(sample_rate * 0.08)))
@@ -1096,7 +1303,7 @@ def _resolve_contextual_hits(analyses: list[_HitAnalysis]) -> list[TransientHit]
         >= 0.34
     )
 
-    resolved_hits: list[TransientHit] = []
+    contextual_scores: list[dict[str, float]] = []
     for index, analysis in enumerate(analyses):
         scores = dict(analysis.scores)
         relative_peak = peak_ranks[index]
@@ -1146,6 +1353,17 @@ def _resolve_contextual_hits(analyses: list[_HitAnalysis]) -> list[TransientHit]
             scores["snare_ruff"] = float(np.clip(scores["snare_ruff"] + 0.08, 0.0, 0.99))
             scores["closed_hat"] = float(np.clip(scores["closed_hat"] + 0.03, 0.0, 0.99))
 
+        contextual_scores.append(scores)
+
+    similarity_vectors = np.asarray([_analysis_similarity_vector(analysis) for analysis in analyses], dtype=np.float32)
+    if similarity_vectors.size:
+        similarity_matrix = np.clip(similarity_vectors @ similarity_vectors.T, 0.0, 1.0)
+    else:
+        similarity_matrix = np.zeros((0, 0), dtype=np.float32)
+
+    resolved_hits: list[TransientHit] = []
+    for index, analysis in enumerate(analyses):
+        scores = _apply_similarity_cluster_bias(index, contextual_scores, similarity_matrix)
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
         primary_label, primary_score = ranked[0]
         secondary_labels = _select_secondary_labels(primary_label, ranked)
@@ -1195,6 +1413,148 @@ def _closest_gap_seconds(index: int, analyses: list[_HitAnalysis], *, families: 
         if best_gap is None or gap < best_gap:
             best_gap = gap
     return best_gap
+
+
+def _label_family(label: str) -> str:
+    if label in {"kick", "kick_ghost"}:
+        return "kick"
+    if label in {"snare", "clap", "snare_ghost", "snare_ruff"}:
+        return "snare"
+    if label in {"closed_hat", "open_hat", "crash", "ride"}:
+        return "hat"
+    if label in {"tom", "perc"}:
+        return "perc"
+    return "other"
+
+
+def _analysis_similarity_vector(analysis: _HitAnalysis) -> np.ndarray:
+    hint = analysis.hint
+    profile = analysis.profile
+    vector = np.asarray(
+        [
+            analysis.body.low_ratio,
+            analysis.body.mid_ratio,
+            analysis.body.high_ratio,
+            analysis.attack.low_ratio,
+            analysis.attack.mid_ratio,
+            analysis.attack.high_ratio,
+            float(np.clip(analysis.body.decay_s / 0.34, 0.0, 1.0)),
+            float(np.clip(analysis.attack.decay_s / 0.14, 0.0, 1.0)),
+            float(np.clip(analysis.body.spectral_centroid_hz / 8000.0, 0.0, 1.0)),
+            float(np.clip(analysis.attack.spectral_centroid_hz / 8000.0, 0.0, 1.0)),
+            analysis.body.noise_score,
+            analysis.attack.noise_score,
+            analysis.body.attack_score,
+            analysis.attack.attack_score,
+            hint.low_strength if hint is not None else 0.0,
+            hint.mid_strength if hint is not None else 0.0,
+            hint.high_strength if hint is not None else 0.0,
+            profile.low_ratio if profile is not None else 0.0,
+            profile.mid_ratio if profile is not None else 0.0,
+            profile.high_ratio if profile is not None else 0.0,
+            profile.energy_rise if profile is not None else 0.0,
+        ],
+        dtype=np.float32,
+    )
+    norm = float(np.linalg.norm(vector))
+    if norm <= 1e-6:
+        return vector
+    return vector / norm
+
+
+def _apply_similarity_cluster_bias(
+    index: int,
+    contextual_scores: list[dict[str, float]],
+    similarity_matrix: np.ndarray,
+) -> dict[str, float]:
+    scores = dict(contextual_scores[index])
+    if similarity_matrix.size == 0:
+        return scores
+
+    base_family_scores: dict[str, float] = {}
+    for label, value in scores.items():
+        family = _label_family(label)
+        base_family_scores[family] = base_family_scores.get(family, 0.0) + float(value)
+    dominant_family = max(base_family_scores.items(), key=lambda item: item[1])[0] if base_family_scores else "other"
+
+    neighbors: list[tuple[int, float, str, float, float]] = []
+    for other_index, similarity in enumerate(similarity_matrix[index].tolist()):
+        if other_index == index or similarity < 0.83:
+            continue
+        ranked = sorted(contextual_scores[other_index].items(), key=lambda item: item[1], reverse=True)
+        if not ranked:
+            continue
+        top_label, top_score = ranked[0]
+        margin = float(top_score - ranked[1][1]) if len(ranked) > 1 else float(top_score)
+        if top_score < 0.3:
+            continue
+        neighbors.append((other_index, float(similarity), top_label, float(top_score), margin))
+
+    if not neighbors:
+        return scores
+
+    neighbors.sort(key=lambda item: item[1], reverse=True)
+    neighbors = neighbors[:4]
+    family_support: dict[str, float] = {}
+    exact_support: dict[str, float] = {}
+    total_weight = 0.0
+    for _, similarity, top_label, top_score, margin in neighbors:
+        weight = similarity * (0.65 + (0.35 * top_score) + (0.2 * max(margin, 0.0)))
+        total_weight += weight
+        family = _label_family(top_label)
+        family_support[family] = family_support.get(family, 0.0) + weight
+        exact_support[top_label] = exact_support.get(top_label, 0.0) + weight
+
+    if total_weight <= 1e-6:
+        return scores
+
+    for family, family_weight in family_support.items():
+        normalized = float(np.clip(family_weight / total_weight, 0.0, 1.0))
+        if family != dominant_family:
+            family_gap = float(base_family_scores.get(dominant_family, 0.0) - base_family_scores.get(family, 0.0))
+            if base_family_scores.get(dominant_family, 0.0) >= max(0.78, base_family_scores.get(family, 0.0) + 0.12):
+                normalized *= 0.25
+            elif family_gap >= 0.06:
+                normalized *= 0.55
+        if family == "kick":
+            scores["kick"] = float(np.clip(scores["kick"] + (0.1 * normalized), 0.0, 0.99))
+            scores["kick_ghost"] = float(np.clip(scores["kick_ghost"] + (0.05 * normalized), 0.0, 0.99))
+        elif family == "snare":
+            scores["snare"] = float(np.clip(scores["snare"] + (0.08 * normalized), 0.0, 0.99))
+            scores["clap"] = float(np.clip(scores["clap"] + (0.06 * normalized), 0.0, 0.99))
+            scores["snare_ghost"] = float(np.clip(scores["snare_ghost"] + (0.04 * normalized), 0.0, 0.99))
+            scores["snare_ruff"] = float(np.clip(scores["snare_ruff"] + (0.05 * normalized), 0.0, 0.99))
+        elif family == "hat":
+            scores["closed_hat"] = float(np.clip(scores["closed_hat"] + (0.08 * normalized), 0.0, 0.99))
+            scores["open_hat"] = float(np.clip(scores["open_hat"] + (0.06 * normalized), 0.0, 0.99))
+            scores["ride"] = float(np.clip(scores["ride"] + (0.04 * normalized), 0.0, 0.99))
+            scores["crash"] = float(np.clip(scores["crash"] + (0.03 * normalized), 0.0, 0.99))
+        elif family == "perc":
+            scores["tom"] = float(np.clip(scores["tom"] + (0.05 * normalized), 0.0, 0.99))
+            scores["perc"] = float(np.clip(scores["perc"] + (0.07 * normalized), 0.0, 0.99))
+
+    for label, label_weight in exact_support.items():
+        normalized = float(np.clip(label_weight / total_weight, 0.0, 1.0))
+        if _label_family(label) != dominant_family:
+            family_gap = float(base_family_scores.get(dominant_family, 0.0) - base_family_scores.get(_label_family(label), 0.0))
+            if family_gap >= 0.12:
+                normalized *= 0.25
+            elif family_gap >= 0.06:
+                normalized *= 0.55
+        scores[label] = float(np.clip(scores.get(label, 0.0) + (0.14 * normalized), 0.0, 0.99))
+
+    ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
+    if ranked:
+        top_label = ranked[0][0]
+        dominant_family, dominant_support = max(family_support.items(), key=lambda item: item[1])
+        if (
+            _label_family(top_label) != dominant_family
+            and ranked[0][1] <= 0.52
+            and (dominant_support / total_weight) >= 0.58
+        ):
+            scores[top_label] = float(np.clip(scores[top_label] - 0.04, 0.0, 0.99))
+
+    return scores
 
 
 def _select_secondary_labels(primary_label: str, ranked: list[tuple[str, float]]) -> list[str]:

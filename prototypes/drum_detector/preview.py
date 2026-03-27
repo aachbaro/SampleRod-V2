@@ -216,12 +216,13 @@ def build_pattern_preview(
     for row_index, step in enumerate(pattern.steps, start=1):
         if step.source_start_s is None or step.source_end_s is None or step.label == "silence":
             continue
-        repeat_count = _pattern_step_repeat_count(step)
-        reverse_step = _pattern_step_is_reverse(step)
+        stretch_meta = _pattern_step_snare_stretch_metadata(step)
+        repeat_count = 1 if stretch_meta["active"] else _pattern_step_repeat_count(step)
+        reverse_step = False if stretch_meta["active"] else _pattern_step_is_reverse(step)
         start_time = float(step.source_start_s)
         end_time = max(float(step.source_end_s), start_time + 0.012)
         effective_duration_s = end_time - start_time
-        if resolved_gate < 0.999:
+        if (not stretch_meta["active"]) and resolved_gate < 0.999:
             effective_duration_s = max(0.012, effective_duration_s * resolved_gate)
         if repeat_count > 1:
             retrigger_interval_s = step_duration_s / float(repeat_count)
@@ -243,6 +244,22 @@ def build_pattern_preview(
         repeat_interval_s = step_duration_s / float(repeat_count)
         for repeat_index in range(repeat_count):
             segment = normalized[start_index:end_index].copy()
+            if stretch_meta["active"]:
+                stretch_slot_s = step_duration_s * float(max(2, int(stretch_meta["span"])))
+                target_duration_s = _lerp(
+                    effective_duration_s,
+                    max(effective_duration_s, stretch_slot_s * 0.985),
+                    float(stretch_meta["amount"]),
+                )
+                target_duration_s = float(
+                    np.clip(
+                        target_duration_s,
+                        effective_duration_s,
+                        max(effective_duration_s, stretch_slot_s * 0.985),
+                    )
+                )
+                target_length = max(segment.shape[0], int(round(target_duration_s * sample_rate)))
+                segment = _glitch_stretch_audio_segment(segment, target_length, float(stretch_meta["amount"]))
             if reverse_step:
                 segment = np.flip(segment, axis=0)
             gain = float(np.clip(step.velocity / 100.0, 0.12, 1.2)) if step.velocity is not None else 1.0
@@ -370,6 +387,37 @@ def _pattern_step_is_reverse(step: object) -> bool:
     return "reverse" in _pattern_step_tags(step)
 
 
+def _pattern_step_snare_stretch_metadata(step: object) -> dict[str, float | int | bool]:
+    tags = _pattern_step_tags(step)
+    active = "snare_stretch" in tags
+    tail = "snare_stretch_tail" in tags or "snare_stretch_hold" in tags
+    zone = "snare_stretch_zone" in tags
+    zone_start = "snare_stretch_zone_start" in tags
+    zone_end = "snare_stretch_zone_end" in tags
+    span = 1
+    amount = 0.0
+    for tag in tags:
+        if tag.startswith("snare_stretch_zone_span_"):
+            try:
+                span = max(1, int(tag.removeprefix("snare_stretch_zone_span_")))
+            except ValueError:
+                span = 1
+        elif tag.startswith("snare_stretch_amount_"):
+            try:
+                amount = float(np.clip(int(tag.removeprefix("snare_stretch_amount_")) / 100.0, 0.0, 1.0))
+            except ValueError:
+                amount = 0.0
+    return {
+        "active": active,
+        "tail": tail,
+        "zone": zone,
+        "start": zone_start,
+        "end": zone_end,
+        "span": span,
+        "amount": amount,
+    }
+
+
 def _pattern_step_tags(step: object) -> tuple[str, ...]:
     raw_tags = getattr(step, "tags", ())
     if not isinstance(raw_tags, (tuple, list, set, frozenset)):
@@ -384,6 +432,130 @@ def _pattern_repeat_gain(repeat_index: int, repeat_count: int) -> float:
         return 1.0 if repeat_index == 0 else 0.82
     decay = 1.0 - (0.14 * float(repeat_index))
     return float(np.clip(decay, 0.48, 1.0))
+
+
+def _glitch_stretch_audio_segment(segment: np.ndarray, target_length: int, amount: float) -> np.ndarray:
+    if target_length <= 0 or segment.size == 0:
+        return segment
+    if segment.shape[0] == target_length:
+        return segment
+    if segment.shape[0] >= target_length:
+        return segment[:target_length].copy()
+    if segment.shape[0] == 1:
+        return np.repeat(segment, int(target_length), axis=0)
+
+    resolved_amount = float(np.clip(float(amount), 0.0, 1.0))
+    source_length = int(segment.shape[0])
+    attack_length = int(
+        np.clip(
+            round(_lerp(source_length * 0.18, source_length * 0.08, resolved_amount)),
+            6,
+            max(6, min(max(6, source_length - 4), max(6, source_length // 3))),
+        )
+    )
+    attack_length = int(np.clip(attack_length, 1, max(1, source_length - 4)))
+    attack = segment[:attack_length].copy()
+    tail_source = segment[attack_length:].copy()
+    if tail_source.shape[0] < 8:
+        fallback_start = max(1, min(source_length - 1, source_length // 3))
+        attack = segment[:fallback_start].copy()
+        tail_source = segment[fallback_start:].copy()
+    if tail_source.size == 0:
+        return np.repeat(segment[-1:, :], int(target_length), axis=0)
+
+    target_tail_length = max(0, int(target_length) - attack.shape[0])
+    if target_tail_length <= 0:
+        return attack[: int(target_length)].copy()
+
+    tail = _glitch_tail_audio_segment(tail_source, target_tail_length, resolved_amount)
+    return _concatenate_with_crossfade(attack, tail)
+
+
+def _glitch_tail_audio_segment(segment: np.ndarray, target_length: int, amount: float) -> np.ndarray:
+    if target_length <= 0 or segment.size == 0:
+        return np.zeros((max(0, int(target_length)), segment.shape[1] if segment.ndim == 2 else 1), dtype=np.float32)
+    if segment.shape[0] == target_length:
+        return segment.copy()
+    if segment.shape[0] >= target_length:
+        return segment[:target_length].copy()
+    if segment.shape[0] == 1:
+        return np.repeat(segment, int(target_length), axis=0)
+
+    source_length = int(segment.shape[0])
+    grain_length = int(
+        np.clip(
+            round(_lerp(source_length * 0.34, source_length * 0.11, amount)),
+            10,
+            max(10, min(source_length, int(target_length))),
+        )
+    )
+    if grain_length >= source_length:
+        grain_length = max(10, min(source_length, max(10, source_length // 2)))
+    hop_length = max(1, int(round(grain_length * _lerp(0.7, 0.22, amount))))
+    source_stride = max(1, int(round(grain_length * _lerp(0.18, 0.04, amount))))
+    jitter = int(round(grain_length * _lerp(0.04, 0.32, amount)))
+
+    max_start = max(0, source_length - grain_length)
+    if grain_length <= 2:
+        window = np.ones(grain_length, dtype=np.float32)
+    else:
+        window = np.hanning(grain_length).astype(np.float32)
+        window = np.clip((window * np.float32(0.88)) + np.float32(0.12), 0.0, 1.0)
+
+    stretched = np.zeros((int(target_length), segment.shape[1]), dtype=np.float32)
+    weights = np.zeros((int(target_length), 1), dtype=np.float32)
+    rng_seed = (
+        (source_length * 1315423911)
+        ^ (int(target_length) * 2654435761)
+        ^ int(round(float(amount) * 1000.0))
+    ) & 0xFFFFFFFF
+    rng = np.random.default_rng(int(rng_seed))
+    grain_index = 0
+    output_start = 0
+    source_position = 0.0
+    freeze_threshold = _lerp(0.58, 0.26, amount)
+    tail_falloff = np.linspace(1.0, _lerp(0.84, 0.62, amount), num=int(target_length), dtype=np.float32)[:, np.newaxis]
+
+    while output_start < int(target_length):
+        jitter_offset = int(rng.integers(-jitter, jitter + 1)) if jitter > 0 else 0
+        source_start = int(np.clip(round(source_position) + jitter_offset, 0, max_start))
+        source_end = min(source_start + grain_length, source_length)
+        grain = segment[source_start:source_end]
+        if grain.shape[0] < grain_length:
+            padded = np.zeros((grain_length, segment.shape[1]), dtype=np.float32)
+            padded[: grain.shape[0]] = grain
+            grain = padded
+        if amount >= 0.72 and (grain_index % 5) == 3:
+            grain = np.flip(grain, axis=0)
+
+        chunk_length = min(grain_length, int(target_length) - output_start)
+        window_slice = window[:chunk_length, np.newaxis]
+        stretched[output_start : output_start + chunk_length] += grain[:chunk_length] * window_slice
+        weights[output_start : output_start + chunk_length] += window_slice
+        output_start += hop_length
+        grain_index += 1
+        if max_start > 0:
+            source_position = min(float(max_start), source_position + float(source_stride))
+            if source_position >= (float(max_start) * freeze_threshold):
+                freeze_start = float(max_start) * _lerp(0.42, 0.78, amount)
+                source_position = max(freeze_start, source_position - float(source_stride * _lerp(0.18, 0.52, amount)))
+
+    np.divide(stretched, np.maximum(weights, 1e-6), out=stretched)
+    stretched *= tail_falloff
+    return stretched
+
+
+def _concatenate_with_crossfade(head: np.ndarray, tail: np.ndarray) -> np.ndarray:
+    if head.size == 0:
+        return tail
+    if tail.size == 0:
+        return head
+    crossfade = min(int(head.shape[0] // 4), int(tail.shape[0] // 4), 64)
+    if crossfade <= 1:
+        return np.concatenate((head, tail), axis=0)
+    fade = np.linspace(0.0, 1.0, num=int(crossfade), dtype=np.float32)[:, np.newaxis]
+    blended = (head[-crossfade:] * (1.0 - fade)) + (tail[:crossfade] * fade)
+    return np.concatenate((head[:-crossfade], blended, tail[crossfade:]), axis=0)
 
 
 def _resolve_preview_mode(mode: str) -> str:
@@ -507,3 +679,7 @@ def _apply_edge_fades(
     if fade_out > 1:
         ramp_out = np.linspace(1.0, 0.0, fade_out, endpoint=True, dtype=np.float32)[:, np.newaxis]
         segment[-fade_out:] *= ramp_out
+
+
+def _lerp(start: float, end: float, amount: float) -> float:
+    return float(start + ((end - start) * np.clip(amount, 0.0, 1.0)))

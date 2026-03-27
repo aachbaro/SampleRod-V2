@@ -244,6 +244,14 @@ une version quantifiee de sa grille source :
 - les petites avances / retards du break source ne deformaient donc plus les
   hints rythmiques des sequences
 
+Point important pour l'UI :
+
+- si l'utilisateur corrige la lecture du BPM detecte en `x2` ou `x0.5`
+- les hits et sequences utilises par le generateur sont maintenant re-quantifies
+  sur cette nouvelle grille effective
+- autrement dit, les sequences suivent le meme repere rythmique que le reste du
+  pattern generator, au lieu de rester figees sur le BPM brut de l'analyse
+
 Chaque sequence recoit aussi un role global :
 
 - `groove`
@@ -366,7 +374,10 @@ L'idee generale :
 ## 9. Generateur de break
 
 Le coeur est dans
-[generate_break_pattern(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L113).
+[generate_break_pattern(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L113)
+pour le mode classique, et dans
+[generate_break_pattern_hybrid(...)](/c:/Users/adama/Documents/roadToDev/pascuans/samplerod/prototypes/drum_detector/pattern_generator.py#L315)
+pour le mode hybride base sur des motifs utilisateur.
 
 ### 9.1 Entree du generateur
 
@@ -375,6 +386,14 @@ Le generateur prend :
 - une liste de `TransientHit`
 - une liste optionnelle de `HitSequence`
 - un objet `BreakPatternParams`
+
+Deux modes existent maintenant :
+
+- `Classic`
+  comportement historique, sans squelette utilisateur
+- `Hybrid`
+  ajoute une passe amont qui pose des `UserMotif` comme ancres temporaires,
+  puis reutilise le generateur classique pour remplir les trous
 
 Les parametres exposes sont :
 
@@ -391,10 +410,15 @@ Les parametres exposes sont :
 - `kick_roll_density`
 - `kick_roll_span`
 - `kick_roll_contrast`
+- `snare_stretch_density`
+- `snare_stretch_span`
+- `snare_stretch_amount`
 - `gate`
 - `sequence_density`
 - `sequence_max_len`
 - `sequence_role_lock`
+- `user_motifs`
+- `motif_density`
 - `velocity_spread`
 - `swing`
 - `anti_repeat`
@@ -431,8 +455,24 @@ Notes utiles :
 - `kick_roll_contrast`
   controle le niveau global de velocite du roll
   bas = roll plus doux, haut = roll plus fort
+- `snare_stretch_density`
+  controle la frequence des snare stretches
+  plus haut = davantage de snares, claps ou ruffs allonges
+- `snare_stretch_span`
+  controle jusqu'ou le stretch essaie d'aller vers le repere suivant
+  en pratique, il vise surtout la fenetre restante jusqu'au beat suivant
+- `snare_stretch_amount`
+  controle a quel point la slice est vraiment etiree dans cette fenetre
+  bas = discret, haut = vrai effet glitch/stutter granulaire breakcore
+  l'effet garde l'attaque du snare une seule fois, et glitch surtout la tail
+  il ne mute plus automatiquement les hits suivants du pattern
 - `gate`
   raccourcit globalement la longueur jouee des slices au moment de la preview du pattern
+- `user_motifs`
+  liste de motifs partiels definis par l'utilisateur et persistes par projet
+- `motif_density`
+  scale global applique a la probabilite de base de tous les motifs utilisateur
+  en mode `Hybrid`
 
 Dans l'UI, les effets sont visibles discretement dans la grille du
 pattern :
@@ -442,7 +482,8 @@ pattern :
 - marqueur `{` au debut de kick roll et `}` a la fin
 - teinte plus chaude pour les steps `reverse`
 - teinte cuivre pour les steps `kick_roll`
-- ligne `FX` dans la timeline pour lire explicitement `Rpt x2/x4`, `Rev<-K/S/C` et `KRoll`
+- teinte bleue pour toute la zone `snare_stretch`, avec un debut plus marque
+- ligne `FX` dans la timeline pour lire explicitement `Rpt x2/x4`, `Rev<-K/S/C`, `KRoll` et `Str xN`
 
 L'UI expose aussi un petit tableau de probabilites d'effets :
 
@@ -453,6 +494,9 @@ L'UI expose aussi un petit tableau de probabilites d'effets :
 - `K.Roll`
   chance heuristique de lancer une rafale de kicks sur plusieurs steps
   a partir d'un kick deja present
+- `Snr.Str`
+  chance heuristique de transformer un snare, clap ou ruff en zone glitch
+  qui occupe le break jusqu'au repere suivant
 
 L'UI ajoute aussi une ligne `Anchor` au-dessus de la grille generee.
 Elle permet de figer certains steps en :
@@ -468,6 +512,31 @@ Elle permet de figer certains steps en :
 Cette ligne sert a verrouiller un squelette rythmique simple
 (ex: kick sur `1`, snare sur `5` et `13`), puis laisser le generateur
 construire le reste autour.
+
+En mode `Hybrid`, l'UI ajoute aussi un panneau `Add sequence` :
+
+- mini grille editable de `2` a `8` steps
+- valeurs possibles :
+  - `kick`
+  - `snare`
+  - `hat`
+  - `ghost`
+  - `silence`
+  - `trou`
+- `base_prob`
+- `role`
+- `dominant_type`
+- calcul live de la probabilite effective
+- sauvegarde dans `.drum_detector_user_motifs.json` a la racine du projet courant
+
+Les motifs sauvegardes sont listes dans `User motifs` avec :
+
+- leur pattern
+- leur role
+- leur type dominant
+- leur probabilite de base
+- leur probabilite effective avec les reglages actifs
+- un bouton de suppression
 
 Les parametres sequences servent a choisir combien de fois le generateur
 essaie d'utiliser un bloc de hits deja observe au lieu de repartir en pur mode
@@ -520,6 +589,32 @@ Le generateur decide d'abord une famille d'evenement par step via
 Mais avant de tomber sur ce mode atomique, il peut maintenant essayer de poser
 une sequence en bloc si `sequence_density > 0`.
 
+En mode `Hybrid`, il y a une passe supplementaire encore avant :
+
+1. pose de `UserMotif` comme ancres temporaires
+2. remplissage par le generateur existant
+3. finalisation des vitesses / swing / effets comme d'habitude
+
+Les motifs utilisateur suivent ces regles :
+
+- `base_prob` est reponderee par `motif_density`
+- cette probabilite est aussi modulee par :
+  - `kick_weight` / `snare_weight` / `hat_density` / `ghost_density`
+    selon le `dominant_type`
+  - `anti_repeat` si le meme motif vient d'apparaitre dans la mesure precedente
+  - `energy` si le pattern est pousse
+  - `fill_strength` si le motif est un `fill`
+  - `position_fidelity` selon la classe rythmique du premier hit explicite
+- si un motif rencontre une `Anchor` manuelle, il est tronque a cet endroit
+- ses `None` restent libres et sont remplis normalement par la passe suivante
+
+Priorite globale :
+
+- `Anchor` manuelle
+- `UserMotif`
+- `HitSequence`
+- generation atomique
+
 Familles principales :
 
 - `kick`
@@ -543,6 +638,17 @@ La decision depend :
 - de la disponibilite reelle des pools
 - de la position rythmique d'origine si `position_fidelity > 0`
 - des ancres de steps posees manuellement dans la ligne `Anchor`
+
+Depuis les dernieres iterations, le generateur ajoute aussi quelques garde-fous
+internes pour conserver plus de coherence :
+
+- les sequences et les steps ancres sont traites comme du materiau protege
+- les FX tardifs (`repeat`, `kick roll`, `reverse`, `snare stretch`) evitent
+  de reecrire ce materiau protege
+- une meme mesure a un budget limite de mutations tardives, pour eviter qu'un
+  trop grand nombre de passes finisse par ecraser le squelette initial
+- le squelette de base autorise encore du silence, mais beaucoup moins sur les
+  positions structurelles (`1`, `5`, `9`, `13`)
 
 Si une sequence est choisie :
 
@@ -646,6 +752,16 @@ La ligne `Anchor` s'integre aussi a ce workflow :
 - tu poses une ancre sur un step
 - tu reroll seulement ce step
 - le generateur respecte l'ancre sans reconstruire tout le pattern
+
+Le pattern genere expose aussi maintenant quelques metriques internes utiles
+pour debugger la qualite du resultat :
+
+- `silence_ratio`
+- `sequence_ratio`
+- `post_fx_ratio`
+- `fill_ratio`
+- `resolution_ratio`
+- `protected_ratio`
 
 ## 10. Relation entre detection et generation
 

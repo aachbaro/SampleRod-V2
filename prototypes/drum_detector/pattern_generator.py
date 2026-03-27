@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Iterable, Mapping
 
 import numpy as np
@@ -23,6 +23,9 @@ class BreakPatternParams:
     kick_roll_density: float = 0.0
     kick_roll_span: float = 0.2
     kick_roll_contrast: float = 0.55
+    snare_stretch_density: float = 0.0
+    snare_stretch_span: float = 0.35
+    snare_stretch_amount: float = 0.8
     gate: float = 1.0
     velocity_spread: float = 0.5
     swing: float = 0.0
@@ -32,11 +35,48 @@ class BreakPatternParams:
     sequence_density: float = 0.0
     sequence_max_len: int = 4
     sequence_role_lock: bool = True
+    user_motifs: list["UserMotif"] = field(default_factory=list)
+    motif_density: float = 0.0
     seed: int = 1
     bars: int = 1
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class UserMotif:
+    steps: list[str | None] = field(default_factory=list)
+    base_prob: float = 0.0
+    role: str = "groove"
+    dominant_type: str = "mixed"
+    name: str = "Motif"
+
+    def to_dict(self) -> dict:
+        return {
+            "steps": [step if step is None else str(step) for step in self.steps],
+            "base_prob": float(self.base_prob),
+            "role": str(self.role),
+            "dominant_type": str(self.dominant_type),
+            "name": str(self.name),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, object]) -> "UserMotif":
+        raw_steps = payload.get("steps", ()) if isinstance(payload, Mapping) else ()
+        if not isinstance(raw_steps, (list, tuple)):
+            raw_steps = ()
+        steps = _normalize_user_motif_steps(raw_steps)
+        return cls(
+            steps=steps,
+            base_prob=float(np.clip(float(payload.get("base_prob", 0.0) or 0.0), 0.0, 1.0)),
+            role=_normalize_user_motif_role(str(payload.get("role", "groove") or "groove")),
+            dominant_type=_normalize_user_motif_dominant_type(
+                str(payload.get("dominant_type", "") or ""),
+                steps=steps,
+            ),
+            name=str(payload.get("name", "Motif") or "Motif").strip() or "Motif",
+        )
 
 
 @dataclass(frozen=True)
@@ -67,6 +107,7 @@ class GeneratedBreakPattern:
     event_count: int
     summary: str
     steps: tuple[GeneratedPatternStep, ...]
+    metrics: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         payload = asdict(self)
@@ -100,6 +141,9 @@ class _ResolvedPatternParams:
     kick_roll_density: float
     kick_roll_span: float
     kick_roll_contrast: float
+    snare_stretch_density: float
+    snare_stretch_span: float
+    snare_stretch_amount: float
     gate: float
     velocity_spread: float
     swing: float
@@ -109,6 +153,7 @@ class _ResolvedPatternParams:
     sequence_density: float
     sequence_max_len: int
     sequence_role_lock: bool
+    motif_density: float
 
 
 @dataclass(frozen=True)
@@ -136,11 +181,23 @@ class _SequencePools:
     cadence: tuple[HitSequence, ...]
 
 
+@dataclass(frozen=True)
+class _HybridMotifPlacement:
+    motif: UserMotif
+    start_step_index: int
+    consumed_steps: int
+    effective_probability: float
+    applied_anchors: tuple[tuple[int, str], ...]
+    first_event_step_index: int | None = None
+
+
 _STRONG_STEPS = {1, 9}
 _BACKBEAT_STEPS = {5, 13}
 _OFFBEAT_STEPS = {3, 7, 11, 15}
 _FILL_STEPS = {15, 16}
 _RHYTHMIC_TAGS = frozenset({"strong", "backbeat", "offbeat", "subdivision", "phrase_end"})
+_POST_MUTATION_TAGS = frozenset({"fill", "resolution", "repeat", "reverse", "kick_roll", "snare_stretch", "snare_stretch_tail"})
+_STRUCTURAL_PROTECTION_TAGS = frozenset({"sequence", "anchor"})
 _RHYTHMIC_POSITION_RANK = {
     "subdivision": 0,
     "offbeat": 1,
@@ -148,8 +205,12 @@ _RHYTHMIC_POSITION_RANK = {
     "downbeat": 3,
 }
 _SUPPORTED_STEP_ANCHORS = frozenset({"kick", "snare", "clap", "hat", "ghost", "other", "silence"})
+_USER_MOTIF_STEP_VALUES = frozenset({"kick", "snare", "hat", "ghost", "silence"})
+_USER_MOTIF_ROLES = frozenset({"groove", "fill", "cadence", "anticipation"})
+_USER_MOTIF_DOMINANT_TYPES = frozenset({"kick", "snare", "hat", "ghost", "mixed"})
 _REVERSE_TRIGGER_LABELS = frozenset({"kick", "snare", "clap"})
 _KICK_ROLL_TRIGGER_LABELS = frozenset({"kick", "kick_ghost"})
+_SNARE_STRETCH_TRIGGER_LABELS = frozenset({"snare", "clap", "snare_ruff"})
 _STEP_ANCHOR_COMPATIBILITY: dict[str, tuple[str, ...]] = {
     "kick": ("kick", "kick_ghost"),
     "snare": ("snare", "clap", "snare_ruff"),
@@ -256,9 +317,75 @@ def generate_break_pattern(
     _apply_kick_rolls(generated_steps, pools, resolved_params, rng, anchors=normalized_anchors)
     _apply_repeat_blocks(generated_steps, resolved_params, rng, anchors=normalized_anchors)
     _enforce_step_anchors(generated_steps, normalized_anchors, pools, resolved_params, rng)
+    _apply_snare_stretches(generated_steps, resolved_params, rng, anchors=normalized_anchors)
     _apply_reverse_steps(generated_steps, resolved_params, rng, anchors=normalized_anchors)
     finalized = [_finalize_step_velocity(step, generated_steps, resolved_params, rng) for step in generated_steps]
     return _build_generated_pattern(tuple(finalized), effective_params, resolved_params)
+
+
+def generate_break_pattern_hybrid(
+    hits: Iterable[TransientHit],
+    params: BreakPatternParams | None = None,
+    *,
+    sequences: Iterable[HitSequence] | None = None,
+    anchors: Mapping[int, str | None] | None = None,
+    user_motifs: Iterable[UserMotif] | None = None,
+) -> GeneratedBreakPattern:
+    effective_params = params or BreakPatternParams()
+    resolved_params = _resolve_params(effective_params)
+    normalized_motifs = _normalize_user_motifs(
+        tuple(user_motifs) if user_motifs is not None else tuple(effective_params.user_motifs)
+    )
+    if resolved_params.motif_density <= 1e-6 or not normalized_motifs:
+        return generate_break_pattern(hits, effective_params, sequences=sequences, anchors=anchors)
+
+    step_count = max(16, int(max(1, effective_params.bars) * 16))
+    normalized_anchors = _normalize_step_anchors(anchors, step_count=step_count)
+    rng = np.random.default_rng(int(effective_params.seed))
+    motif_anchors, _placements = _build_hybrid_motif_anchors(
+        normalized_motifs,
+        effective_params,
+        resolved_params,
+        step_count=step_count,
+        manual_anchors=normalized_anchors,
+        rng=rng,
+    )
+    combined_anchors = {**motif_anchors, **normalized_anchors}
+    hybrid_params = replace(
+        effective_params,
+        user_motifs=[*normalized_motifs],
+    )
+    return generate_break_pattern(
+        hits,
+        hybrid_params,
+        sequences=sequences,
+        anchors=combined_anchors,
+    )
+
+
+def generate_break_pattern_for_mode(
+    hits: Iterable[TransientHit],
+    params: BreakPatternParams | None = None,
+    *,
+    sequences: Iterable[HitSequence] | None = None,
+    anchors: Mapping[int, str | None] | None = None,
+    use_hybrid: bool = False,
+    user_motifs: Iterable[UserMotif] | None = None,
+) -> GeneratedBreakPattern:
+    if bool(use_hybrid):
+        return generate_break_pattern_hybrid(
+            hits,
+            params,
+            sequences=sequences,
+            anchors=anchors,
+            user_motifs=user_motifs,
+        )
+    return generate_break_pattern(
+        hits,
+        params,
+        sequences=sequences,
+        anchors=anchors,
+    )
 
 
 def reroll_break_pattern_step(
@@ -339,6 +466,14 @@ def _resolve_params(params: BreakPatternParams) -> _ResolvedPatternParams:
         kick_roll_density=_scaled_density_control(params.kick_roll_density, energy, low_scale=0.72, high_scale=1.35),
         kick_roll_span=float(np.clip(params.kick_roll_span, 0.0, 1.0)),
         kick_roll_contrast=float(np.clip(params.kick_roll_contrast, 0.0, 1.0)),
+        snare_stretch_density=_scaled_density_control(
+            params.snare_stretch_density,
+            energy,
+            low_scale=0.72,
+            high_scale=1.32,
+        ),
+        snare_stretch_span=float(np.clip(params.snare_stretch_span, 0.0, 1.0)),
+        snare_stretch_amount=float(np.clip(params.snare_stretch_amount, 0.0, 1.0)),
         gate=float(np.clip(params.gate, 0.05, 1.0)),
         velocity_spread=float(np.clip((0.7 * params.velocity_spread) + (0.3 * _lerp(0.15, 0.95, energy)), 0.0, 1.0)),
         swing=float(np.clip(params.swing, 0.0, 1.0)),
@@ -348,6 +483,7 @@ def _resolve_params(params: BreakPatternParams) -> _ResolvedPatternParams:
         sequence_density=float(np.clip(params.sequence_density, 0.0, 1.0)),
         sequence_max_len=int(np.clip(params.sequence_max_len, 2, MAX_SEQUENCE_HIT_COUNT)),
         sequence_role_lock=bool(params.sequence_role_lock),
+        motif_density=float(np.clip(params.motif_density, 0.0, 1.0)),
     )
 
 
@@ -461,6 +597,346 @@ def _normalize_step_anchors(
     return normalized
 
 
+def _normalize_user_motif_role(role: str | None) -> str:
+    normalized = str(role or "groove").strip().lower().replace(" ", "_")
+    return normalized if normalized in _USER_MOTIF_ROLES else "groove"
+
+
+def _normalize_user_motif_steps(raw_steps: Iterable[str | None]) -> list[str | None]:
+    normalized: list[str | None] = []
+    for raw_step in tuple(raw_steps)[:8]:
+        if raw_step is None:
+            normalized.append(None)
+            continue
+        anchor = _normalize_anchor_value(str(raw_step))
+        if anchor in _USER_MOTIF_STEP_VALUES:
+            normalized.append(anchor)
+        elif anchor == "clap":
+            normalized.append("snare")
+        else:
+            normalized.append(None)
+    while len(normalized) < 2:
+        normalized.append(None)
+    return normalized[:8]
+
+
+def _infer_user_motif_dominant_type(steps: Iterable[str | None]) -> str:
+    counts = {"kick": 0, "snare": 0, "hat": 0, "ghost": 0}
+    for step in steps:
+        if step in counts:
+            counts[str(step)] += 1
+    ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    if not ranked or ranked[0][1] <= 0:
+        return "mixed"
+    if len(ranked) > 1 and ranked[1][1] == ranked[0][1]:
+        return "mixed"
+    return str(ranked[0][0])
+
+
+def _normalize_user_motif_dominant_type(
+    dominant_type: str | None,
+    *,
+    steps: Iterable[str | None],
+) -> str:
+    normalized = str(dominant_type or "").strip().lower().replace(" ", "_")
+    if normalized in _USER_MOTIF_DOMINANT_TYPES:
+        return normalized
+    return _infer_user_motif_dominant_type(steps)
+
+
+def _normalize_user_motifs(user_motifs: Iterable[UserMotif] | None) -> tuple[UserMotif, ...]:
+    normalized: list[UserMotif] = []
+    if not user_motifs:
+        return ()
+    for raw_motif in user_motifs:
+        if not isinstance(raw_motif, UserMotif):
+            continue
+        steps = _normalize_user_motif_steps(raw_motif.steps)
+        if not any(step is not None for step in steps):
+            continue
+        normalized.append(
+            UserMotif(
+                steps=steps,
+                base_prob=float(np.clip(raw_motif.base_prob, 0.0, 1.0)),
+                role=_normalize_user_motif_role(raw_motif.role),
+                dominant_type=_normalize_user_motif_dominant_type(raw_motif.dominant_type, steps=steps),
+                name=str(raw_motif.name or "Motif").strip() or "Motif",
+            )
+        )
+    return tuple(normalized)
+
+
+def _user_motif_identity(motif: UserMotif) -> str:
+    steps = ",".join(step or "_" for step in motif.steps)
+    return f"{motif.name}|{motif.role}|{motif.dominant_type}|{steps}"
+
+
+def _user_motif_first_event_offset(motif: UserMotif) -> int | None:
+    for offset, step in enumerate(motif.steps):
+        if step not in {None, "silence"}:
+            return int(offset)
+    for offset, step in enumerate(motif.steps):
+        if step is not None:
+            return int(offset)
+    return None
+
+
+def _user_motif_relevant_type_scale(motif: UserMotif, params: _ResolvedPatternParams) -> float:
+    direct_scale = {
+        "kick": params.kick_weight,
+        "snare": params.snare_weight,
+        "hat": params.hat_density,
+        "ghost": params.ghost_density,
+    }
+    if motif.dominant_type in direct_scale:
+        return float(direct_scale[motif.dominant_type])
+
+    relevant_values: list[float] = []
+    for step in motif.steps:
+        if step == "kick":
+            relevant_values.append(float(params.kick_weight))
+        elif step == "snare":
+            relevant_values.append(float(params.snare_weight))
+        elif step == "hat":
+            relevant_values.append(float(params.hat_density))
+        elif step == "ghost":
+            relevant_values.append(float(params.ghost_density))
+    if relevant_values:
+        return float(np.mean(relevant_values))
+    return float(np.mean((params.kick_weight, params.snare_weight, params.hat_density, params.ghost_density)))
+
+
+def _user_motif_preferred_position(motif: UserMotif) -> str | None:
+    first_offset = _user_motif_first_event_offset(motif)
+    first_step = None if first_offset is None else motif.steps[first_offset]
+    if first_step == "kick":
+        return "downbeat"
+    if first_step == "snare":
+        return "backbeat"
+    if first_step == "hat":
+        return "offbeat"
+    if first_step == "ghost":
+        return "subdivision"
+    if motif.role == "fill":
+        return "subdivision"
+    if motif.role == "anticipation":
+        return "offbeat"
+    if motif.role == "cadence":
+        return "downbeat"
+    return "backbeat"
+
+
+def _user_motif_role_allows_start(motif: UserMotif, start_step_index: int, *, step_count: int) -> bool:
+    motif_length = len(motif.steps)
+    if motif_length < 2:
+        return False
+    end_step_index = int(start_step_index) + motif_length - 1
+    if end_step_index > int(step_count):
+        return False
+    if ((int(start_step_index) - 1) // 16) != ((end_step_index - 1) // 16):
+        return False
+
+    local_start = ((int(start_step_index) - 1) % 16) + 1
+    local_end = ((end_step_index - 1) % 16) + 1
+    first_event_offset = _user_motif_first_event_offset(motif)
+    first_event_step = int(start_step_index) if first_event_offset is None else int(start_step_index) + int(first_event_offset)
+    first_event_position = _rhythmic_position_for_step_index(first_event_step)
+
+    if motif.role == "groove":
+        return local_start <= 12 and local_end <= 12
+    if motif.role == "fill":
+        return local_start >= 13 and local_end <= 16
+    if motif.role == "cadence":
+        return local_start in _STRONG_STEPS
+    if motif.role == "anticipation":
+        return first_event_position in {"offbeat", "subdivision"}
+    return True
+
+
+def _user_motif_effective_probability(
+    motif: UserMotif,
+    params: BreakPatternParams,
+    resolved_params: _ResolvedPatternParams,
+    *,
+    start_step_index: int,
+    previous_measure_repeat: bool,
+) -> float:
+    probability = float(np.clip(motif.base_prob, 0.0, 1.0))
+    probability *= float(resolved_params.motif_density)
+    probability *= _user_motif_relevant_type_scale(motif, resolved_params)
+
+    if previous_measure_repeat:
+        probability *= _lerp(1.0, 0.28, resolved_params.anti_repeat)
+
+    if float(params.energy) > 0.6:
+        energy_boost = (float(params.energy) - 0.6) / 0.4
+        probability *= _lerp(1.0, 1.45, float(np.clip(energy_boost, 0.0, 1.0)))
+
+    if motif.role == "fill":
+        local_start = ((int(start_step_index) - 1) % 16) + 1
+        if local_start >= 13:
+            probability *= _lerp(1.0, 1.55, resolved_params.fill_strength)
+
+    preferred_position = _user_motif_preferred_position(motif)
+    first_event_offset = _user_motif_first_event_offset(motif)
+    if first_event_offset is not None:
+        target_position = _rhythmic_position_for_step_index(int(start_step_index) + int(first_event_offset))
+    else:
+        target_position = _rhythmic_position_for_step_index(start_step_index)
+    probability *= _rhythmic_position_bias(preferred_position, target_position, resolved_params.position_fidelity)
+    return float(np.clip(probability, 0.0, 1.0))
+
+
+def _prepare_hybrid_motif_candidate(
+    motif: UserMotif,
+    *,
+    start_step_index: int,
+    step_count: int,
+    manual_anchors: Mapping[int, str],
+    placed_anchors: Mapping[int, str],
+    params: BreakPatternParams,
+    resolved_params: _ResolvedPatternParams,
+    previous_measure_repeat: bool,
+) -> _HybridMotifPlacement | None:
+    if not _user_motif_role_allows_start(motif, start_step_index, step_count=step_count):
+        return None
+
+    effective_probability = _user_motif_effective_probability(
+        motif,
+        params,
+        resolved_params,
+        start_step_index=start_step_index,
+        previous_measure_repeat=previous_measure_repeat,
+    )
+    if effective_probability <= 1e-6:
+        return None
+
+    applied_anchors: list[tuple[int, str]] = []
+    consumed_steps = 0
+    for offset, raw_step in enumerate(motif.steps):
+        target_step_index = int(start_step_index) + int(offset)
+        if target_step_index > int(step_count):
+            break
+        if target_step_index in placed_anchors:
+            break
+        if target_step_index in manual_anchors:
+            break
+        step_anchor = _normalize_anchor_value(raw_step)
+        if step_anchor in _USER_MOTIF_STEP_VALUES:
+            applied_anchors.append((target_step_index, step_anchor))
+        consumed_steps = offset + 1
+
+    if consumed_steps <= 0 or not applied_anchors:
+        return None
+    first_event_offset = _user_motif_first_event_offset(motif)
+    first_event_step_index = None if first_event_offset is None else int(start_step_index) + int(first_event_offset)
+    return _HybridMotifPlacement(
+        motif=motif,
+        start_step_index=int(start_step_index),
+        consumed_steps=int(consumed_steps),
+        effective_probability=float(effective_probability),
+        applied_anchors=tuple(applied_anchors),
+        first_event_step_index=first_event_step_index,
+    )
+
+
+def _build_hybrid_motif_anchors(
+    user_motifs: tuple[UserMotif, ...],
+    params: BreakPatternParams,
+    resolved_params: _ResolvedPatternParams,
+    *,
+    step_count: int,
+    manual_anchors: Mapping[int, str],
+    rng: np.random.Generator,
+) -> tuple[dict[int, str], tuple[_HybridMotifPlacement, ...]]:
+    placed_anchors: dict[int, str] = {}
+    placements: list[_HybridMotifPlacement] = []
+    if resolved_params.motif_density <= 1e-6 or not user_motifs:
+        return placed_anchors, ()
+
+    previous_measure_motifs: set[str] = set()
+    bar_count = max(1, int(step_count) // 16)
+    for bar_index in range(bar_count):
+        bar_start = (bar_index * 16) + 1
+        bar_end = min(int(step_count), bar_start + 15)
+        cursor = bar_start
+        current_measure_motifs: set[str] = set()
+
+        while cursor <= bar_end:
+            if cursor in placed_anchors:
+                cursor += 1
+                continue
+
+            candidates: list[_HybridMotifPlacement] = []
+            for motif in user_motifs:
+                candidate = _prepare_hybrid_motif_candidate(
+                    motif,
+                    start_step_index=cursor,
+                    step_count=step_count,
+                    manual_anchors=manual_anchors,
+                    placed_anchors=placed_anchors,
+                    params=params,
+                    resolved_params=resolved_params,
+                    previous_measure_repeat=_user_motif_identity(motif) in previous_measure_motifs,
+                )
+                if candidate is not None:
+                    candidates.append(candidate)
+
+            if not candidates:
+                cursor += 1
+                continue
+
+            trigger_probability = 1.0
+            for candidate in candidates:
+                trigger_probability *= 1.0 - float(np.clip(candidate.effective_probability, 0.0, 0.97))
+            trigger_probability = 1.0 - trigger_probability
+            if float(rng.random()) > float(np.clip(trigger_probability, 0.0, 1.0)):
+                cursor += 1
+                continue
+
+            weights = np.asarray([candidate.effective_probability for candidate in candidates], dtype=np.float64)
+            weights /= float(np.sum(weights))
+            chosen_index = int(rng.choice(np.arange(len(candidates), dtype=np.int32), p=weights))
+            chosen = candidates[chosen_index]
+            for step_index, anchor in chosen.applied_anchors:
+                if int(step_index) not in manual_anchors:
+                    placed_anchors[int(step_index)] = str(anchor)
+            placements.append(chosen)
+            current_measure_motifs.add(_user_motif_identity(chosen.motif))
+            cursor += max(1, int(chosen.consumed_steps))
+
+        previous_measure_motifs = current_measure_motifs
+
+    return placed_anchors, tuple(placements)
+
+
+def estimate_user_motif_effective_probability(
+    motif: UserMotif,
+    params: BreakPatternParams | None = None,
+) -> float:
+    effective_params = params or BreakPatternParams()
+    resolved_params = _resolve_params(effective_params)
+    normalized_motifs = _normalize_user_motifs((motif,))
+    if not normalized_motifs:
+        return 0.0
+    normalized_motif = normalized_motifs[0]
+    best = 0.0
+    for start_step_index in range(1, 17):
+        if not _user_motif_role_allows_start(normalized_motif, start_step_index, step_count=16):
+            continue
+        best = max(
+            best,
+            _user_motif_effective_probability(
+                normalized_motif,
+                effective_params,
+                resolved_params,
+                start_step_index=start_step_index,
+                previous_measure_repeat=False,
+            ),
+        )
+    return float(np.clip(best, 0.0, 1.0))
+
+
 def estimate_pattern_family_probabilities(
     hits: Iterable[TransientHit],
     params: BreakPatternParams | None = None,
@@ -530,20 +1006,20 @@ def _step_family_weights(
     local_step = ((step_index - 1) % 16) + 1
     if local_step in _STRONG_STEPS:
         weights = {
-            "kick": 1.35 * params.kick_weight,
-            "snare": 0.42 * params.snare_weight,
-            "hat": 0.16 * params.hat_density,
-            "ghost": 0.08 * params.ghost_density,
-            "silence": 0.18 + (0.72 * params.breath_factor),
+            "kick": 1.42 * params.kick_weight,
+            "snare": 0.38 * params.snare_weight,
+            "hat": 0.18 * params.hat_density,
+            "ghost": 0.1 * params.ghost_density,
+            "silence": 0.07 + (0.26 * params.breath_factor),
             "other": 0.06,
         }
     elif local_step in _BACKBEAT_STEPS:
         weights = {
-            "snare": 1.2 * params.snare_weight,
-            "kick": 0.28 * params.kick_weight,
-            "hat": 0.14 * params.hat_density,
-            "ghost": 0.12 * params.ghost_density,
-            "silence": 0.16 + (0.62 * params.breath_factor),
+            "snare": 1.26 * params.snare_weight,
+            "kick": 0.24 * params.kick_weight,
+            "hat": 0.16 * params.hat_density,
+            "ghost": 0.14 * params.ghost_density,
+            "silence": 0.08 + (0.24 * params.breath_factor),
             "other": 0.10,
         }
     elif local_step in _OFFBEAT_STEPS:
@@ -552,27 +1028,29 @@ def _step_family_weights(
             "ghost": 0.58 * params.ghost_density,
             "kick": 0.22 * params.kick_weight,
             "snare": 0.18 * params.snare_weight,
-            "silence": 0.15 + (0.6 * params.breath_factor),
+            "silence": 0.1 + (0.34 * params.breath_factor),
             "other": 0.10,
         }
     else:
         weights = {
             "hat": 0.72 * params.hat_density,
             "ghost": 0.32 * params.ghost_density,
-            "silence": 0.22 + (0.88 * params.breath_factor),
+            "silence": 0.16 + (0.58 * params.breath_factor),
             "other": 0.15,
         }
 
     previous_dense = sum(1 for step in steps[-2:] if step.label != "silence")
     if previous_dense >= 2:
-        weights["silence"] = weights.get("silence", 0.0) * (1.0 + (1.2 * params.breath_factor))
+        weights["silence"] = weights.get("silence", 0.0) * (1.0 + (0.55 * params.breath_factor))
+        weights["hat"] = weights.get("hat", 0.0) * 1.06
 
     previous = steps[-1] if steps else None
     if previous is not None and previous.label == "kick":
-        weights["silence"] = weights.get("silence", 0.0) * (1.0 + (1.6 * params.breath_factor))
-        weights["hat"] = weights.get("hat", 0.0) * 1.1
-        weights["kick"] = weights.get("kick", 0.0) * 0.65
-        weights["snare"] = weights.get("snare", 0.0) * 0.8
+        weights["silence"] = weights.get("silence", 0.0) * (1.0 + (0.7 * params.breath_factor))
+        weights["hat"] = weights.get("hat", 0.0) * 1.14
+        weights["ghost"] = weights.get("ghost", 0.0) * 1.08
+        weights["kick"] = weights.get("kick", 0.0) * 0.72
+        weights["snare"] = weights.get("snare", 0.0) * 0.84
 
     if local_step in _BACKBEAT_STEPS and not any(step.label in {"snare", "clap"} for step in steps[-4:]):
         weights["snare"] = weights.get("snare", 0.0) * (1.45 + (0.55 * params.snare_weight))
@@ -587,7 +1065,7 @@ def _step_family_weights(
             weights["snare"] = weights.get("snare", 0.0) * (1.0 + (0.8 * params.fill_strength))
             weights["silence"] = weights.get("silence", 0.0) * max(0.35, 1.0 - (0.6 * params.fill_strength))
         else:
-            weights["silence"] = weights.get("silence", 0.0) * (1.15 + params.breath_factor)
+            weights["silence"] = weights.get("silence", 0.0) * (1.02 + (0.4 * params.breath_factor))
             weights["hat"] = weights.get("hat", 0.0) * 1.08
             weights["kick"] = weights.get("kick", 0.0) * 0.78
 
@@ -624,6 +1102,13 @@ def _step_family_weights(
     for family, available in availability.items():
         if not available:
             weights[family] = 0.0
+
+    if availability["kick"] and local_step in _STRONG_STEPS:
+        weights["silence"] = min(weights.get("silence", 0.0), 0.1 + (0.12 * params.breath_factor))
+    elif availability["snare"] and local_step in _BACKBEAT_STEPS:
+        weights["silence"] = min(weights.get("silence", 0.0), 0.11 + (0.14 * params.breath_factor))
+    elif availability["hat"] and local_step in _OFFBEAT_STEPS:
+        weights["silence"] = min(weights.get("silence", 0.0), 0.13 + (0.18 * params.breath_factor))
     return weights
 
 
@@ -635,11 +1120,12 @@ def _estimate_effect_row_probability(
 ) -> dict[str, float]:
     step_indices = _preview_step_indices_for_row(row_name)
     if not step_indices:
-        return {"repeat": 0.0, "reverse": 0.0, "kick_roll": 0.0}
+        return {"repeat": 0.0, "reverse": 0.0, "kick_roll": 0.0, "snare_stretch": 0.0}
 
     repeat_scores: list[float] = []
     reverse_scores: list[float] = []
     kick_roll_scores: list[float] = []
+    snare_stretch_scores: list[float] = []
     row_weights = family_preview.rows.get(row_name, {})
     for step_index in step_indices:
         repeat_score = 0.0
@@ -708,10 +1194,36 @@ def _estimate_effect_row_probability(
 
         kick_roll_scores.append(float(np.clip(params.kick_roll_density * kick_roll_score, 0.0, 1.0)))
 
+        snare_stretch_score = 0.0
+        for family, probability in row_weights.items():
+            if probability <= 1e-6:
+                continue
+            preview_step = _preview_step_from_family(step_index, family)
+            normalized_weight = float(
+                np.clip(
+                    _snare_stretch_weight(preview_step, step_index=step_index, params=params) / 1.45,
+                    0.0,
+                    1.0,
+                )
+            )
+            snare_stretch_score += float(probability) * normalized_weight
+        snare_stretch_scores.append(
+            float(
+                np.clip(
+                    params.snare_stretch_density
+                    * snare_stretch_score
+                    * _lerp(0.78, 1.12, params.snare_stretch_amount),
+                    0.0,
+                    1.0,
+                )
+            )
+        )
+
     return {
         "repeat": float(np.mean(repeat_scores)) if repeat_scores else 0.0,
         "reverse": float(np.mean(reverse_scores)) if reverse_scores else 0.0,
         "kick_roll": float(np.mean(kick_roll_scores)) if kick_roll_scores else 0.0,
+        "snare_stretch": float(np.mean(snare_stretch_scores)) if snare_stretch_scores else 0.0,
     }
 
 
@@ -914,7 +1426,7 @@ def _sequence_block_steps(
         anchor = None if anchors is None else anchors.get(current_step)
         event = by_offset.get(offset)
         if event is None:
-            base_tags = ("sequence", f"sequence_{sequence.role}", "sequence_gap")
+            base_tags = _tags_with_owner(("sequence", f"sequence_{sequence.role}", "sequence_gap"), "sequence")
             if anchor is not None:
                 base_tags = (*base_tags, "anchor", f"anchor_{anchor}")
             rendered.append(
@@ -944,7 +1456,7 @@ def _sequence_step_from_event(
     *,
     anchor: str | None = None,
 ) -> GeneratedPatternStep:
-    tags = [_step_tag(step_index), "sequence", f"sequence_{sequence.role}", event.role]
+    tags = [_step_tag(step_index), *_tags_with_owner(("sequence", f"sequence_{sequence.role}", event.role), "sequence")]
     if anchor is not None:
         tags.extend(("anchor", f"anchor_{anchor}"))
     return GeneratedPatternStep(
@@ -1037,7 +1549,7 @@ def _select_anchored_step_event(
     params: _ResolvedPatternParams,
     rng: np.random.Generator,
 ) -> GeneratedPatternStep:
-    tags = [_step_tag(step_index), "anchor", f"anchor_{anchor}"]
+    tags = [_step_tag(step_index), "anchor", f"anchor_{anchor}", "owner_anchor"]
     if ((step_index - 1) % 16) + 1 in _FILL_STEPS:
         tags.append("phrase_end")
 
@@ -1070,7 +1582,7 @@ def _select_step_event(
     params: _ResolvedPatternParams,
     rng: np.random.Generator,
 ) -> GeneratedPatternStep:
-    tags = [_step_tag(step_index)]
+    tags = [_step_tag(step_index), "owner_skeleton"]
     if ((step_index - 1) % 16) + 1 in _FILL_STEPS:
         tags.append("phrase_end")
     previous = steps[-1] if steps else None
@@ -1372,7 +1884,7 @@ def _apply_bar_end_fill(
     rng: np.random.Generator,
 ) -> None:
     tail_steps = [steps[index - 1] for index in range(bar_start + 12, min(bar_start + 16, len(steps) + 1))]
-    if any("sequence" in tag for step in tail_steps for tag in step.tags):
+    if any(_step_is_structurally_protected(step) for step in tail_steps):
         return
 
     fill_probability = 0.18 + (0.72 * params.fill_strength)
@@ -1423,6 +1935,20 @@ def _apply_bar_end_fill(
         hit15 = _pick_fill_snare_hit(step15, pools, rng, params) if float(rng.random()) <= (0.45 + (0.35 * params.fill_strength)) else None
         hit16 = _pick_fill_release_hit(step16, pools, rng, params) if float(rng.random()) <= release_probability else None
 
+    planned_indices = [index for index in (step14, step15, step16) if 1 <= index <= len(steps)]
+    if step13 <= len(steps):
+        current = steps[step13 - 1]
+        if current.label not in {"snare", "clap"} and (pools.snareish or pools.clap):
+            planned_indices.append(step13)
+    if not _bar_has_post_mutation_capacity(
+        steps,
+        bar_start=bar_start,
+        bar_end=min(len(steps), bar_start + 15),
+        target_step_indices=planned_indices,
+        params=params,
+    ):
+        return
+
     if step14 <= len(steps):
         steps[step14 - 1] = _override_step_from_hit(step14, hit14, ("fill", "lift"))
     if step15 <= len(steps):
@@ -1463,18 +1989,28 @@ def _apply_bar_start_resolutions(
             continue
 
         current = steps[bar_start - 1]
-        if "sequence" in current.tags:
+        if _step_is_structurally_protected(current):
+            continue
+        if params.fill_strength < 0.8 and float(rng.random()) > (0.22 + (0.48 * params.fill_strength)):
+            continue
+        if params.fill_strength < 0.8 and not _bar_has_post_mutation_capacity(
+            steps,
+            bar_start=bar_start,
+            bar_end=min(step_count, bar_start + 15),
+            target_step_indices=(bar_start,),
+            params=params,
+        ):
             continue
         if current.label == "kick":
             steps[bar_start - 1] = replace(
                 current,
-                tags=tuple(dict.fromkeys((*current.tags, "resolution", "downbeat"))),
+                tags=tuple(dict.fromkeys((*current.tags, "resolution", "downbeat", "owner_fill"))),
             )
             continue
         if current.label in {"open_hat", "crash"} and (not pools.kick or params.kick_weight <= 1e-3):
             steps[bar_start - 1] = replace(
                 current,
-                tags=tuple(dict.fromkeys((*current.tags, "resolution", "downbeat"))),
+                tags=tuple(dict.fromkeys((*current.tags, "resolution", "downbeat", "owner_fill"))),
             )
             continue
 
@@ -1541,6 +2077,19 @@ def _apply_repeat_blocks(
             )
             zone_span = _choose_repeat_glitch_zone_span(params=params, rng=rng, max_span=int(max_span))
             repeat_count = _choose_repeat_glitch_count(current, params=params, rng=rng)
+            if not _bar_has_post_mutation_capacity(
+                steps,
+                bar_start=bar_start,
+                bar_end=bar_end,
+                target_step_indices=range(chosen_step_index, chosen_step_index + zone_span),
+                params=params,
+            ):
+                weighted_candidates = [
+                    (step_index, weight, span)
+                    for step_index, weight, span in weighted_candidates
+                    if int(step_index) != chosen_step_index
+                ]
+                continue
             for zone_offset in range(zone_span):
                 target_step_index = chosen_step_index + zone_offset
                 current_step = steps[target_step_index - 1]
@@ -1609,7 +2158,15 @@ def _repeat_glitch_weight(step: GeneratedPatternStep, *, step_index: int) -> flo
         return 0.0
 
     tags = set(step.tags)
-    if "repeat" in tags or "sequence_gap" in tags or "fill" in tags or "resolution" in tags or "kick_roll" in tags:
+    if (
+        "repeat" in tags
+        or "sequence_gap" in tags
+        or "fill" in tags
+        or "resolution" in tags
+        or "kick_roll" in tags
+        or "sequence" in tags
+        or "anchor" in tags
+    ):
         return 0.0
 
     local_step = ((int(step_index) - 1) % 16) + 1
@@ -1636,10 +2193,6 @@ def _repeat_glitch_weight(step: GeneratedPatternStep, *, step_index: int) -> flo
         return 0.0
     if step.label in {"open_hat", "kick"}:
         base_weight *= 0.82
-    if "anchor" in tags:
-        base_weight *= 0.25
-    if "sequence" in tags:
-        base_weight *= 0.72
     return float(max(0.0, base_weight))
 
 
@@ -1673,6 +2226,7 @@ def _clone_step_for_repeat_glitch(
         f"repeat_count_{int(max(2, repeat_count))}",
         "repeat_zone",
         f"repeat_zone_span_{int(max(1, zone_span))}",
+        "owner_fx",
     ]
     if int(zone_offset) <= 0:
         repeated_tags.append("repeat_zone_start")
@@ -1783,6 +2337,19 @@ def _apply_kick_rolls(
             )
             if source_hit is None:
                 continue
+            if not _bar_has_post_mutation_capacity(
+                steps,
+                bar_start=bar_start,
+                bar_end=min(step_count, bar_start + 15),
+                target_step_indices=range(chosen_trigger_index, chosen_trigger_index + zone_span),
+                params=params,
+            ):
+                weighted_candidates = [
+                    (step_index, weight, span)
+                    for step_index, weight, span in weighted_candidates
+                    if int(step_index) != chosen_trigger_index
+                ]
+                continue
             for zone_offset in range(zone_span):
                 target_step_index = chosen_trigger_index + zone_offset
                 steps[target_step_index - 1] = _build_kick_roll_step(
@@ -1886,6 +2453,7 @@ def _kick_roll_zone_weight(
         or "sequence_gap" in current_tags
         or "resolution" in current_tags
         or "anchor" in current_tags
+        or "sequence" in current_tags
     ):
         return 0.0
     if "sequence_gap" in trigger_tags or "sequence" in trigger_tags or "resolution" in trigger_tags:
@@ -1915,6 +2483,8 @@ def _kick_roll_zone_weight(
     base_weight = float(space_weight) * float(trigger_weight) * float(density_drive) * float(kick_drive)
     if "fill" in trigger_tags or "phrase_end" in current_tags:
         base_weight *= _lerp(0.88, 1.06, params.kick_roll_density)
+    if "anchor" in trigger_tags:
+        base_weight *= 1.22
     return float(max(0.0, base_weight))
 
 
@@ -1980,6 +2550,7 @@ def _build_kick_roll_step(
         "kick_roll",
         "kick_roll_zone",
         f"kick_roll_zone_span_{int(max(2, zone_span))}",
+        "owner_fx",
     ]
     if int(zone_offset) <= 0:
         kick_roll_tags.append("kick_roll_zone_start")
@@ -2002,6 +2573,279 @@ def _build_kick_roll_step(
             zone_span=int(zone_span),
             contrast=float(contrast),
         ),
+    )
+
+
+def _apply_snare_stretches(
+    steps: list[GeneratedPatternStep],
+    params: _ResolvedPatternParams,
+    rng: np.random.Generator,
+    *,
+    anchors: Mapping[int, str] | None = None,
+) -> None:
+    if params.snare_stretch_density <= 1e-3 or not steps:
+        return
+
+    step_count = len(steps)
+    bar_count = max(1, step_count // 16)
+    for bar_index in range(bar_count):
+        bar_start = (bar_index * 16) + 1
+        bar_end = min(step_count, bar_start + 15)
+        weighted_candidates: list[tuple[int, float, int]] = []
+        for step_index in range(bar_start, bar_end + 1):
+            current = steps[step_index - 1]
+            weight = _snare_stretch_weight(current, step_index=step_index, params=params)
+            if weight <= 1e-6:
+                continue
+            max_span = _snare_stretch_max_span(
+                start_step_index=int(step_index),
+                step_count=step_count,
+                anchors=anchors,
+            )
+            if max_span < 2:
+                continue
+            span_bonus = 1.0 + (0.08 * float(max_span - 2) * float(params.snare_stretch_span))
+            weighted_candidates.append((int(step_index), float(weight * span_bonus), int(max_span)))
+
+        if not weighted_candidates:
+            continue
+        if float(rng.random()) > (0.08 + (0.92 * params.snare_stretch_density)):
+            continue
+
+        if params.snare_stretch_density >= 0.95:
+            stretch_slots = len(weighted_candidates)
+        else:
+            stretch_slots = 1
+            if params.snare_stretch_density >= 0.58 and len(weighted_candidates) >= 2:
+                stretch_slots += 1
+            if params.snare_stretch_density >= 0.86 and len(weighted_candidates) >= 4 and float(rng.random()) < 0.48:
+                stretch_slots += 1
+
+        for _ in range(min(stretch_slots, len(weighted_candidates))):
+            candidate_steps = np.asarray([step_index for step_index, _, _ in weighted_candidates], dtype=np.int32)
+            candidate_weights = np.asarray([weight for _, weight, _ in weighted_candidates], dtype=np.float64)
+            weight_sum = float(np.sum(candidate_weights))
+            if candidate_steps.size == 0 or weight_sum <= 1e-9:
+                break
+            candidate_weights /= weight_sum
+            chosen_step_index = int(rng.choice(candidate_steps, p=candidate_weights))
+            current = steps[chosen_step_index - 1]
+            max_span = next(
+                (span for step_index, _weight, span in weighted_candidates if int(step_index) == chosen_step_index),
+                2,
+            )
+            zone_span = _choose_snare_stretch_span(params=params, rng=rng, max_span=int(max_span))
+            if not _bar_has_post_mutation_capacity(
+                steps,
+                bar_start=bar_start,
+                bar_end=bar_end,
+                target_step_indices=range(chosen_step_index, chosen_step_index + zone_span),
+                params=params,
+            ):
+                weighted_candidates = [
+                    (step_index, weight, span)
+                    for step_index, weight, span in weighted_candidates
+                    if int(step_index) != chosen_step_index
+                ]
+                continue
+            steps[chosen_step_index - 1] = _mark_step_for_snare_stretch(
+                current,
+                zone_span=zone_span,
+                amount=params.snare_stretch_amount,
+            )
+            for zone_offset in range(1, int(zone_span)):
+                target_step_index = chosen_step_index + zone_offset
+                if target_step_index > len(steps):
+                    break
+                steps[target_step_index - 1] = _decorate_step_for_snare_stretch_zone(
+                    steps[target_step_index - 1],
+                    zone_span=zone_span,
+                    zone_offset=zone_offset,
+                    amount=params.snare_stretch_amount,
+                )
+            chosen_zone_end = chosen_step_index + zone_span - 1
+            weighted_candidates = [
+                (step_index, weight, span)
+                for step_index, weight, span in weighted_candidates
+                if int(step_index) > chosen_zone_end or int(step_index) < chosen_step_index - 1
+            ]
+
+
+def _snare_stretch_weight(
+    step: GeneratedPatternStep,
+    *,
+    step_index: int,
+    params: _ResolvedPatternParams,
+) -> float:
+    if step.label not in _SNARE_STRETCH_TRIGGER_LABELS:
+        return 0.0
+
+    tags = set(step.tags)
+    if (
+        "snare_stretch" in tags
+        or "repeat" in tags
+        or "reverse" in tags
+        or "kick_roll" in tags
+        or "sequence_gap" in tags
+        or "resolution" in tags
+        or "sequence" in tags
+    ):
+        return 0.0
+
+    local_step = ((int(step_index) - 1) % 16) + 1
+    base_weight = {
+        "snare": 1.0,
+        "clap": 0.92,
+        "snare_ruff": 0.82,
+    }.get(step.label, 0.0)
+
+    if local_step in _BACKBEAT_STEPS:
+        base_weight *= 1.28
+    elif local_step in _OFFBEAT_STEPS:
+        base_weight *= 0.98
+    elif local_step in _FILL_STEPS:
+        base_weight *= 1.18
+    elif local_step in _STRONG_STEPS:
+        base_weight *= 0.16
+    else:
+        base_weight *= 0.56
+
+    if step.label == "snare_ruff":
+        if "fill" in tags or "phrase_end" in tags:
+            base_weight *= 1.35
+        else:
+            base_weight *= 0.72
+
+    if "phrase_end" in tags:
+        base_weight *= _lerp(1.0, 1.12, params.fill_strength)
+    if "fill" in tags:
+        base_weight *= _lerp(1.0, 1.18, params.fill_strength)
+    if "anchor" in tags:
+        base_weight *= 1.18
+    density_drive = _lerp(0.32, 1.28, params.snare_stretch_density)
+    amount_drive = _lerp(0.84, 1.12, params.snare_stretch_amount)
+    return float(max(0.0, base_weight * density_drive * amount_drive))
+
+
+def _snare_stretch_max_span(
+    *,
+    start_step_index: int,
+    step_count: int,
+    anchors: Mapping[int, str] | None = None,
+) -> int:
+    local_step = ((int(start_step_index) - 1) % 16) + 1
+    to_next_beat = 4 - ((local_step - 1) % 4)
+    max_span = min(int(to_next_beat), int(step_count) - int(start_step_index) + 1)
+    if anchors:
+        for target_step_index in range(int(start_step_index) + 1, int(start_step_index) + int(max_span)):
+            if int(target_step_index) in anchors:
+                max_span = min(max_span, int(target_step_index) - int(start_step_index))
+                break
+    return int(max(0, max_span))
+
+
+def _choose_snare_stretch_span(
+    *,
+    params: _ResolvedPatternParams,
+    rng: np.random.Generator,
+    max_span: int,
+) -> int:
+    upper_bound = max(2, int(max_span))
+    if params.snare_stretch_span >= 0.95:
+        return int(upper_bound)
+
+    span_weights: list[tuple[int, float]] = []
+    for span in range(2, upper_bound + 1):
+        weight = {
+            2: _lerp(1.7, 0.48, params.snare_stretch_span),
+            3: _lerp(0.72, 0.96, params.snare_stretch_span),
+            4: _lerp(0.18, 1.16, params.snare_stretch_span),
+        }.get(span, _lerp(0.12, 0.72, params.snare_stretch_span))
+        if weight > 1e-6:
+            span_weights.append((span, float(weight)))
+
+    if not span_weights:
+        return 2
+
+    labels = np.asarray([span for span, _ in span_weights], dtype=np.int32)
+    values = np.asarray([weight for _, weight in span_weights], dtype=np.float64)
+    values /= float(np.sum(values))
+    return int(rng.choice(labels, p=values))
+
+
+def _mark_step_for_snare_stretch(
+    source_step: GeneratedPatternStep,
+    *,
+    zone_span: int,
+    amount: float,
+) -> GeneratedPatternStep:
+    target_step_index = int(source_step.step_index)
+    stretch_tags = [
+        _step_tag(target_step_index),
+        "effect",
+        "effect_snare_stretch",
+        "snare_stretch",
+        "snare_stretch_glitch",
+        "snare_stretch_zone",
+        "snare_stretch_zone_start",
+        f"snare_stretch_zone_span_{int(max(2, zone_span))}",
+        f"snare_stretch_amount_{int(round(np.clip(amount, 0.0, 1.0) * 100.0))}",
+        "owner_fx",
+    ]
+    stretch_tags.extend(
+        tag
+        for tag in source_step.tags
+        if tag not in _RHYTHMIC_TAGS and "snare_stretch" not in str(tag)
+    )
+    return GeneratedPatternStep(
+        step_index=target_step_index,
+        label=source_step.label,
+        velocity=0,
+        source_hit_index=source_step.source_hit_index,
+        source_label=source_step.source_label,
+        source_start_s=source_step.source_start_s,
+        source_end_s=source_step.source_end_s,
+        tags=tuple(dict.fromkeys(stretch_tags)),
+        relative_velocity_ratio=source_step.relative_velocity_ratio,
+        source_sequence_index=source_step.source_sequence_index,
+        source_sequence_role=source_step.source_sequence_role,
+    )
+
+
+def _decorate_step_for_snare_stretch_zone(
+    source_step: GeneratedPatternStep,
+    *,
+    zone_span: int,
+    zone_offset: int,
+    amount: float,
+) -> GeneratedPatternStep:
+    target_step_index = int(source_step.step_index)
+    zone_tags = [
+        _step_tag(target_step_index),
+        "effect",
+        "effect_snare_stretch",
+        "snare_stretch_tail",
+        "snare_stretch_glitch",
+        "snare_stretch_zone",
+        f"snare_stretch_zone_span_{int(max(2, zone_span))}",
+        f"snare_stretch_amount_{int(round(np.clip(amount, 0.0, 1.0) * 100.0))}",
+        "owner_fx",
+    ]
+    if int(zone_offset) >= int(max(2, zone_span) - 1):
+        zone_tags.append("snare_stretch_zone_end")
+    zone_tags.extend(tag for tag in source_step.tags if "snare_stretch" not in str(tag))
+    return GeneratedPatternStep(
+        step_index=target_step_index,
+        label=source_step.label,
+        velocity=source_step.velocity,
+        source_hit_index=source_step.source_hit_index,
+        source_label=source_step.source_label,
+        source_start_s=source_step.source_start_s,
+        source_end_s=source_step.source_end_s,
+        tags=tuple(dict.fromkeys(zone_tags)),
+        relative_velocity_ratio=source_step.relative_velocity_ratio,
+        source_sequence_index=source_step.source_sequence_index,
+        source_sequence_role=source_step.source_sequence_role,
     )
 
 
@@ -2049,6 +2893,19 @@ def _apply_reverse_steps(
                 break
             candidate_weights /= weight_sum
             chosen_step_index = int(rng.choice(candidate_steps, p=candidate_weights))
+            if not _bar_has_post_mutation_capacity(
+                steps,
+                bar_start=bar_start,
+                bar_end=bar_end,
+                target_step_indices=(chosen_step_index,),
+                params=params,
+            ):
+                weighted_candidates = [
+                    (step_index, weight)
+                    for step_index, weight in weighted_candidates
+                    if int(step_index) != chosen_step_index
+                ]
+                continue
             trigger_step = steps[chosen_step_index - 2]
             current = steps[chosen_step_index - 1]
             steps[chosen_step_index - 1] = _build_reverse_transition_step(
@@ -2107,6 +2964,9 @@ def _reverse_transition_weight(
         or "resolution" in target_tags
         or "repeat" in target_tags
         or "kick_roll" in target_tags
+        or "snare_stretch" in target_tags
+        or "snare_stretch_zone" in target_tags
+        or "snare_stretch_tail" in target_tags
         or "fill" in target_tags
         or "sequence" in target_tags
     ):
@@ -2117,6 +2977,9 @@ def _reverse_transition_weight(
         or "resolution" in trigger_tags
         or "repeat" in trigger_tags
         or "kick_roll" in trigger_tags
+        or "snare_stretch" in trigger_tags
+        or "snare_stretch_zone" in trigger_tags
+        or "snare_stretch_tail" in trigger_tags
     ):
         return 0.0
 
@@ -2175,6 +3038,7 @@ def _build_reverse_transition_step(
         "effect_reverse",
         "reverse_transition",
         f"reverse_from_{_event_family(trigger_step.label)}",
+        "owner_fx",
     ]
     if local_step in _FILL_STEPS:
         reverse_tags.append("phrase_end")
@@ -2214,7 +3078,7 @@ def _enforce_step_anchors(
         if _generated_step_matches_anchor(current, anchor):
             steps[step_index - 1] = replace(
                 current,
-                tags=tuple(dict.fromkeys((*current.tags, "anchor", f"anchor_{anchor}"))),
+                tags=tuple(dict.fromkeys((*current.tags, "anchor", f"anchor_{anchor}", "owner_anchor"))),
             )
             continue
         steps[step_index - 1] = _select_anchored_step_event(
@@ -2433,7 +3297,8 @@ def _override_step_from_hit(
     local_step = ((step_index - 1) % 16) + 1
     if local_step in _FILL_STEPS:
         base_tags.append("phrase_end")
-    merged_tags = tuple(dict.fromkeys((*base_tags, *tuple(tags))))
+    owner = "fill" if any(tag in {"fill", "resolution"} for tag in tuple(tags)) else "skeleton"
+    merged_tags = _tags_with_owner((*base_tags, *tuple(tags)), owner)
     if hit is None:
         return GeneratedPatternStep(step_index, "silence", 0, None, None, None, None, merged_tags)
     return GeneratedPatternStep(
@@ -2520,6 +3385,9 @@ def _finalize_step_velocity(
         elif step.source_sequence_role == "groove" and step.label in {"closed_hat", "ride", "open_hat"}:
             velocity *= 0.96
 
+    if "snare_stretch" in step_tags:
+        velocity *= _lerp(0.96, 1.08, params.snare_stretch_amount)
+
     return GeneratedPatternStep(
         step_index=step.step_index,
         label=step.label,
@@ -2584,6 +3452,100 @@ def _step_tag(step_index: int) -> str:
     return "subdivision"
 
 
+def _tags_with_owner(tags: Iterable[str], owner: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((*tuple(tags), f"owner_{str(owner)}")))
+
+
+def _step_is_structurally_protected(step: GeneratedPatternStep) -> bool:
+    tags = set(step.tags)
+    return bool(tags & _STRUCTURAL_PROTECTION_TAGS)
+
+
+def _step_has_post_mutation(step: GeneratedPatternStep) -> bool:
+    return bool(set(step.tags) & _POST_MUTATION_TAGS)
+
+
+def _bar_post_mutation_budget(params: _ResolvedPatternParams) -> int:
+    fx_drive = max(
+        float(params.repeat_density),
+        float(params.reverse_density),
+        float(params.kick_roll_density),
+        float(params.snare_stretch_density),
+    )
+    groove_drive = max(float(params.kick_weight), float(params.snare_weight), float(params.hat_density))
+    budget = 2.0 + (2.0 * groove_drive) + (4.0 * fx_drive) + (1.0 * float(params.fill_strength))
+    return int(np.clip(round(budget), 2, 8))
+
+
+def _bar_tail_mutation_budget(params: _ResolvedPatternParams) -> int:
+    fx_tail_drive = max(
+        float(params.fill_strength),
+        float(params.kick_roll_density),
+        float(params.snare_stretch_density),
+        float(params.reverse_density) * 0.5,
+    )
+    budget = 1.5 + (2.8 * fx_tail_drive)
+    return int(np.clip(round(budget), 1, 4))
+
+
+def _bar_post_mutation_count(
+    steps: list[GeneratedPatternStep],
+    *,
+    bar_start: int,
+    bar_end: int,
+    tail_only: bool = False,
+) -> int:
+    count = 0
+    for step_index in range(int(bar_start), int(bar_end) + 1):
+        local_step = ((int(step_index) - 1) % 16) + 1
+        if tail_only and local_step < 13:
+            continue
+        if _step_has_post_mutation(steps[step_index - 1]):
+            count += 1
+    return int(count)
+
+
+def _planned_post_mutation_cost(
+    steps: list[GeneratedPatternStep],
+    step_indices: Iterable[int],
+) -> tuple[int, int]:
+    total_cost = 0
+    tail_cost = 0
+    seen: set[int] = set()
+    for raw_step_index in step_indices:
+        step_index = int(raw_step_index)
+        if step_index in seen or step_index < 1 or step_index > len(steps):
+            continue
+        seen.add(step_index)
+        if _step_has_post_mutation(steps[step_index - 1]):
+            continue
+        total_cost += 1
+        local_step = ((step_index - 1) % 16) + 1
+        if local_step >= 13:
+            tail_cost += 1
+    return int(total_cost), int(tail_cost)
+
+
+def _bar_has_post_mutation_capacity(
+    steps: list[GeneratedPatternStep],
+    *,
+    bar_start: int,
+    bar_end: int,
+    target_step_indices: Iterable[int],
+    params: _ResolvedPatternParams,
+) -> bool:
+    max_post_steps = _bar_post_mutation_budget(params)
+    max_tail_steps = _bar_tail_mutation_budget(params)
+    current_post_steps = _bar_post_mutation_count(steps, bar_start=bar_start, bar_end=bar_end)
+    current_tail_steps = _bar_post_mutation_count(steps, bar_start=bar_start, bar_end=bar_end, tail_only=True)
+    added_post_steps, added_tail_steps = _planned_post_mutation_cost(steps, target_step_indices)
+    if current_post_steps + added_post_steps > max_post_steps:
+        return False
+    if current_tail_steps + added_tail_steps > max_tail_steps:
+        return False
+    return True
+
+
 def _lerp(start: float, end: float, amount: float) -> float:
     return float(start + ((end - start) * np.clip(amount, 0.0, 1.0)))
 
@@ -2593,12 +3555,21 @@ def _build_generated_pattern(
     params: BreakPatternParams,
     resolved_params: _ResolvedPatternParams,
 ) -> GeneratedBreakPattern:
+    total_steps = max(1, len(steps))
     event_count = sum(1 for step in steps if step.label != "silence")
     counts: dict[str, int] = {}
     for step in steps:
         if step.label == "silence":
             continue
         counts[step.label] = counts.get(step.label, 0) + 1
+    metrics = {
+        "silence_ratio": float(sum(1 for step in steps if step.label == "silence") / total_steps),
+        "sequence_ratio": float(sum(1 for step in steps if "sequence" in step.tags) / total_steps),
+        "post_fx_ratio": float(sum(1 for step in steps if _step_has_post_mutation(step)) / total_steps),
+        "fill_ratio": float(sum(1 for step in steps if "fill" in step.tags) / total_steps),
+        "resolution_ratio": float(sum(1 for step in steps if "resolution" in step.tags) / total_steps),
+        "protected_ratio": float(sum(1 for step in steps if _step_is_structurally_protected(step)) / total_steps),
+    }
     summary = ", ".join(f"{label}:{count}" for label, count in sorted(counts.items(), key=lambda item: item[1], reverse=True))
     if not summary:
         summary = "silence only"
@@ -2611,4 +3582,5 @@ def _build_generated_pattern(
         event_count=event_count,
         summary=summary,
         steps=steps,
+        metrics=metrics,
     )

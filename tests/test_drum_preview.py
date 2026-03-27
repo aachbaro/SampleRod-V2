@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -10,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QRadioButton, QTableWidgetItem
+from PySide6.QtWidgets import QApplication, QRadioButton, QSlider, QTableWidgetItem
 
 from prototypes.drum_detector.analyzer import DrumCandidate, DrumDetectionResult, TransientHit
 from prototypes.drum_detector.pattern_generator import (
@@ -545,6 +546,115 @@ class DrumPreviewTests(unittest.TestCase):
 
         self.assertAlmostEqual(preview.segments[0].preview_start_s, 0.125, places=3)
         self.assertLessEqual(preview.segments[0].source_end_s - preview.segments[0].source_start_s, 0.123)
+
+    def test_generated_pattern_preview_stretches_audio_for_snare_stretch_tagged_step(self) -> None:
+        sample_rate = 1000
+        audio = np.zeros(200, dtype=np.float32)
+        audio[0:80] = np.linspace(0.0, 1.0, 80, dtype=np.float32)
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=5,
+                source_start_s=0.0,
+                source_end_s=0.08,
+                label="snare",
+                velocity=100,
+                source_hit_index=1,
+                tags=(
+                    "backbeat",
+                    "effect",
+                    "effect_snare_stretch",
+                    "snare_stretch",
+                    "snare_stretch_glitch",
+                    "snare_stretch_zone",
+                    "snare_stretch_zone_start",
+                    "snare_stretch_zone_span_4",
+                    "snare_stretch_amount_100",
+                ),
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(
+            audio,
+            sample_rate,
+            pattern,
+            target_bpm=120.0,
+            fade_in_ms=0.0,
+            fade_out_ms=0.0,
+        )
+
+        segment = preview.segments[0]
+        self.assertAlmostEqual(segment.preview_start_s, 0.5, places=3)
+        self.assertAlmostEqual(segment.source_end_s - segment.source_start_s, 0.08, places=3)
+        self.assertGreater(segment.preview_end_s - segment.preview_start_s, 0.45)
+        self.assertGreater(preview.audio.shape[0], 900)
+
+    def test_snare_stretch_preview_keeps_following_hits_in_break_flow(self) -> None:
+        sample_rate = 1000
+        audio = np.zeros(300, dtype=np.float32)
+        audio[0:80] = np.linspace(0.0, 1.0, 80, dtype=np.float32)
+        audio[100:130] = 0.7
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=5,
+                source_start_s=0.0,
+                source_end_s=0.08,
+                label="snare",
+                velocity=100,
+                source_hit_index=1,
+                tags=(
+                    "backbeat",
+                    "effect",
+                    "effect_snare_stretch",
+                    "snare_stretch",
+                    "snare_stretch_glitch",
+                    "snare_stretch_zone",
+                    "snare_stretch_zone_start",
+                    "snare_stretch_zone_span_4",
+                    "snare_stretch_amount_100",
+                ),
+            ),
+            mock.Mock(
+                step_index=6,
+                source_start_s=0.10,
+                source_end_s=0.13,
+                label="closed_hat",
+                velocity=82,
+                source_hit_index=2,
+                tags=(
+                    "subdivision",
+                    "effect",
+                    "effect_snare_stretch",
+                    "snare_stretch_tail",
+                    "snare_stretch_glitch",
+                    "snare_stretch_zone",
+                    "snare_stretch_zone_span_4",
+                    "snare_stretch_amount_100",
+                ),
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(
+            audio,
+            sample_rate,
+            pattern,
+            target_bpm=120.0,
+            fade_in_ms=0.0,
+            fade_out_ms=0.0,
+        )
+
+        self.assertEqual(len(preview.segments), 2)
+        self.assertAlmostEqual(preview.segments[0].preview_start_s, 0.5, places=3)
+        self.assertAlmostEqual(preview.segments[1].preview_start_s, 0.625, places=3)
+        self.assertGreater(preview.segments[0].preview_end_s, 0.8)
+        self.assertGreater(preview.segments[0].preview_end_s, preview.segments[1].preview_start_s)
 
     def test_pattern_preview_locator_tracks_silence_steps_without_jumping_to_start(self) -> None:
         from prototypes.drum_detector import ui as drum_ui
@@ -1479,6 +1589,65 @@ class DrumPreviewTests(unittest.TestCase):
                 except OSError:
                     pass
 
+    def test_hybrid_mode_persists_user_motifs_per_project_json(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        shared_settings = _FakeSettings()
+        previous_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            os.chdir(temp_dir)
+            try:
+                with (
+                    mock.patch.object(drum_ui, "QSettings", lambda *_args, **_kwargs: shared_settings),
+                    mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+                ):
+                    first = drum_ui.DrumDetectorWindow()
+                    self.assertTrue(first.generator_motif_editor_box.isHidden())
+
+                    hybrid_index = first.generator_mode_combo.findData(drum_ui.GENERATOR_MODE_HYBRID)
+                    self.assertGreaterEqual(hybrid_index, 0)
+                    first.generator_mode_combo.setCurrentIndex(hybrid_index)
+                    self.assertFalse(first.generator_motif_editor_box.isHidden())
+                    self.assertFalse(first.generator_saved_motifs_box.isHidden())
+
+                    first.generator_motif_name_input.setText("KickSnare")
+                    first.generator_motif_base_prob_slider.setValue(80)
+                    first._on_generator_motif_editor_step_clicked(0)
+                    first._on_generator_motif_editor_step_clicked(2)
+                    first._on_generator_motif_editor_step_clicked(2)
+                    first._save_generator_user_motif()
+
+                    storage_path = Path(temp_dir) / drum_ui.USER_MOTIF_PROJECT_FILE
+                    self.assertTrue(storage_path.exists())
+                    payload = json.loads(storage_path.read_text(encoding="utf-8"))
+                    self.assertEqual(len(payload["user_motifs"]), 1)
+                    self.assertEqual(payload["user_motifs"][0]["steps"][:4], ["kick", None, "snare", None])
+                    first.close()
+
+                    restored = drum_ui.DrumDetectorWindow()
+                    self.assertEqual(restored._generator_mode(), drum_ui.GENERATOR_MODE_HYBRID)
+                    self.assertFalse(restored.generator_motif_editor_box.isHidden())
+                    self.assertEqual(len(restored._generator_user_motifs), 1)
+                    self.assertEqual(restored._generator_user_motifs[0].name, "KickSnare")
+                    self.assertEqual(restored._generator_user_motifs[0].steps[:4], ["kick", None, "snare", None])
+                    self.assertEqual(restored.generator_saved_motifs_table.rowCount(), 1)
+                    restored.generator_motif_density_slider.setValue(100)
+                    previous_effective = restored.generator_saved_motifs_table.item(0, 5).text()
+                    probability_widget = restored.generator_saved_motifs_table.cellWidget(0, 4)
+                    self.assertIsNotNone(probability_widget)
+                    saved_slider = probability_widget.findChild(QSlider)
+                    self.assertIsNotNone(saved_slider)
+                    saved_slider.setValue(25)
+
+                    payload = json.loads(storage_path.read_text(encoding="utf-8"))
+                    self.assertAlmostEqual(float(payload["user_motifs"][0]["base_prob"]), 0.25, places=6)
+                    self.assertAlmostEqual(restored._generator_user_motifs[0].base_prob, 0.25, places=6)
+                    self.assertEqual(restored.generator_saved_motifs_table.rowCount(), 1)
+                    self.assertNotEqual(restored.generator_saved_motifs_table.item(0, 5).text(), previous_effective)
+                    restored.close()
+            finally:
+                os.chdir(previous_cwd)
+
     def test_waveform_shortcuts_follow_samplerod_playback_scheme(self) -> None:
         from prototypes.drum_detector import ui as drum_ui
 
@@ -1715,9 +1884,71 @@ class DrumPreviewTests(unittest.TestCase):
             self.assertEqual(window.generator_sequence_table.verticalHeaderItem(5).text(), "FX")
             self.assertEqual(window.generator_sequence_table.item(5, 1).text(), "Rev<-K")
             self.assertIn("reverse tail", window.generator_sequence_table.item(5, 1).toolTip().lower())
-            self.assertEqual(window.generator_effect_probability_table.columnCount(), 3)
+            self.assertEqual(window.generator_effect_probability_table.columnCount(), 4)
             self.assertEqual(window.generator_effect_probability_table.item(3, 1).text()[-1], "%")
             self.assertEqual(window.generator_effect_probability_table.item(3, 2).text()[-1], "%")
+            self.assertEqual(window.generator_effect_probability_table.item(1, 3).text()[-1], "%")
+            window.close()
+
+    def test_generator_uses_effective_detected_bpm_to_requantize_sequences(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        hits = (
+            TransientHit(1, 0.09, 0.15, "kick", 0.9, -3.0, 0.8, 0.15, 0.05),
+            TransientHit(2, 0.34, 0.39, "closed_hat", 0.82, -8.0, 0.05, 0.3, 0.65),
+            TransientHit(3, 0.59, 0.68, "snare", 0.88, -4.0, 0.15, 0.65, 0.2),
+        )
+        result = DrumDetectionResult(
+            source_path="demo.wav",
+            label="break",
+            form="loop",
+            family="drum",
+            confidence=0.8,
+            loop_score=0.7,
+            drum_score=0.9,
+            break_score=0.7,
+            duration_s=1.0,
+            sample_rate=44100,
+            tempo_bpm=120.0,
+            pulse_score=0.7,
+            regularity=0.95,
+            onset_count=3,
+            onset_density=3.0,
+            percussive_ratio=0.9,
+            harmonic_ratio=0.1,
+            decay_s=0.15,
+            spectral_centroid_hz=2000.0,
+            spectral_flatness=0.4,
+            band_energies={"low": 0.4, "mid": 0.35, "high": 0.25},
+            transient_hits=hits,
+            candidates=(DrumCandidate("break", 0.8, "demo"),),
+            hit_sequences=(),
+        )
+
+        with (
+            mock.patch.object(drum_ui, "QSettings", _FakeSettings),
+            mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+        ):
+            window = drum_ui.DrumDetectorWindow()
+            window._set_detected_bpm_factor(2.0)
+
+            adjusted = window._effective_generator_result(result)
+
+            self.assertIsNotNone(adjusted)
+            self.assertEqual(round(adjusted.tempo_bpm), 240)
+            self.assertEqual(
+                [hit.rhythmic_position for hit in adjusted.transient_hits],
+                ["downbeat", "backbeat", "downbeat"],
+            )
+            matching_sequences = [
+                sequence
+                for sequence in adjusted.hit_sequences
+                if sequence.hit_count == 3
+                and sequence.start_step_hint == 1
+                and sequence.end_step_hint == 9
+                and [event.start_offset_steps for event in sequence.events] == [0, 4, 8]
+            ]
+            self.assertTrue(matching_sequences)
             window.close()
 
     def test_generated_sequence_fx_row_displays_kick_roll_zone(self) -> None:
@@ -1831,6 +2062,167 @@ class DrumPreviewTests(unittest.TestCase):
             self.assertEqual(window.generator_sequence_table.item(5, 1).text(), "KRoll 4")
             self.assertIn("kick roll", window.generator_sequence_table.item(5, 1).toolTip().lower())
             self.assertIn("Debut kick roll", window.generator_sequence_table.horizontalHeaderItem(1).toolTip())
+            window.close()
+
+    def test_generated_sequence_fx_row_displays_snare_stretch(self) -> None:
+        from prototypes.drum_detector import ui as drum_ui
+
+        steps = (
+            GeneratedPatternStep(
+                step_index=1,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=("strong",),
+            ),
+            GeneratedPatternStep(
+                step_index=2,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=("subdivision",),
+            ),
+            GeneratedPatternStep(
+                step_index=3,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=("offbeat",),
+            ),
+            GeneratedPatternStep(
+                step_index=4,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=("subdivision",),
+            ),
+            GeneratedPatternStep(
+                step_index=5,
+                label="snare",
+                velocity=94,
+                source_hit_index=2,
+                source_label="snare",
+                source_start_s=0.25,
+                source_end_s=0.37,
+                tags=(
+                    "backbeat",
+                    "effect",
+                    "effect_snare_stretch",
+                    "snare_stretch",
+                    "snare_stretch_glitch",
+                    "snare_stretch_zone",
+                    "snare_stretch_zone_start",
+                    "snare_stretch_zone_span_4",
+                    "snare_stretch_amount_100",
+                ),
+            ),
+            GeneratedPatternStep(
+                step_index=6,
+                label="closed_hat",
+                velocity=76,
+                source_hit_index=3,
+                source_label="closed_hat",
+                source_start_s=0.38,
+                source_end_s=0.43,
+                tags=(
+                    "subdivision",
+                    "effect",
+                    "effect_snare_stretch",
+                    "snare_stretch_tail",
+                    "snare_stretch_glitch",
+                    "snare_stretch_zone",
+                    "snare_stretch_zone_span_4",
+                    "snare_stretch_amount_100",
+                ),
+            ),
+            GeneratedPatternStep(
+                step_index=7,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=(
+                    "offbeat",
+                    "effect",
+                    "effect_snare_stretch",
+                    "snare_stretch_tail",
+                    "snare_stretch_glitch",
+                    "snare_stretch_zone",
+                    "snare_stretch_zone_span_4",
+                    "snare_stretch_amount_100",
+                ),
+            ),
+            GeneratedPatternStep(
+                step_index=8,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=(
+                    "subdivision",
+                    "effect",
+                    "effect_snare_stretch",
+                    "snare_stretch_tail",
+                    "snare_stretch_glitch",
+                    "snare_stretch_zone",
+                    "snare_stretch_zone_end",
+                    "snare_stretch_zone_span_4",
+                    "snare_stretch_amount_100",
+                ),
+            ),
+        ) + tuple(
+            GeneratedPatternStep(
+                step_index=index,
+                label="silence",
+                velocity=0,
+                source_hit_index=None,
+                source_label=None,
+                source_start_s=None,
+                source_end_s=None,
+                tags=("subdivision",),
+            )
+            for index in range(9, 17)
+        )
+        pattern = GeneratedBreakPattern(
+            bars=1,
+            step_count=16,
+            seed=444,
+            swing=0.0,
+            params=BreakPatternParams(snare_stretch_density=1.0),
+            event_count=1,
+            summary="snare:1",
+            steps=steps,
+        )
+
+        with (
+            mock.patch.object(drum_ui, "QSettings", _FakeSettings),
+            mock.patch.object(drum_ui.DrumDetectorWindow, "_init_waveform_panel", lambda self: None),
+        ):
+            window = drum_ui.DrumDetectorWindow()
+            window._generated_pattern = pattern
+            window._populate_generated_pattern(pattern)
+
+            self.assertEqual(window.generator_sequence_table.item(5, 4).text(), "Str x4")
+            self.assertEqual(window.generator_sequence_table.item(5, 5).text(), "Tail")
+            self.assertIn("glitch stretch", window.generator_sequence_table.item(5, 4).toolTip().lower())
+            self.assertIn("queue de glitch stretch", window.generator_sequence_table.item(5, 5).toolTip().lower())
+            self.assertIn("glitch stretch", window.generator_sequence_table.horizontalHeaderItem(4).toolTip().lower())
             window.close()
 
     def test_split_waveform_equally_replaces_markers_with_even_grid(self) -> None:

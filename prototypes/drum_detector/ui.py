@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import atexit
+from concurrent.futures import ProcessPoolExecutor, TimeoutError
 from dataclasses import dataclass, replace
 from functools import lru_cache
 import hashlib
 from importlib import import_module
 import json
 import logging
+import multiprocessing as mp
 import os
 from pathlib import Path
 import secrets
@@ -74,6 +77,7 @@ from .analyzer import (
     analyze_file_with_preview,
     detect_drum_from_markers,
     get_analysis_dependency_error,
+    requantize_detection_result,
 )
 from .preview import (
     DEFAULT_QUANTIZE_GRID_DIVISION,
@@ -91,9 +95,13 @@ from .preview import (
 from .pattern_generator import (
     BreakPatternParams,
     GeneratedBreakPattern,
+    UserMotif,
     estimate_pattern_effect_probabilities,
     estimate_pattern_family_probabilities,
+    estimate_user_motif_effective_probability,
     generate_break_pattern,
+    generate_break_pattern_for_mode,
+    generate_break_pattern_hybrid,
     reroll_break_pattern_step,
 )
 
@@ -129,6 +137,23 @@ HIT_LABEL_SHORT_TEXT: dict[str, str] = {
 }
 MAX_RECENT_FILES = 12
 RECENT_FILES_SETTINGS_KEY = "recent_files"
+USER_MOTIF_PROJECT_FILE = ".drum_detector_user_motifs.json"
+GENERATOR_MODE_CLASSIC = "classic"
+GENERATOR_MODE_HYBRID = "hybrid"
+GENERATOR_MODE_LABELS: dict[str, str] = {
+    GENERATOR_MODE_CLASSIC: "Classic",
+    GENERATOR_MODE_HYBRID: "Hybrid",
+}
+USER_MOTIF_STEP_ORDER: tuple[str | None, ...] = (
+    None,
+    "kick",
+    "snare",
+    "hat",
+    "ghost",
+    "silence",
+)
+USER_MOTIF_ROLE_OPTIONS: tuple[str, ...] = ("groove", "fill", "cadence", "anticipation")
+USER_MOTIF_DOMINANT_TYPE_OPTIONS: tuple[str, ...] = ("kick", "snare", "hat", "ghost", "mixed")
 GENERATOR_STEP_ANCHOR_ORDER: tuple[str | None, ...] = (
     None,
     "kick",
@@ -240,6 +265,26 @@ def _copy_preview_frames(
     return local_cursor, count, should_stop
 
 
+@lru_cache(maxsize=1)
+def _pattern_generation_process_pool() -> ProcessPoolExecutor:
+    return ProcessPoolExecutor(max_workers=1, mp_context=mp.get_context("spawn"))
+
+
+def _shutdown_pattern_generation_process_pool() -> None:
+    cache_clear = getattr(_pattern_generation_process_pool, "cache_clear", None)
+    cache_info = getattr(_pattern_generation_process_pool, "cache_info", None)
+    if cache_clear is None or cache_info is None:
+        return
+    if cache_info().currsize <= 0:
+        return
+    executor = _pattern_generation_process_pool()
+    executor.shutdown(wait=False, cancel_futures=True)
+    cache_clear()
+
+
+atexit.register(_shutdown_pattern_generation_process_pool)
+
+
 class _PrototypeWaveformContext:
     """Minimal context placeholder for embedding the SampleRod waveform widget."""
 
@@ -280,6 +325,45 @@ class TaskWorker(QThread):
     def run(self) -> None:
         try:
             result = self._task()
+            if self.isInterruptionRequested():
+                return
+            self.succeeded.emit(result)
+        except Exception as exc:
+            if self.isInterruptionRequested():
+                return
+            self.failed.emit(str(exc))
+
+
+class ProcessTaskWorker(QThread):
+    succeeded = Signal(object)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        task: Callable[..., object],
+        *args: object,
+        kwargs: dict[str, object] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._task = task
+        self._args = args
+        self._kwargs = dict(kwargs or {})
+        self.finished.connect(self.deleteLater)
+
+    def run(self) -> None:
+        future = None
+        try:
+            future = _pattern_generation_process_pool().submit(self._task, *self._args, **self._kwargs)
+            while True:
+                if self.isInterruptionRequested():
+                    future.cancel()
+                    return
+                try:
+                    result = future.result(timeout=0.1)
+                    break
+                except TimeoutError:
+                    continue
             if self.isInterruptionRequested():
                 return
             self.succeeded.emit(result)
@@ -406,6 +490,9 @@ class DrumDetectorWindow(QWidget):
         self._suspend_marker_persistence = False
         self._generator_step_anchors: dict[int, str] = {}
         self._generator_locked_steps: set[int] = set()
+        self._generator_user_motifs: list[UserMotif] = []
+        self._generator_motif_editor_steps: list[str | None] = [None] * 8
+        self._generator_motif_dominant_dirty = False
         self._result: DrumDetectionResult | None = None
         self._suspend_hit_selection_sync = False
         self._loaded_audio_samples: np.ndarray | None = None
@@ -837,6 +924,15 @@ class DrumDetectorWindow(QWidget):
         self.generator_bars_spin.setRange(1, 4)
         self.generator_bars_spin.setValue(int(self._settings.value("generator_bars", 1, type=int)))
         self.generator_bars_spin.valueChanged.connect(self._on_generator_bars_changed)
+        self.generator_mode_combo = QComboBox()
+        self.generator_mode_combo.addItem("Classic", GENERATOR_MODE_CLASSIC)
+        self.generator_mode_combo.addItem("Hybrid", GENERATOR_MODE_HYBRID)
+        saved_generator_mode = str(
+            self._settings.value("generator_mode", GENERATOR_MODE_CLASSIC, type=str) or GENERATOR_MODE_CLASSIC
+        ).strip().lower()
+        saved_mode_index = self.generator_mode_combo.findData(saved_generator_mode)
+        self.generator_mode_combo.setCurrentIndex(saved_mode_index if saved_mode_index >= 0 else 0)
+        self.generator_mode_combo.currentIndexChanged.connect(self._on_generator_mode_changed)
         self.generator_seed_value = QLabel("auto")
         self.generator_seed_value.setObjectName("StatusLabel")
         self.generator_seed_value.setMinimumWidth(96)
@@ -932,6 +1028,24 @@ class DrumDetectorWindow(QWidget):
         self.generator_kick_roll_contrast_slider.valueChanged.connect(
             lambda value: self._settings.setValue("generator_kick_roll_contrast", int(value))
         )
+        self.generator_snare_stretch_slider, self.generator_snare_stretch_value = self._build_percent_slider(
+            int(self._settings.value("generator_snare_stretch_density", 0, type=int))
+        )
+        self.generator_snare_stretch_slider.valueChanged.connect(
+            lambda value: self._settings.setValue("generator_snare_stretch_density", int(value))
+        )
+        self.generator_snare_stretch_length_slider, self.generator_snare_stretch_length_value = self._build_percent_slider(
+            int(self._settings.value("generator_snare_stretch_span", 35, type=int))
+        )
+        self.generator_snare_stretch_length_slider.valueChanged.connect(
+            lambda value: self._settings.setValue("generator_snare_stretch_span", int(value))
+        )
+        self.generator_snare_stretch_amount_slider, self.generator_snare_stretch_amount_value = self._build_percent_slider(
+            int(self._settings.value("generator_snare_stretch_amount", 80, type=int))
+        )
+        self.generator_snare_stretch_amount_slider.valueChanged.connect(
+            lambda value: self._settings.setValue("generator_snare_stretch_amount", int(value))
+        )
         self.generator_gate_slider, self.generator_gate_value = self._build_percent_slider(
             int(self._settings.value("generator_gate", 100, type=int))
         )
@@ -947,6 +1061,12 @@ class DrumDetectorWindow(QWidget):
         )
         self.generator_sequence_density_slider.valueChanged.connect(
             lambda value: self._settings.setValue("generator_sequence_density", int(value))
+        )
+        self.generator_motif_density_slider, self.generator_motif_density_value = self._build_percent_slider(
+            int(self._settings.value("generator_motif_density", 0, type=int))
+        )
+        self.generator_motif_density_slider.valueChanged.connect(
+            lambda value: self._settings.setValue("generator_motif_density", int(value))
         )
         self.generator_velocity_slider, self.generator_velocity_value = self._build_percent_slider(50)
         self.generator_swing_slider, self.generator_swing_value = self._build_percent_slider(0)
@@ -982,14 +1102,103 @@ class DrumDetectorWindow(QWidget):
             self.generator_kick_roll_slider,
             self.generator_kick_roll_length_slider,
             self.generator_kick_roll_contrast_slider,
+            self.generator_snare_stretch_slider,
+            self.generator_snare_stretch_length_slider,
+            self.generator_snare_stretch_amount_slider,
             self.generator_gate_slider,
             self.generator_velocity_slider,
             self.generator_swing_slider,
             self.generator_anti_repeat_slider,
             self.generator_breath_slider,
             self.generator_position_fidelity_slider,
+            self.generator_motif_density_slider,
         ):
             slider.valueChanged.connect(self._refresh_generator_probability_preview)
+
+        self.generator_motif_name_input = QLineEdit()
+        self.generator_motif_name_input.setPlaceholderText("Nom du motif")
+        self.generator_motif_length_spin = QSpinBox()
+        self.generator_motif_length_spin.setRange(2, 8)
+        self.generator_motif_length_spin.setValue(4)
+        self.generator_motif_length_spin.valueChanged.connect(self._on_generator_motif_length_changed)
+        self.generator_motif_base_prob_slider, self.generator_motif_base_prob_value = self._build_percent_slider(60)
+        self.generator_motif_base_prob_slider.valueChanged.connect(self._refresh_generator_user_motif_table)
+        self.generator_motif_base_prob_slider.valueChanged.connect(self._refresh_generator_motif_editor_effective_label)
+        self.generator_motif_role_combo = QComboBox()
+        for role in USER_MOTIF_ROLE_OPTIONS:
+            self.generator_motif_role_combo.addItem(role.capitalize(), role)
+        self.generator_motif_role_combo.currentIndexChanged.connect(self._refresh_generator_user_motif_table)
+        self.generator_motif_role_combo.currentIndexChanged.connect(self._refresh_generator_motif_editor_effective_label)
+        self.generator_motif_dominant_combo = QComboBox()
+        for dominant_type in USER_MOTIF_DOMINANT_TYPE_OPTIONS:
+            label = "Mixed" if dominant_type == "mixed" else dominant_type.capitalize()
+            self.generator_motif_dominant_combo.addItem(label, dominant_type)
+        self.generator_motif_dominant_combo.currentIndexChanged.connect(self._on_generator_motif_dominant_changed)
+        self.generator_motif_inferred_label = QLabel("Infer: mixed")
+        self.generator_motif_inferred_label.setObjectName("StatusLabel")
+        self.generator_motif_effective_label = QLabel("Eff.: 0%")
+        self.generator_motif_effective_label.setObjectName("StatusLabel")
+        self.generator_motif_save_button = QPushButton("Save")
+        self.generator_motif_save_button.clicked.connect(self._save_generator_user_motif)
+        self._set_button_icon(
+            self.generator_motif_save_button,
+            QStyle.StandardPixmap.SP_DialogSaveButton,
+            qtawesome_name="fa5s.save",
+        )
+        self.generator_motif_editor_buttons = []
+        self.generator_motif_editor_box = QGroupBox("Add sequence")
+        motif_editor_layout = QGridLayout(self.generator_motif_editor_box)
+        motif_editor_layout.setHorizontalSpacing(8)
+        motif_editor_layout.setVerticalSpacing(6)
+        motif_editor_layout.addWidget(QLabel("Pattern"), 0, 0)
+        motif_steps_row = QHBoxLayout()
+        motif_steps_row.setSpacing(6)
+        for step_index in range(8):
+            button = QPushButton("·")
+            button.setObjectName("AnchorButton")
+            button.setFixedWidth(40)
+            button.clicked.connect(
+                lambda _checked=False, current_step=int(step_index): self._on_generator_motif_editor_step_clicked(current_step)
+            )
+            self.generator_motif_editor_buttons.append(button)
+            motif_steps_row.addWidget(button)
+        motif_editor_layout.addLayout(motif_steps_row, 0, 1, 1, 5)
+        motif_editor_layout.addWidget(QLabel("Len"), 1, 0)
+        motif_editor_layout.addWidget(self.generator_motif_length_spin, 1, 1)
+        motif_editor_layout.addWidget(QLabel("Name"), 1, 2)
+        motif_editor_layout.addWidget(self.generator_motif_name_input, 1, 3, 1, 3)
+        motif_editor_layout.addWidget(QLabel("Base prob"), 2, 0)
+        motif_editor_layout.addWidget(self.generator_motif_base_prob_slider, 2, 1, 1, 2)
+        motif_editor_layout.addWidget(self.generator_motif_base_prob_value, 2, 3)
+        motif_editor_layout.addWidget(QLabel("Role"), 2, 4)
+        motif_editor_layout.addWidget(self.generator_motif_role_combo, 2, 5)
+        motif_editor_layout.addWidget(QLabel("Dominant"), 3, 0)
+        motif_editor_layout.addWidget(self.generator_motif_dominant_combo, 3, 1)
+        motif_editor_layout.addWidget(self.generator_motif_inferred_label, 3, 2)
+        motif_editor_layout.addWidget(self.generator_motif_effective_label, 3, 3)
+        motif_editor_layout.addWidget(self.generator_motif_save_button, 3, 5)
+
+        self.generator_saved_motifs_box = QGroupBox("User motifs")
+        motif_list_layout = QVBoxLayout(self.generator_saved_motifs_box)
+        self.generator_saved_motifs_label = QLabel("Aucun motif utilisateur sauvegarde pour ce projet.")
+        self.generator_saved_motifs_label.setObjectName("StatusLabel")
+        self.generator_saved_motifs_label.setWordWrap(True)
+        self.generator_saved_motifs_table = QTableWidget(0, 7)
+        self.generator_saved_motifs_table.setHorizontalHeaderLabels(("Name", "Steps", "Role", "Type", "Base", "Eff.", "Delete"))
+        self.generator_saved_motifs_table.verticalHeader().setVisible(False)
+        self.generator_saved_motifs_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.generator_saved_motifs_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.generator_saved_motifs_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.generator_saved_motifs_table.setAlternatingRowColors(True)
+        self.generator_saved_motifs_table.setMinimumHeight(170)
+        motif_header = self.generator_saved_motifs_table.horizontalHeader()
+        motif_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        motif_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        motif_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        for column in (2, 3, 5, 6):
+            motif_header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        motif_list_layout.addWidget(self.generator_saved_motifs_label)
+        motif_list_layout.addWidget(self.generator_saved_motifs_table)
 
         self.generator_info_label = QLabel(self._default_generator_info_text())
         self.generator_info_label.setObjectName("StatusLabel")
@@ -1026,8 +1235,8 @@ class DrumDetectorWindow(QWidget):
         probability_vertical_header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.generator_effect_probability_label = QLabel("Apercu FX")
         self.generator_effect_probability_label.setObjectName("StatusLabel")
-        self.generator_effect_probability_table = QTableWidget(4, 3)
-        self.generator_effect_probability_table.setHorizontalHeaderLabels(("Repeat", "Reverse", "K.Roll"))
+        self.generator_effect_probability_table = QTableWidget(4, 4)
+        self.generator_effect_probability_table.setHorizontalHeaderLabels(("Repeat", "Reverse", "K.Roll", "Snr.Str"))
         self.generator_effect_probability_table.setVerticalHeaderLabels(("Downbeat", "Backbeat", "Offbeat", "Subdivision"))
         self.generator_effect_probability_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.generator_effect_probability_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -1039,7 +1248,7 @@ class DrumDetectorWindow(QWidget):
         self.generator_effect_probability_table.setMinimumHeight(152)
         effect_header = self.generator_effect_probability_table.horizontalHeader()
         effect_header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        for column in range(3):
+        for column in range(4):
             effect_header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
         effect_vertical_header = self.generator_effect_probability_table.verticalHeader()
         effect_vertical_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1091,6 +1300,7 @@ class DrumDetectorWindow(QWidget):
         generator_source_bpm_label = QLabel("BPM source")
         generator_target_bpm_label = QLabel("BPM cible")
         generator_bars_label = QLabel("Bars")
+        generator_mode_label = QLabel("Mode")
         generator_seed_label = QLabel("Derniere seed")
         self._set_generator_widget_tooltip(
             "Tempo estime du break source. C'est la base rythmique qui sert a recaler le pattern genere.",
@@ -1105,6 +1315,11 @@ class DrumDetectorWindow(QWidget):
             generator_bars_label,
         )
         self._set_generator_widget_tooltip(
+            "Classic garde le comportement historique. Hybrid pose d'abord des motifs utilisateur comme squelette temporaire, puis laisse le generateur remplir autour.",
+            generator_mode_label,
+            self.generator_mode_combo,
+        )
+        self._set_generator_widget_tooltip(
             "Seed de la derniere variation generee. Elle est informativa seulement: chaque clic sur Generate random en cree une nouvelle.",
             generator_seed_label,
         )
@@ -1115,12 +1330,14 @@ class DrumDetectorWindow(QWidget):
         grid.addWidget(self.generator_target_bpm_spin, 0, 3)
         grid.addWidget(generator_bars_label, 0, 4)
         grid.addWidget(self.generator_bars_spin, 0, 5)
-        grid.addWidget(generator_seed_label, 0, 6)
-        grid.addWidget(self.generator_seed_value, 0, 7)
-        grid.addWidget(self.generator_generate_button, 0, 8)
-        grid.addWidget(self.generator_play_button, 0, 9)
-        grid.addWidget(self.generator_stop_button, 0, 10)
-        grid.addWidget(self.generator_loop_button, 0, 11)
+        grid.addWidget(generator_mode_label, 0, 6)
+        grid.addWidget(self.generator_mode_combo, 0, 7)
+        grid.addWidget(generator_seed_label, 0, 8)
+        grid.addWidget(self.generator_seed_value, 0, 9)
+        grid.addWidget(self.generator_generate_button, 0, 10)
+        grid.addWidget(self.generator_play_button, 0, 11)
+        grid.addWidget(self.generator_stop_button, 0, 12)
+        grid.addWidget(self.generator_loop_button, 0, 13)
 
         grid.addWidget(self._build_generator_section_label("Groove Core"), 1, 0, 1, 12)
         self._add_generator_slider_row(grid, 2, "Energy", self.generator_energy_slider, self.generator_energy_value, "Kick", self.generator_kick_slider, self.generator_kick_value)
@@ -1129,7 +1346,7 @@ class DrumDetectorWindow(QWidget):
 
         grid.addWidget(self._build_generator_section_label("Structure & Phrase"), 5, 0, 1, 12)
         self._add_generator_slider_row(grid, 6, "Fill", self.generator_fill_slider, self.generator_fill_value, "Sequences", self.generator_sequence_density_slider, self.generator_sequence_density_value)
-        self._add_generator_slider_row(grid, 7, "Position", self.generator_position_fidelity_slider, self.generator_position_fidelity_value, "Anti-repeat", self.generator_anti_repeat_slider, self.generator_anti_repeat_value)
+        self._add_generator_slider_row(grid, 7, "Position", self.generator_position_fidelity_slider, self.generator_position_fidelity_value, "Motifs", self.generator_motif_density_slider, self.generator_motif_density_value)
         grid.addWidget(self._build_generator_section_label("FX & Motion"), 8, 0, 1, 12)
         self._add_generator_slider_row(grid, 9, "Repeat dens.", self.generator_repeat_slider, self.generator_repeat_value, "Repeat len.", self.generator_repeat_length_slider, self.generator_repeat_length_value)
         self._add_generator_slider_row(grid, 10, "Repeat rate", self.generator_repeat_rate_slider, self.generator_repeat_rate_value, "Reverse", self.generator_reverse_slider, self.generator_reverse_value)
@@ -1144,9 +1361,11 @@ class DrumDetectorWindow(QWidget):
         )
         grid.addWidget(kick_roll_dyn_label, 12, 0)
         grid.addWidget(self.generator_kick_roll_contrast_slider, 12, 1, 1, 2)
-        grid.addWidget(self._build_generator_section_label("Playback & Feel"), 13, 0, 1, 12)
-        self._add_generator_slider_row(grid, 14, "Gate", self.generator_gate_slider, self.generator_gate_value, "Velocity", self.generator_velocity_slider, self.generator_velocity_value)
-        self._add_generator_slider_row(grid, 15, "Swing", self.generator_swing_slider, self.generator_swing_value, "Breath", self.generator_breath_slider, self.generator_breath_value)
+        self._add_generator_slider_row(grid, 13, "Snr.Str dens.", self.generator_snare_stretch_slider, self.generator_snare_stretch_value, "Snr.Str len.", self.generator_snare_stretch_length_slider, self.generator_snare_stretch_length_value)
+        self._add_generator_slider_row(grid, 14, "Snr.Str amt.", self.generator_snare_stretch_amount_slider, self.generator_snare_stretch_amount_value, "Gate", self.generator_gate_slider, self.generator_gate_value)
+        grid.addWidget(self._build_generator_section_label("Playback & Feel"), 15, 0, 1, 12)
+        self._add_generator_slider_row(grid, 16, "Velocity", self.generator_velocity_slider, self.generator_velocity_value, "Swing", self.generator_swing_slider, self.generator_swing_value)
+        self._add_generator_slider_row(grid, 17, "Anti-repeat", self.generator_anti_repeat_slider, self.generator_anti_repeat_value, "Breath", self.generator_breath_slider, self.generator_breath_value)
 
         sequence_max_label = QLabel("Seq max len")
         sequence_lock_label = QLabel("Seq role lock")
@@ -1168,22 +1387,24 @@ class DrumDetectorWindow(QWidget):
             "Retire tous les locks step par step. Le prochain Generate random pourra a nouveau tout modifier.",
             self.generator_clear_locks_button,
         )
-        grid.addWidget(sequence_max_label, 16, 0)
-        grid.addWidget(self.generator_sequence_max_len_spin, 16, 1)
-        grid.addWidget(sequence_lock_label, 16, 3)
-        grid.addWidget(self.generator_sequence_role_lock_check, 16, 4, 1, 2)
-        grid.addWidget(self.generator_clear_anchors_button, 16, 7, 1, 2)
-        grid.addWidget(self.generator_clear_locks_button, 16, 9, 1, 2)
+        grid.addWidget(sequence_max_label, 18, 0)
+        grid.addWidget(self.generator_sequence_max_len_spin, 18, 1)
+        grid.addWidget(sequence_lock_label, 18, 3)
+        grid.addWidget(self.generator_sequence_role_lock_check, 18, 4, 1, 2)
+        grid.addWidget(self.generator_clear_anchors_button, 18, 7, 1, 2)
+        grid.addWidget(self.generator_clear_locks_button, 18, 9, 1, 2)
 
-        grid.addWidget(self.generator_probability_label, 17, 0, 1, 12)
-        grid.addWidget(self.generator_probability_table, 18, 0, 1, 12)
-        grid.addWidget(self.generator_effect_probability_label, 19, 0, 1, 12)
-        grid.addWidget(self.generator_effect_probability_table, 20, 0, 1, 12)
-        grid.addWidget(self.generator_loading_bar, 21, 0, 1, 12)
-        grid.addWidget(self.generator_info_label, 22, 0, 1, 12)
-        grid.addWidget(self.generator_sequence_table, 23, 0, 1, 12)
-        grid.addWidget(self.generator_summary_label, 24, 0, 1, 12)
-        grid.addWidget(self.generator_table, 25, 0, 1, 12)
+        grid.addWidget(self.generator_probability_label, 19, 0, 1, 12)
+        grid.addWidget(self.generator_probability_table, 20, 0, 1, 12)
+        grid.addWidget(self.generator_effect_probability_label, 21, 0, 1, 12)
+        grid.addWidget(self.generator_effect_probability_table, 22, 0, 1, 12)
+        grid.addWidget(self.generator_loading_bar, 23, 0, 1, 12)
+        grid.addWidget(self.generator_info_label, 24, 0, 1, 12)
+        grid.addWidget(self.generator_sequence_table, 25, 0, 1, 12)
+        grid.addWidget(self.generator_summary_label, 26, 0, 1, 12)
+        grid.addWidget(self.generator_table, 27, 0, 1, 12)
+        grid.addWidget(self.generator_motif_editor_box, 28, 0, 1, 12)
+        grid.addWidget(self.generator_saved_motifs_box, 29, 0, 1, 12)
 
         self._set_generator_widget_tooltip(
             "Tempo estime du break source. C'est la base rythmique qui sert a recaler le pattern genere.",
@@ -1198,7 +1419,12 @@ class DrumDetectorWindow(QWidget):
             self.generator_bars_spin,
         )
         self._set_generator_widget_tooltip(
-            "Ligne d'ancrage rythmique + locks. Clique la ligne Anchor pour figer un type, la ligne Lock pour conserver le step, et le numero en haut pour ecouter la slice source de ce step. La ligne FX montre explicitement les repeats, reverse et kick rolls sur la timeline.",
+            "Densite globale des motifs utilisateur en mode Hybrid. A 0, le mode Hybrid retombe presque sur le comportement Classic.",
+            self.generator_motif_density_slider,
+            self.generator_motif_density_value,
+        )
+        self._set_generator_widget_tooltip(
+            "Ligne d'ancrage rythmique + locks. Clique la ligne Anchor pour figer un type, la ligne Lock pour conserver le step, et le numero en haut pour ecouter la slice source de ce step. La ligne FX montre explicitement les repeats, reverse, kick rolls et glitch stretches de snare sur la timeline.",
             self.generator_sequence_table,
         )
         self._set_generator_widget_tooltip(
@@ -1207,13 +1433,22 @@ class DrumDetectorWindow(QWidget):
             self.generator_probability_label,
         )
         self._set_generator_widget_tooltip(
-            "Apercu heuristique des effets du generateur. Repeat montre ou des retriggers glitch ont le plus de chances d'apparaitre; Reverse montre ou une queue reverse a le plus de chances d'etre injectee; K.Roll montre ou une rafale de kicks a le plus de chances de demarrer puis de s'etaler sur la fenetre rythmique suivante.",
+            "Apercu heuristique des effets du generateur. Repeat montre ou des retriggers glitch ont le plus de chances d'apparaitre; Reverse montre ou une queue reverse a le plus de chances d'etre injectee; K.Roll montre ou une rafale de kicks a le plus de chances de demarrer puis de s'etaler sur la fenetre rythmique suivante; Snr.Str montre ou un glitch stretch de snare a le plus de chances d'occuper la fenetre jusqu'au repere suivant.",
             self.generator_effect_probability_table,
             self.generator_effect_probability_label,
         )
         self._set_generator_widget_tooltip(
             "Seed de la derniere variation generee. Elle est informativa seulement: chaque clic sur Generate random en cree une nouvelle.",
             self.generator_seed_value,
+        )
+        self._set_generator_widget_tooltip(
+            "Editeur rapide de motif utilisateur. Clique les cellules pour definir kick/snare/hat/ghost/silence/trou, puis sauvegarde le motif pour le projet courant.",
+            self.generator_motif_editor_box,
+        )
+        self._set_generator_widget_tooltip(
+            "Motifs utilisateur sauvegardes pour le projet courant, avec leur probabilite effective estimee selon les reglages courants.",
+            self.generator_saved_motifs_box,
+            self.generator_saved_motifs_table,
         )
         self._set_generator_widget_tooltip(
             "Genere une nouvelle variation aleatoire avec les reglages courants. Meme reglages, nouvelle seed a chaque clic.",
@@ -1231,6 +1466,9 @@ class DrumDetectorWindow(QWidget):
             "Relance le pattern genere en boucle avec le BPM cible du generateur.",
             self.generator_loop_button,
         )
+        self._refresh_generator_motif_editor_buttons()
+        self._refresh_generator_motif_editor_dominant()
+        self._refresh_generator_mode_ui()
 
     def _build_percent_slider(self, value: int) -> tuple[QSlider, QLabel]:
         slider = QSlider(Qt.Orientation.Horizontal)
@@ -1254,6 +1492,7 @@ class DrumDetectorWindow(QWidget):
             "Ghost": "Controle les ghosts automatiques. A 0, ils disparaissent presque completement du squelette.",
             "Fill": "Genere davantage de fins de mesure en bloc: lift sur la fin du bar, drive juste avant le retour, puis release/resolution plus propre vers le 1 suivant.",
             "Sequences": "Dose l'utilisation de suites de hits extraites du break source. A 0%, le comportement reste purement atomique.",
+            "Motifs": "Densite globale des motifs utilisateur en mode Hybrid. Plus haut = davantage de squelettes partiels poses avant le remplissage du generateur.",
             "Repeat": "Ajoute des retriggers rapides du meme hit a l'interieur d'un step, facon glitch. Plus haut = davantage de zones de repeat dans le pattern.",
             "Repeat dens.": "Controle combien de zones de repeat apparaissent dans le pattern. Plus haut = plus de zones glitch.",
             "Repeat len.": "Controle la longueur probable des zones de repeat sur la timeline. Bas = zones courtes, haut = zones plus longues sur plusieurs steps.",
@@ -1262,6 +1501,9 @@ class DrumDetectorWindow(QWidget):
             "K.Roll dens.": "Controle la frequence des kick rolls. Ils demarrent directement sur les beats pairs du bar, puis etalent une petite rafale de kicks sur les steps suivants.",
             "K.Roll len.": "Controle la longueur probable des kick rolls. La V1 reste sur des longueurs paires et courtes, calees sur les fenetres 5-8 et 13-16.",
             "K.Roll dyn.": "Controle le niveau de velocite uniforme de toute la succession du roll, y compris le premier kick de depart.",
+            "Snr.Str dens.": "Controle la frequence des glitch stretches de snare. Plus haut = davantage de snares, claps ou ruffs decoupes en micro-fragments jusqu'au repere suivant.",
+            "Snr.Str len.": "Controle jusqu'ou le glitch stretch essaie d'aller vers le repere suivant. Bas = queue plus courte, haut = queue glitch plus longue, sans muter automatiquement les hits suivants.",
+            "Snr.Str amt.": "Controle a quel point le stretch devient hache/stutter. Bas = repete peu, haut = vrai effet granulaire/glitch breakcore.",
             "Gate": "Raccourcit globalement la longueur jouee des slices du pattern. 100% = longueur source, plus bas = queues plus courtes et plus d'air entre les hits.",
             "Velocity": "Elargit l'ecart de dynamique entre les hits. Plus haut = pattern moins plat, plus humain.",
             "Swing": "Decale legerement une partie des subdivisions pour donner un groove plus shuffle et moins droit.",
@@ -1558,9 +1800,12 @@ class DrumDetectorWindow(QWidget):
             self.path_input.setText(last_path)
             self._sync_waveform_path(last_path)
         self._generator_locked_steps.clear()
+        self._generator_user_motifs = self._load_generator_user_motifs()
         self._update_retimed_preview_state(None)
         self._populate_generated_pattern(None)
         self._refresh_generator_probability_preview()
+        self._refresh_generator_user_motif_table()
+        self._refresh_generator_mode_ui()
         self._refresh_generated_pattern_state()
         self._sync_dependency_state()
         self._refresh_control_states(self.status_label.text())
@@ -2213,6 +2458,16 @@ class DrumDetectorWindow(QWidget):
             return 0.0
         return float(result.tempo_bpm) * self._detected_bpm_factor()
 
+    def _effective_generator_result(self, result: DrumDetectionResult | None) -> DrumDetectionResult | None:
+        if result is None:
+            return None
+        effective_bpm = self._effective_detected_bpm(result)
+        if effective_bpm <= 1.0:
+            return result
+        if abs(float(result.tempo_bpm) - float(effective_bpm)) <= 1e-6:
+            return result
+        return requantize_detection_result(result, tempo_bpm=effective_bpm)
+
     def _set_preview_mode(self, mode: str) -> None:
         index = self.preview_mode_combo.findData(
             PREVIEW_MODE_QUANTIZE if str(mode).lower() == PREVIEW_MODE_QUANTIZE else PREVIEW_MODE_RETIME
@@ -2273,66 +2528,281 @@ class DrumDetectorWindow(QWidget):
             "a partir des slices detectees. La ligne Anchor permet de figer quelques temps forts, "
             "puis de generer autour. Gate raccourcit la lecture des slices, Repeat cree des zones glitch avec retriggers, "
             "Reverse injecte des queues reverse apres certains kicks ou snares sur les subdivisions, "
-            "et K.Roll construit de petites rafales de kicks sur plusieurs steps avec une velocite uniforme. "
+            "K.Roll construit de petites rafales de kicks sur plusieurs steps avec une velocite uniforme, "
+            "et Snr.Str transforme certains snares ou claps en glitch stretch granulaire breakcore. "
+            "Le mode Hybrid peut aussi poser des motifs utilisateur comme squelette temporaire avant le remplissage. "
             "Le transport ci-dessous est propre au generateur, avec son BPM cible et sa boucle."
         )
 
-    def _refresh_generator_probability_preview(self) -> None:
-        rows = ("downbeat", "backbeat", "offbeat", "subdivision")
-        row_labels = {
-            "downbeat": "Downbeat",
-            "backbeat": "Backbeat",
-            "offbeat": "Offbeat",
-            "subdivision": "Subdivision",
+    def _generator_mode(self) -> str:
+        current_mode = self.generator_mode_combo.currentData()
+        return current_mode if current_mode in GENERATOR_MODE_LABELS else GENERATOR_MODE_CLASSIC
+
+    def _motif_project_storage_path(self) -> Path:
+        return Path.cwd() / USER_MOTIF_PROJECT_FILE
+
+    def _load_generator_user_motifs(self) -> list[UserMotif]:
+        storage_path = self._motif_project_storage_path()
+        if not storage_path.exists():
+            return []
+        try:
+            payload = json.loads(storage_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        raw_motifs = payload.get("user_motifs", ()) if isinstance(payload, dict) else payload
+        if not isinstance(raw_motifs, list):
+            return []
+        motifs: list[UserMotif] = []
+        for entry in raw_motifs:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                motifs.append(UserMotif.from_dict(entry))
+            except Exception:
+                continue
+        return motifs
+
+    def _persist_generator_user_motifs(self) -> bool:
+        storage_path = self._motif_project_storage_path()
+        payload = {
+            "user_motifs": [motif.to_dict() for motif in self._generator_user_motifs],
         }
-        families = ("kick", "snare", "hat", "ghost", "other", "silence")
-        family_labels = {
-            "kick": "Kick",
-            "snare": "Snare",
-            "hat": "Hat",
-            "ghost": "Ghost",
-            "other": "Other",
-            "silence": "Sil",
-        }
+        try:
+            storage_path.parent.mkdir(parents=True, exist_ok=True)
+            storage_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+            return True
+        except Exception:
+            return False
 
-        self.generator_probability_table.setRowCount(len(rows))
-        self.generator_probability_table.setColumnCount(len(families))
-        self.generator_probability_table.setHorizontalHeaderLabels([family_labels[family] for family in families])
-        self.generator_probability_table.setVerticalHeaderLabels([row_labels[row] for row in rows])
+    def _generator_motif_steps_preview_text(self, steps: list[str | None]) -> str:
+        parts: list[str] = []
+        for step in steps:
+            if step is None:
+                parts.append("·")
+            else:
+                parts.append(GENERATOR_STEP_ANCHOR_SHORT_LABELS.get(step, str(step)[:1].upper()))
+        return " ".join(parts)
 
-        if self._result is None or not self._result.transient_hits:
-            for row_index, row_name in enumerate(rows):
-                for column_index, family in enumerate(families):
-                    item = QTableWidgetItem("-")
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    item.setToolTip(
-                        f"{row_labels[row_name]} | {family_labels[family]}\nCharge un break analyse pour voir l'aperçu."
-                    )
-                    self.generator_probability_table.setItem(row_index, column_index, item)
-            return
+    def _current_generator_motif_editor_steps(self) -> list[str | None]:
+        length = int(self.generator_motif_length_spin.value())
+        return [self._generator_motif_editor_steps[index] for index in range(length)]
 
-        preview = estimate_pattern_family_probabilities(
-            self._result.transient_hits,
-            self._generator_params(seed=1),
+    def _current_generator_editor_motif(self) -> UserMotif | None:
+        steps = self._current_generator_motif_editor_steps()
+        if not any(step is not None for step in steps):
+            return None
+        dominant_type = str(self.generator_motif_dominant_combo.currentData() or "mixed")
+        if not self._generator_motif_dominant_dirty:
+            dominant_type = self._infer_generator_motif_dominant()
+        return UserMotif(
+            steps=[*steps],
+            base_prob=float(self.generator_motif_base_prob_slider.value() / 100.0),
+            role=str(self.generator_motif_role_combo.currentData() or "groove"),
+            dominant_type=dominant_type,
+            name=self.generator_motif_name_input.text().strip() or "Motif",
         )
-        for row_index, row_name in enumerate(rows):
-            weights = preview.rows.get(row_name, {})
-            for column_index, family in enumerate(families):
-                probability = float(weights.get(family, 0.0))
-                item = QTableWidgetItem(f"{int(round(probability * 100.0))}%")
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                item.setToolTip(
-                    f"{row_labels[row_name]} | {family_labels[family]}\n"
-                    f"Probabilite de base: {probability * 100.0:.1f}%\n"
-                    "Apercu avant contexte local, sequences et fills."
-                )
-                if probability >= 0.5:
-                    item.setBackground(QColor("#2b3d2f"))
-                elif probability >= 0.25:
-                    item.setBackground(QColor("#263545"))
-                elif probability <= 0.05:
-                    item.setForeground(QColor("#8690a2"))
-                self.generator_probability_table.setItem(row_index, column_index, item)
+
+    def _infer_generator_motif_dominant(self) -> str:
+        steps = self._current_generator_motif_editor_steps()
+        counts = {"kick": 0, "snare": 0, "hat": 0, "ghost": 0}
+        for step in steps:
+            if step in counts:
+                counts[str(step)] += 1
+        ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+        if not ranked or ranked[0][1] <= 0:
+            return "mixed"
+        if len(ranked) > 1 and ranked[1][1] == ranked[0][1]:
+            return "mixed"
+        return str(ranked[0][0])
+
+    def _refresh_generator_motif_editor_dominant(self) -> None:
+        inferred = self._infer_generator_motif_dominant()
+        self.generator_motif_inferred_label.setText(f"Infer: {'Mixed' if inferred == 'mixed' else inferred}")
+        if not self._generator_motif_dominant_dirty:
+            previous_state = self.generator_motif_dominant_combo.blockSignals(True)
+            try:
+                inferred_index = self.generator_motif_dominant_combo.findData(inferred)
+                if inferred_index >= 0:
+                    self.generator_motif_dominant_combo.setCurrentIndex(inferred_index)
+            finally:
+                self.generator_motif_dominant_combo.blockSignals(previous_state)
+        self._refresh_generator_motif_editor_effective_label()
+
+    def _refresh_generator_motif_editor_effective_label(self) -> None:
+        motif = self._current_generator_editor_motif()
+        if motif is None:
+            self.generator_motif_effective_label.setText("Eff.: 0%")
+            self.generator_motif_effective_label.setToolTip("Ajoute au moins un step explicite pour estimer la probabilite du motif.")
+            return
+        effective_probability = self._effective_generator_user_motif_probability(motif)
+        self.generator_motif_effective_label.setText(f"Eff.: {int(round(effective_probability * 100.0))}%")
+        self.generator_motif_effective_label.setToolTip(
+            "Probabilite effective avec les reglages courants, apres modulation par "
+            "Motifs, type dominant, energie, anti-repeat, fill et position."
+        )
+
+    def _refresh_generator_motif_editor_buttons(self) -> None:
+        active_length = int(self.generator_motif_length_spin.value())
+        for index, button in enumerate(self.generator_motif_editor_buttons):
+            active = index < active_length
+            value = self._generator_motif_editor_steps[index] if active else None
+            button.setVisible(True)
+            button.setEnabled(active)
+            button.setText("·" if value is None else GENERATOR_STEP_ANCHOR_SHORT_LABELS.get(value, str(value)[:1].upper()))
+            button.setProperty("anchorActive", bool(value))
+            button.setProperty("anchorKind", "auto" if value is None else value)
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.setToolTip(
+                f"Step {index + 1} du motif utilisateur: {GENERATOR_STEP_ANCHOR_LABELS.get(value, 'trou') if value is not None else 'trou'}.\n"
+                "Clique pour cycler kick / snare / hat / ghost / silence / trou."
+            )
+
+    def _refresh_generator_mode_ui(self) -> None:
+        hybrid_mode = self._generator_mode() == GENERATOR_MODE_HYBRID
+        self.generator_motif_editor_box.setVisible(hybrid_mode)
+        self.generator_saved_motifs_box.setVisible(hybrid_mode)
+        self.generator_motif_save_button.setEnabled(hybrid_mode and (not self._generator_busy))
+        waveform_loading = bool(getattr(self, "_waveform_loading", False))
+        self.generator_motif_density_slider.setEnabled(hybrid_mode and (not self._generator_busy) and (not waveform_loading))
+        self.generator_motif_density_value.setEnabled(hybrid_mode)
+
+    def _effective_generator_user_motif_probability(self, motif: UserMotif) -> float:
+        params = self._generator_params(seed=1)
+        return float(np.clip(estimate_user_motif_effective_probability(motif, params), 0.0, 1.0))
+
+    def _build_saved_motif_probability_widget(self, row: int, motif: UserMotif) -> QWidget:
+        container = QWidget(self.generator_saved_motifs_table)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        slider = QSlider(Qt.Orientation.Horizontal, container)
+        slider.setRange(0, 100)
+        slider.setSingleStep(5)
+        slider.setPageStep(10)
+        slider.setValue(int(round(float(motif.base_prob) * 100.0)))
+        slider.setToolTip("Probabilite de base du motif utilisateur. Elle est ensuite modulee par les reglages actifs.")
+        slider.valueChanged.connect(
+            lambda value, current_row=int(row): self._on_saved_generator_motif_probability_changed(current_row, value)
+        )
+
+        label = QLabel(f"{int(round(float(motif.base_prob) * 100.0))}%", container)
+        label.setObjectName("StatusLabel")
+        label.setMinimumWidth(38)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        slider.valueChanged.connect(lambda value, target=label: target.setText(f"{int(np.clip(value, 0, 100))}%"))
+
+        layout.addWidget(slider, 1)
+        layout.addWidget(label)
+        return container
+
+    def _on_saved_generator_motif_probability_changed(self, row: int, value: int) -> None:
+        if row < 0 or row >= len(self._generator_user_motifs):
+            return
+        motif = self._generator_user_motifs[row]
+        normalized_value = float(np.clip(int(value), 0, 100)) / 100.0
+        if abs(float(motif.base_prob) - normalized_value) <= 1e-6:
+            return
+        self._generator_user_motifs[row] = replace(motif, base_prob=normalized_value)
+        self._persist_generator_user_motifs()
+        self._refresh_generator_user_motif_table()
+        self.generator_info_label.setText(
+            f"Probabilite du motif utilisateur '{motif.name}' mise a jour a {int(round(normalized_value * 100.0))}%."
+        )
+
+    def _refresh_generator_user_motif_table(self) -> None:
+        if not hasattr(self, "generator_saved_motifs_table"):
+            return
+        motifs = list(self._generator_user_motifs)
+        self.generator_saved_motifs_table.setRowCount(len(motifs))
+        self.generator_saved_motifs_label.setText(
+            f"{len(motifs)} motif(s) utilisateur pour {self._motif_project_storage_path().name}."
+            if motifs
+            else "Aucun motif utilisateur sauvegarde pour ce projet."
+        )
+        for row, motif in enumerate(motifs):
+            effective_probability = self._effective_generator_user_motif_probability(motif)
+            values_by_column = {
+                0: motif.name,
+                1: self._generator_motif_steps_preview_text(list(motif.steps)),
+                2: motif.role,
+                3: motif.dominant_type,
+                5: f"{int(round(effective_probability * 100.0))}%",
+            }
+            for column, value in values_by_column.items():
+                item = QTableWidgetItem(str(value))
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter if column >= 2 else Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.generator_saved_motifs_table.setItem(row, column, item)
+            self.generator_saved_motifs_table.setCellWidget(row, 4, self._build_saved_motif_probability_widget(row, motif))
+            delete_button = QPushButton("Delete")
+            delete_button.clicked.connect(lambda _checked=False, current_row=int(row): self._delete_generator_user_motif(current_row))
+            self.generator_saved_motifs_table.setCellWidget(row, 6, delete_button)
+
+    def _clear_generator_motif_editor(self) -> None:
+        self._generator_motif_editor_steps = [None] * 8
+        self._generator_motif_dominant_dirty = False
+        self.generator_motif_name_input.clear()
+        self.generator_motif_length_spin.setValue(4)
+        self.generator_motif_base_prob_slider.setValue(60)
+        role_index = self.generator_motif_role_combo.findData("groove")
+        if role_index >= 0:
+            self.generator_motif_role_combo.setCurrentIndex(role_index)
+        self._refresh_generator_motif_editor_buttons()
+        self._refresh_generator_motif_editor_dominant()
+
+    def _on_generator_mode_changed(self) -> None:
+        self._settings.setValue("generator_mode", self._generator_mode())
+        self._refresh_generator_mode_ui()
+        self._refresh_generator_user_motif_table()
+        self._refresh_generator_anchor_summary()
+
+    def _on_generator_motif_length_changed(self) -> None:
+        active_length = int(self.generator_motif_length_spin.value())
+        for index in range(active_length, len(self._generator_motif_editor_steps)):
+            self._generator_motif_editor_steps[index] = None
+        self._refresh_generator_motif_editor_buttons()
+        self._refresh_generator_motif_editor_dominant()
+        self._refresh_generator_user_motif_table()
+
+    def _on_generator_motif_dominant_changed(self) -> None:
+        self._generator_motif_dominant_dirty = True
+        self._refresh_generator_motif_editor_effective_label()
+        self._refresh_generator_user_motif_table()
+
+    def _on_generator_motif_editor_step_clicked(self, step_index: int) -> None:
+        if step_index < 0 or step_index >= int(self.generator_motif_length_spin.value()):
+            return
+        current = self._generator_motif_editor_steps[step_index]
+        current_index = USER_MOTIF_STEP_ORDER.index(current) if current in USER_MOTIF_STEP_ORDER else 0
+        next_value = USER_MOTIF_STEP_ORDER[(current_index + 1) % len(USER_MOTIF_STEP_ORDER)]
+        self._generator_motif_editor_steps[step_index] = next_value
+        self._refresh_generator_motif_editor_buttons()
+        self._refresh_generator_motif_editor_dominant()
+        self._refresh_generator_user_motif_table()
+
+    def _save_generator_user_motif(self) -> None:
+        motif = self._current_generator_editor_motif()
+        if motif is None:
+            QMessageBox.information(self, "Motif vide", "Ajoute au moins un step explicite avant de sauvegarder le motif.")
+            return
+        motif = replace(
+            motif,
+            name=self.generator_motif_name_input.text().strip() or f"Motif {len(self._generator_user_motifs) + 1}",
+        )
+        self._generator_user_motifs.append(motif)
+        self._persist_generator_user_motifs()
+        self._refresh_generator_user_motif_table()
+        self._clear_generator_motif_editor()
+        self.generator_info_label.setText(f"Motif utilisateur '{motif.name}' sauvegarde pour le projet courant.")
+
+    def _delete_generator_user_motif(self, row: int) -> None:
+        if row < 0 or row >= len(self._generator_user_motifs):
+            return
+        motif = self._generator_user_motifs.pop(row)
+        self._persist_generator_user_motifs()
+        self._refresh_generator_user_motif_table()
+        self.generator_info_label.setText(f"Motif utilisateur '{motif.name}' supprime.")
 
     def _refresh_generator_probability_preview(self) -> None:
         rows = ("downbeat", "backbeat", "offbeat", "subdivision")
@@ -2351,11 +2821,12 @@ class DrumDetectorWindow(QWidget):
             "other": "Other",
             "silence": "Sil",
         }
-        effects = ("repeat", "reverse", "kick_roll")
+        effects = ("repeat", "reverse", "kick_roll", "snare_stretch")
         effect_labels = {
             "repeat": "Repeat",
             "reverse": "Reverse",
             "kick_roll": "K.Roll",
+            "snare_stretch": "Snr.Str",
         }
 
         self.generator_probability_table.setRowCount(len(rows))
@@ -2367,7 +2838,8 @@ class DrumDetectorWindow(QWidget):
         self.generator_effect_probability_table.setHorizontalHeaderLabels([effect_labels[effect] for effect in effects])
         self.generator_effect_probability_table.setVerticalHeaderLabels([row_labels[row] for row in rows])
 
-        if self._result is None or not self._result.transient_hits:
+        source_result = self._effective_generator_result(self._result)
+        if source_result is None or not source_result.transient_hits:
             for row_index, row_name in enumerate(rows):
                 for column_index, family in enumerate(families):
                     item = QTableWidgetItem("-")
@@ -2386,8 +2858,8 @@ class DrumDetectorWindow(QWidget):
             return
 
         params = self._generator_params(seed=1)
-        family_preview = estimate_pattern_family_probabilities(self._result.transient_hits, params)
-        effect_preview = estimate_pattern_effect_probabilities(self._result.transient_hits, params)
+        family_preview = estimate_pattern_family_probabilities(source_result.transient_hits, params)
+        effect_preview = estimate_pattern_effect_probabilities(source_result.transient_hits, params)
 
         for row_index, row_name in enumerate(rows):
             family_weights = family_preview.rows.get(row_name, {})
@@ -2433,19 +2905,30 @@ class DrumDetectorWindow(QWidget):
                         item.setBackground(QColor("#4d2437"))
                     elif probability >= 0.12:
                         item.setBackground(QColor("#35202b"))
-                else:
+                elif effect == "kick_roll":
                     item.setToolTip(
                         f"{row_labels[row_name]} | Kick roll\n"
                         f"Probabilite heuristique: {probability * 100.0:.1f}%\n"
-                        "Estime la chance de declencher une petite rafale de kicks sur plusieurs steps a partir d'un kick deja pose."
+                        "Estime la chance de declencher une petite rafale de kicks sur plusieurs steps a partir d'un point de depart compatible."
                     )
                     if probability >= 0.32:
                         item.setBackground(QColor("#5a3617"))
                     elif probability >= 0.14:
                         item.setBackground(QColor("#412a19"))
+                else:
+                    item.setToolTip(
+                        f"{row_labels[row_name]} | Snare stretch\n"
+                        f"Probabilite heuristique: {probability * 100.0:.1f}%\n"
+                        "Estime la chance de transformer un snare, clap ou ruff en zone glitch/stutter jusqu'au repere suivant."
+                    )
+                    if probability >= 0.32:
+                        item.setBackground(QColor("#2c2f63"))
+                    elif probability >= 0.14:
+                        item.setBackground(QColor("#23284b"))
                 if probability <= 0.03:
                     item.setForeground(QColor("#8690a2"))
                 self.generator_effect_probability_table.setItem(row_index, column_index, item)
+        self._refresh_generator_user_motif_table()
 
     def _generator_pattern_shape_text(self) -> str:
         bars = int(self.generator_bars_spin.value()) if hasattr(self, "generator_bars_spin") else 1
@@ -2747,6 +3230,9 @@ class DrumDetectorWindow(QWidget):
         self.generator_bars_spin.setEnabled(
             (not global_busy) and (not self._waveform_loading) and (not self._generator_busy)
         )
+        self.generator_mode_combo.setEnabled(
+            (not global_busy) and (not self._waveform_loading) and (not self._generator_busy)
+        )
         self.generator_loop_button.setEnabled(
             (not self._dependency_error) and (not global_busy) and (not self._waveform_loading)
         )
@@ -2778,6 +3264,9 @@ class DrumDetectorWindow(QWidget):
             self.generator_kick_roll_slider,
             self.generator_kick_roll_length_slider,
             self.generator_kick_roll_contrast_slider,
+            self.generator_snare_stretch_slider,
+            self.generator_snare_stretch_length_slider,
+            self.generator_snare_stretch_amount_slider,
             self.generator_gate_slider,
             self.generator_velocity_slider,
             self.generator_swing_slider,
@@ -2787,6 +3276,22 @@ class DrumDetectorWindow(QWidget):
             self.generator_sequence_density_slider,
         ):
             control.setEnabled((not global_busy) and (not self._waveform_loading) and (not self._generator_busy))
+        hybrid_editor_enabled = (
+            self._generator_mode() == GENERATOR_MODE_HYBRID
+            and (not global_busy)
+            and (not self._waveform_loading)
+            and (not self._generator_busy)
+        )
+        self.generator_motif_density_slider.setEnabled(hybrid_editor_enabled)
+        self.generator_motif_density_value.setEnabled(self._generator_mode() == GENERATOR_MODE_HYBRID)
+        self.generator_motif_name_input.setEnabled(hybrid_editor_enabled)
+        self.generator_motif_length_spin.setEnabled(hybrid_editor_enabled)
+        self.generator_motif_base_prob_slider.setEnabled(hybrid_editor_enabled)
+        self.generator_motif_role_combo.setEnabled(hybrid_editor_enabled)
+        self.generator_motif_dominant_combo.setEnabled(hybrid_editor_enabled)
+        self.generator_motif_save_button.setEnabled(hybrid_editor_enabled)
+        for index, button in enumerate(getattr(self, "generator_motif_editor_buttons", ())):
+            button.setEnabled(hybrid_editor_enabled and index < int(self.generator_motif_length_spin.value()))
         self._refresh_generated_pattern_state()
         self.rebuild_markers_button.setEnabled(
             (not global_busy) and (not self._waveform_loading) and self._marker_rebuild_available()
@@ -3304,17 +3809,29 @@ class DrumDetectorWindow(QWidget):
             kick_roll_density=self.generator_kick_roll_slider.value() / 100.0,
             kick_roll_span=self.generator_kick_roll_length_slider.value() / 100.0,
             kick_roll_contrast=self.generator_kick_roll_contrast_slider.value() / 100.0,
+            snare_stretch_density=self.generator_snare_stretch_slider.value() / 100.0,
+            snare_stretch_span=self.generator_snare_stretch_length_slider.value() / 100.0,
+            snare_stretch_amount=self.generator_snare_stretch_amount_slider.value() / 100.0,
             gate=max(0.05, self.generator_gate_slider.value() / 100.0),
             position_fidelity=self.generator_position_fidelity_slider.value() / 100.0,
             sequence_density=self.generator_sequence_density_slider.value() / 100.0,
             sequence_max_len=int(self.generator_sequence_max_len_spin.value()),
             sequence_role_lock=bool(self.generator_sequence_role_lock_check.isChecked()),
+            user_motifs=[*self._generator_user_motifs],
+            motif_density=self.generator_motif_density_slider.value() / 100.0,
             velocity_spread=self.generator_velocity_slider.value() / 100.0,
             swing=self.generator_swing_slider.value() / 100.0,
             anti_repeat=self.generator_anti_repeat_slider.value() / 100.0,
             breath_factor=self.generator_breath_slider.value() / 100.0,
             seed=int(seed),
             bars=int(self.generator_bars_spin.value()),
+        )
+
+    def _should_use_process_pattern_generation(self) -> bool:
+        return bool(
+            self._generator_mode() == GENERATOR_MODE_HYBRID
+            or self._preview_owner_is_active(PREVIEW_OWNER_GENERATOR)
+            or self._preview_owner_is_active(PREVIEW_OWNER_RETIME)
         )
 
     def _generator_active_step_anchors(self, *, step_count: int | None = None) -> dict[int, str]:
@@ -3714,6 +4231,7 @@ class DrumDetectorWindow(QWidget):
         repeat_meta = cls._generator_repeat_metadata(step)
         reverse_active = cls._generator_step_is_reverse(step)
         kick_roll_meta = cls._generator_kick_roll_metadata(step)
+        snare_stretch_meta = cls._generator_snare_stretch_metadata(step)
         parts: list[str] = []
         if repeat_meta["repeat"]:
             parts.append(f"Rpt x{int(repeat_meta['count'])}")
@@ -3734,6 +4252,10 @@ class DrumDetectorWindow(QWidget):
             parts.append(f"Rev<-{suffix}" if suffix else "Rev")
         if kick_roll_meta["active"]:
             parts.append(f"KRoll {int(kick_roll_meta['span'])}")
+        if snare_stretch_meta["active"]:
+            parts.append(f"Str x{int(snare_stretch_meta['span'])}")
+        elif snare_stretch_meta["tail"]:
+            parts.append("Tail")
         return " | ".join(parts) if parts else "-"
 
     @classmethod
@@ -3741,6 +4263,7 @@ class DrumDetectorWindow(QWidget):
         repeat_meta = cls._generator_repeat_metadata(step)
         reverse_active = cls._generator_step_is_reverse(step)
         kick_roll_meta = cls._generator_kick_roll_metadata(step)
+        snare_stretch_meta = cls._generator_snare_stretch_metadata(step)
         parts: list[str] = []
         if repeat_meta["repeat"]:
             if repeat_meta["zone"]:
@@ -3765,6 +4288,12 @@ class DrumDetectorWindow(QWidget):
                 parts.append(f"kick roll sur {int(kick_roll_meta['span'])} step(s)")
             else:
                 parts.append("kick roll")
+        if snare_stretch_meta["active"]:
+            parts.append(
+                f"glitch stretch x{int(snare_stretch_meta['span'])} a {int(round(float(snare_stretch_meta['amount']) * 100.0))}%"
+            )
+        elif snare_stretch_meta["tail"]:
+            parts.append(f"queue de glitch stretch sur {int(snare_stretch_meta['span'])} step(s)")
         return ", ".join(parts) if parts else "-"
 
     @staticmethod
@@ -3865,6 +4394,41 @@ class DrumDetectorWindow(QWidget):
             "span": zone_span,
         }
 
+    @staticmethod
+    def _generator_snare_stretch_metadata(step) -> dict[str, int | float | bool]:
+        raw_tags = getattr(step, "tags", ())
+        if not isinstance(raw_tags, (tuple, list, set, frozenset)):
+            raw_tags = ()
+        tags = tuple(raw_tags)
+        active = "snare_stretch" in tags
+        tail = "snare_stretch_tail" in tags or "snare_stretch_hold" in tags
+        zone = "snare_stretch_zone" in tags
+        zone_start = "snare_stretch_zone_start" in tags
+        zone_end = "snare_stretch_zone_end" in tags
+        span = 1
+        amount = 0.0
+        for tag in tags:
+            text = str(tag)
+            if text.startswith("snare_stretch_zone_span_"):
+                try:
+                    span = max(1, int(text.removeprefix("snare_stretch_zone_span_")))
+                except ValueError:
+                    span = 1
+            elif text.startswith("snare_stretch_amount_"):
+                try:
+                    amount = float(np.clip(int(text.removeprefix("snare_stretch_amount_")) / 100.0, 0.0, 1.0))
+                except ValueError:
+                    amount = 0.0
+        return {
+            "active": active,
+            "tail": tail,
+            "zone": zone,
+            "start": zone_start,
+            "end": zone_end,
+            "span": span,
+            "amount": amount,
+        }
+
     @classmethod
     def _generator_sequence_header_text(cls, step_index: int, step=None) -> str:
         base_text = str(int(step_index))
@@ -3872,7 +4436,8 @@ class DrumDetectorWindow(QWidget):
             return base_text
         repeat_meta = cls._generator_repeat_metadata(step)
         kick_roll_meta = cls._generator_kick_roll_metadata(step)
-        if not repeat_meta["zone"] and not kick_roll_meta["zone"]:
+        snare_stretch_meta = cls._generator_snare_stretch_metadata(step)
+        if not repeat_meta["zone"] and not kick_roll_meta["zone"] and not snare_stretch_meta["zone"]:
             return base_text
         if kick_roll_meta["zone"]:
             if kick_roll_meta["start"] and kick_roll_meta["end"]:
@@ -3881,6 +4446,13 @@ class DrumDetectorWindow(QWidget):
                 return f"{{{base_text}"
             if kick_roll_meta["end"]:
                 return f"{base_text}}}"
+        if snare_stretch_meta["zone"]:
+            if snare_stretch_meta["start"] and snare_stretch_meta["end"]:
+                return f"<{base_text}>"
+            if snare_stretch_meta["start"]:
+                return f"<{base_text}"
+            if snare_stretch_meta["end"]:
+                return f"{base_text}>"
         if repeat_meta["start"] and repeat_meta["end"]:
             return f"[{base_text}]"
         if repeat_meta["start"]:
@@ -3894,11 +4466,13 @@ class DrumDetectorWindow(QWidget):
         background, foreground, role_label = self._generator_step_palette(step_index)
         repeat_meta = {"repeat": False, "zone": False, "start": False, "end": False, "count": 1, "span": 1}
         kick_roll_meta = {"active": False, "zone": False, "start": False, "end": False, "high": False, "low": False, "span": 1}
+        snare_stretch_meta = {"active": False, "tail": False, "zone": False, "start": False, "end": False, "span": 1, "amount": 0.0}
         pattern_step = None
         if self._generated_pattern is not None and column < len(self._generated_pattern.steps):
             pattern_step = self._generated_pattern.steps[column]
             repeat_meta = self._generator_repeat_metadata(pattern_step)
             kick_roll_meta = self._generator_kick_roll_metadata(pattern_step)
+            snare_stretch_meta = self._generator_snare_stretch_metadata(pattern_step)
             if repeat_meta["zone"]:
                 background = self._blend_generator_colors(background, QColor("#264338"), 0.42)
             elif repeat_meta["repeat"]:
@@ -3909,6 +4483,10 @@ class DrumDetectorWindow(QWidget):
                 background = self._blend_generator_colors(background, QColor("#5a3617"), 0.36)
             elif kick_roll_meta["active"]:
                 background = self._blend_generator_colors(background, QColor("#4a2f1d"), 0.28)
+            if snare_stretch_meta["zone"]:
+                background = self._blend_generator_colors(background, QColor("#28346d"), 0.28)
+            elif snare_stretch_meta["active"]:
+                background = self._blend_generator_colors(background, QColor("#28346d"), 0.34)
         header_item = self.generator_sequence_table.horizontalHeaderItem(column)
         if header_item is not None:
             header_item.setText(self._generator_sequence_header_text(step_index, pattern_step))
@@ -3943,7 +4521,23 @@ class DrumDetectorWindow(QWidget):
                     kick_roll_hint = f" | Kick roll ({zone_shape})"
             elif kick_roll_meta["active"]:
                 kick_roll_hint = " | Kick roll"
-            header_item.setToolTip(f"Step {step_index} | {role_label}{repeat_hint}{reverse_hint}{kick_roll_hint}")
+            snare_stretch_hint = ""
+            if snare_stretch_meta["zone"]:
+                zone_shape = f"x{int(snare_stretch_meta['span'])}"
+                zone_amount = int(round(float(snare_stretch_meta["amount"]) * 100.0))
+                if snare_stretch_meta["start"] and snare_stretch_meta["end"]:
+                    snare_stretch_hint = f" | Glitch stretch complet ({zone_shape} a {zone_amount}%)"
+                elif snare_stretch_meta["start"]:
+                    snare_stretch_hint = f" | Debut glitch stretch ({zone_shape} a {zone_amount}%)"
+                elif snare_stretch_meta["end"]:
+                    snare_stretch_hint = f" | Fin glitch stretch ({zone_shape} a {zone_amount}%)"
+                elif snare_stretch_meta["tail"]:
+                    snare_stretch_hint = f" | Queue glitch stretch ({zone_shape})"
+                else:
+                    snare_stretch_hint = f" | Glitch stretch ({zone_shape} a {zone_amount}%)"
+            header_item.setToolTip(
+                f"Step {step_index} | {role_label}{repeat_hint}{reverse_hint}{kick_roll_hint}{snare_stretch_hint}"
+            )
 
         for row in range(2, min(6, self.generator_sequence_table.rowCount())):
             item = self.generator_sequence_table.item(row, column)
@@ -3958,6 +4552,12 @@ class DrumDetectorWindow(QWidget):
                 elif kick_roll_meta["zone"] or kick_roll_meta["active"]:
                     item.setBackground(self._blend_generator_colors(background, QColor("#6e4525"), 0.52))
                     item.setForeground(QColor("#fff0dc"))
+                elif snare_stretch_meta["active"]:
+                    item.setBackground(self._blend_generator_colors(background, QColor("#33408a"), 0.56))
+                    item.setForeground(QColor("#eef0ff"))
+                elif snare_stretch_meta["tail"] or snare_stretch_meta["zone"]:
+                    item.setBackground(self._blend_generator_colors(background, QColor("#2c3c77"), 0.44))
+                    item.setForeground(QColor("#e8ecff"))
                 elif repeat_meta["zone"] or repeat_meta["repeat"]:
                     item.setBackground(self._blend_generator_colors(background, QColor("#275241"), 0.5))
                     item.setForeground(QColor("#e3fff2"))
@@ -4031,7 +4631,8 @@ class DrumDetectorWindow(QWidget):
         if self._result is None:
             QMessageBox.warning(self, "Analyse requise", "Analyse d'abord un break pour generer un pattern.")
             return
-        if not self._result.transient_hits:
+        source_result = self._effective_generator_result(self._result)
+        if source_result is None or not source_result.transient_hits:
             QMessageBox.warning(self, "Transients manquants", "Le break courant ne contient aucun transient exploitable.")
             return
 
@@ -4046,19 +4647,42 @@ class DrumDetectorWindow(QWidget):
         seed = int(secrets.randbelow(999_999_999) + 1)
         params = self._generator_params(seed=seed)
         current_pattern = self._generated_pattern
+        use_hybrid = self._generator_mode() == GENERATOR_MODE_HYBRID
+        active_anchors = self._generator_active_step_anchors(step_count=max(16, int(params.bars) * 16))
         self._generator_busy = True
         self.generator_loading_bar.setVisible(True)
         self.generator_info_label.setText("Generation du pattern en cours...")
         self._refresh_control_states("Generation du pattern a partir du break courant...")
-        worker = TaskWorker(
-            lambda: generate_break_pattern(
-                self._result.transient_hits,
+        if self._should_use_process_pattern_generation():
+            worker = ProcessTaskWorker(
+                generate_break_pattern_for_mode,
+                tuple(source_result.transient_hits),
                 params,
-                sequences=self._result.hit_sequences,
-                anchors=self._generator_active_step_anchors(step_count=max(16, int(params.bars) * 16)),
-            ),
-            self,
-        )
+                kwargs={
+                    "sequences": tuple(source_result.hit_sequences),
+                    "anchors": dict(active_anchors),
+                    "use_hybrid": bool(use_hybrid),
+                    "user_motifs": tuple(self._generator_user_motifs),
+                },
+                parent=self,
+            )
+        else:
+            if use_hybrid:
+                generate_task = lambda: generate_break_pattern_hybrid(
+                    source_result.transient_hits,
+                    params,
+                    sequences=source_result.hit_sequences,
+                    anchors=active_anchors,
+                    user_motifs=self._generator_user_motifs,
+                )
+            else:
+                generate_task = lambda: generate_break_pattern(
+                    source_result.transient_hits,
+                    params,
+                    sequences=source_result.hit_sequences,
+                    anchors=active_anchors,
+                )
+            worker = TaskWorker(generate_task, self)
         self._generator_worker = worker
         worker.succeeded.connect(
             lambda pattern, previous=current_pattern: self._on_pattern_generated(
@@ -4071,6 +4695,9 @@ class DrumDetectorWindow(QWidget):
 
     def _reroll_generated_step(self, step_index: int) -> None:
         if self._result is None or self._generated_pattern is None:
+            return
+        source_result = self._effective_generator_result(self._result)
+        if source_result is None or not source_result.transient_hits:
             return
         if self._analysis_stale:
             QMessageBox.information(
@@ -4086,17 +4713,32 @@ class DrumDetectorWindow(QWidget):
         self.generator_info_label.setText(f"Reroll du step {step_index} en cours...")
         self._refresh_control_states(f"Regeneration du step {step_index}...")
         current_pattern = self._generated_pattern
-        worker = TaskWorker(
-            lambda: reroll_break_pattern_step(
-                self._result.transient_hits,
+        active_anchors = self._generator_active_step_anchors(step_count=current_pattern.step_count)
+        if self._should_use_process_pattern_generation():
+            worker = ProcessTaskWorker(
+                reroll_break_pattern_step,
+                tuple(source_result.transient_hits),
                 current_pattern,
                 int(step_index),
-                seed=seed,
-                sequences=self._result.hit_sequences,
-                anchors=self._generator_active_step_anchors(step_count=current_pattern.step_count),
-            ),
-            self,
-        )
+                kwargs={
+                    "seed": seed,
+                    "sequences": tuple(source_result.hit_sequences),
+                    "anchors": dict(active_anchors),
+                },
+                parent=self,
+            )
+        else:
+            worker = TaskWorker(
+                lambda: reroll_break_pattern_step(
+                    source_result.transient_hits,
+                    current_pattern,
+                    int(step_index),
+                    seed=seed,
+                    sequences=source_result.hit_sequences,
+                    anchors=active_anchors,
+                ),
+                self,
+            )
         self._generator_worker = worker
         worker.succeeded.connect(
             lambda pattern, previous=current_pattern, ignored_step=int(step_index): self._on_pattern_generated(
