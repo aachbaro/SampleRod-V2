@@ -131,6 +131,36 @@ Ce point est important :
   - `offbeat`
   - `subdivision`
 
+Depuis les dernieres iterations, cette segmentation ne suit plus seulement la
+regle "un onset = une slice".
+
+Elle ajoute aussi :
+
+- une fusion de faux micro-splits
+  - si un petit onset ressemble surtout a une queue de kick ou a un rebond
+    tres faible, il peut etre refusionne avec le hit precedent
+- une estimation de fin de hit adaptee au contenu
+  - la fin n'est plus juste "au prochain onset"
+  - elle depend aussi de l'enveloppe et de la bande dominante du transient
+  - un hit grave peut donc vivre plus longtemps qu'un hat tres court
+- un mode strict pour les markers manuels
+  - lors d'un rebuild depuis markers, on garde volontairement les segments
+    imposes par l'utilisateur sans leur reappliquer les heuristiques de merge
+
+En pratique, `split_density` agit maintenant a deux niveaux :
+
+- sur la detection d'onsets elle-meme
+- sur le comportement de merge / detail de la segmentation
+
+Donc un `split_density` bas ne veut plus seulement dire "moins d'onsets", mais
+aussi :
+
+- plus de tolerance vis-a-vis des micro-splits
+- des slices un peu plus longues, surtout pour les hits graves
+
+A l'inverse, un `split_density` eleve preserve davantage les petits details,
+les hats serres et les sous-transients.
+
 ## 3. Classification locale des hits
 
 Le scoring brut d'un hit se fait dans
@@ -144,6 +174,23 @@ Le systeme s'appuie sur un melange de features :
 - attaque
 - centroid spectral
 - indices lies au transient lui-meme
+
+Le scoring ne regarde plus seulement "le segment" comme un bloc uniforme.
+Il combine maintenant :
+
+- des features de corps (`body`)
+- des features d'attaque (`attack`)
+- un hint d'onset
+  - quelle bande semblait porter le transient (`low`, `mid`, `high`)
+- un mini profil de transient
+  - comment l'energie monte juste avant / juste apres le hit
+
+Cette lecture en couches sert surtout a mieux separer les cas proches :
+
+- `kick` vs faux micro-hit sur sa queue
+- `snare` / `clap`
+- `closed_hat` / `snare_ruff`
+- `open_hat` / `crash`
 
 En sortie, on obtient un score par label. Les labels actuellement supportes
 par le proto sont aussi ceux exposes dans l'UI :
@@ -177,12 +224,42 @@ Pourquoi c'est utile :
 - les hits tres aigus / courts tendent a mieux ressortir en `hat`
 - les breaks repetitifs profitent d'une meilleure coherence interne
 
+Cette passe contextuelle fait maintenant deux choses differentes :
+
+1. un rerank structurel
+   - rang relatif des graves / mids / aigus dans le break
+   - prise en compte de la proximite rythmique
+   - relecture `ghost` / `ruff` / `crash` / `ride` selon decay et contexte
+2. un biais de similarite entre hits
+   - chaque hit est compare aux autres sur une signature
+     `body + attack + hint + transient`
+   - si plusieurs hits tres similaires forment deja un petit cluster coherent,
+     ils poussent les hits ambigus vers la meme famille
+
+Autrement dit, la passe contextuelle ne sert plus seulement a dire :
+
+- "le plus grave du break ressemble a un kick"
+
+Elle sert aussi a dire :
+
+- "ce hit ambigu ressemble beaucoup aux deux autres hats, donc on lui fait
+  davantage confiance comme hat que comme ruff"
+
 En pratique, c'est la meilleure defense actuelle contre :
 
 - `snare` / `clap`
 - `closed_hat` / `snare_ruff`
 - `open_hat` / `crash`
 - petits hits layeres sur la queue d'un kick
+
+Important :
+
+- ce n'est pas un clustering dur
+- on ne remplace pas brutalement le score local
+- on applique plutot un biais de famille quand plusieurs hits proches entre eux
+  vont deja dans la meme direction
+- si le score local d'une famille est deja fort, on evite qu'un cluster voisin
+  vienne l'ecraser trop facilement
 
 ## 5. Layering : labels secondaires et score de couche
 
@@ -339,6 +416,15 @@ Fonctions importantes :
   - playback waveform
   - preview retime / quantize
   - preview du pattern genere
+
+L'UI sert aussi de memo de travail :
+
+- les markers sont persistes par fichier
+- les relabels manuels sont persistants
+- l'analyse complete peut etre restauree pour un break deja travaille
+
+L'idee est d'eviter de redecouper et de relabeliser le meme break a chaque
+reouverture.
 
 Ce point est volontaire :
 
@@ -772,7 +858,7 @@ Si la detection se trompe :
 
 - un snare peut finir dans un pool de `perc`
 - un open hat peut etre pris pour un crash
-- un hit layeré peut etre utilise comme slice principale la ou il faudrait une
+- un hit layered peut etre utilise comme slice principale la ou il faudrait une
   autre couche
 
 Du coup, la boucle de travail ideale est :
@@ -800,6 +886,14 @@ Les limites les plus importantes sont :
   - petits ghosts faibles
 - la qualite depend beaucoup de la segmentation initiale
 - les breaks tres process / compresses / sales restent durs a lire
+- la similarite inter-hits reste heuristique
+  - elle aide bien sur les breaks repetitifs
+  - mais elle reste moins fiable si presque tous les hits sont deja tres
+    process, tres layers ou tres differents les uns des autres
+- la fin exacte d'un hit reste un compromis
+  - trop courte : on coupe un kick ou un snare
+  - trop longue : on mange le transient suivant
+  - le systeme est meilleur qu'avant, mais ce point reste structurellement dur
 
 ## 12. Axes d'amelioration les plus prometteurs
 
@@ -809,9 +903,10 @@ rentables sont probablement :
 ### A. Mieux classer les hits
 
 - renforcer encore la comparaison inter-hits
-- faire du clustering de hits similaires
+- faire un clustering plus explicite de hits similaires
 - apprendre des profils de break par famille
 - utiliser davantage les corrections manuelles comme signal faible
+- separer encore mieux attaque / corps / tail dans le scoring
 
 ### B. Mieux exploiter le layering
 
