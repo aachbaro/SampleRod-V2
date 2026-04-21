@@ -25,22 +25,50 @@ Tout ce qui n'est pas sur `origin` n'existe pas.
 Si tu ne pushes pas, personne (et surtout pas ton autre machine) ne voit tes
 changements. Pousser 3 fois par jour est normal.
 
+## Scripts disponibles
+
+Tout est dans `scripts/` (Windows, `.ps1`) ou à la racine du repo (tour, `.sh`).
+
+### Côté Windows (dev)
+
+| Script                          | Ce qu'il fait                                                |
+|---------------------------------|--------------------------------------------------------------|
+| `.\scripts\sync.ps1`            | `git fetch` + `pull --ff-only`. Refuse si working tree dirty.|
+| `.\scripts\cp.ps1 "msg"`        | `add -A` + `commit -m` + `push`. Refuse sur `main`.          |
+| `.\scripts\deploy.ps1`          | Push + SSH tour → `./deploy.sh` (pull + rebuild Docker).     |
+| `.\scripts\tower-status.ps1`    | État du site sur la tour (git, containers, API, releases).   |
+| `.\scripts\tower-logs.ps1`      | Logs du site (`-Follow`, `-Tunnel`, `-Since 10m`).           |
+| `.\scripts\publish_release.ps1` | Build Squirrel + upload + bascule `current` via API admin.   |
+
+### Côté tour (prod / ops)
+
+| Script        | Ce qu'il fait                                                       |
+|---------------|---------------------------------------------------------------------|
+| `./status.sh` | État du site : branche git, containers, `/api/version`, releases.   |
+| `./logs.sh`   | Logs du site (`-f`, `--since 10m`, `--tunnel` pour inclure CF).     |
+| `./deploy.sh` | Pull + `docker compose up -d --build samplerod-site` + smoke test.  |
+
 ## Workflows
 
 ### Tu développes sur Windows
 
 ```powershell
 cd C:\Users\adama\Documents\roadToDev\pascuans\samplerod
-git pull                      # toujours avant de commencer
+.\scripts\sync.ps1                                # pull safe
 # ... tu codes, tu testes ...
-git add -A
-git commit -m "feat(waveform): zoom horizontal au scroll"
-git push
+.\scripts\cp.ps1 "feat(waveform): zoom horizontal au scroll"
 ```
 
 ### Tu déploies le site sur la tour
 
-Le site vit sur la branche GitHub courante. Pour déployer :
+Depuis Windows, une commande suffit :
+
+```powershell
+.\scripts\deploy.ps1                # push + deploy sur la tour
+.\scripts\deploy.ps1 -WithTunnel    # inclut le tunnel Cloudflare
+```
+
+Ou directement sur la tour en SSH :
 
 ```bash
 ssh pascuans@192.168.1.14
@@ -54,6 +82,15 @@ cd ~/roadToDev/pascuans/samplerod
 
 Le script fait `git pull` → `docker compose up -d --build samplerod-site` →
 smoke test `/api/version`.
+
+### Tu veux un état rapide du site
+
+```powershell
+.\scripts\tower-status.ps1          # snapshot : git, docker, API, releases
+.\scripts\tower-logs.ps1 -Follow    # logs live
+.\scripts\tower-logs.ps1 -Since 10m # logs des 10 dernières minutes
+.\scripts\tower-logs.ps1 -Tunnel -Follow   # + logs cloudflared
+```
 
 ### Tu bosses avec Claude (en SSH sur la tour)
 
@@ -72,50 +109,4 @@ $env:SAMPLEROD_ADMIN_TOKEN = "<token du site .env.prod>"
 ```
 
 Le script build un bundle Squirrel, le scp sur la tour dans
-`/srv/samplerod/releases/<version>/`, puis appelle l'API admin du site pour
-basculer `current`. Les utilisateurs verront la maj à leur prochain démarrage.
-
-## Conventions de commits
-
-Pas de règle stricte, mais prefix à la Conventional Commits :
-- `feat(scope):` nouvelle feature
-- `fix(scope):` bug fix
-- `docs:` doc uniquement
-- `chore:` maintenance (deps, build, CI)
-- `wip:` work in progress (à rebaser plus tard)
-
-Le scope est un sous-dossier ou un module : `waveform`, `site`, `drum_detector`…
-
-## Branches
-
-- `main` — toujours green, jamais de commit direct
-- `feature/<nom>` — branches de dev, mergées dans main via PR
-- `wip/<nom>` — expérimentations, peuvent être supprimées
-
-## Pièges évités par ce setup
-
-**Deux copies qui divergent.** Impossible si tu pousses après chaque modif.
-
-**Secrets dans le repo.** `site/.env.prod` est dans `.gitignore`. Ne le
-retire jamais.
-
-**Line endings CRLF/LF.** Connu, pas géré pour l'instant. Si tu vois du bruit
-dans `git status`, fais `git checkout -- <fichier>` pour les fichiers qui
-n'ont que des changements de CRLF. On ajoutera un `.gitattributes` propre plus
-tard si ça devient pénible.
-
-**Perdre la connexion SSH de la tour à GitHub.** La clé SSH dédiée est dans
-`~/.ssh/github_samplerod` sur la tour, configurée dans `~/.ssh/config`. Si
-elle disparaît, régénère et réajoute la pubkey sur https://github.com/settings/keys.
-
-## Apps desktop (PixelMP4 et autres)
-
-Même principe exactement :
-1. Un repo par app sur GitHub (ou monorepo `pascuans` si tu préfères un jour)
-2. Tu codes sur Windows (seul endroit où tu peux tester l'UI + audio/video)
-3. Tu push
-4. La tour pull si nécessaire pour servir des releases via le même pattern
-
-Le site `samplerod.pascuans.dev` est un template reproductible : tu peux faire
-`pixelmp4.pascuans.dev` en copiant le dossier `site/` et en adaptant les
-secrets + Stripe + tunnel.
+`/srv/samplerod/releases/<version>/`, puis

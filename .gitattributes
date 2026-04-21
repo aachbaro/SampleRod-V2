@@ -1,0 +1,44 @@
+# .gitattributes — normalisation des line endings.
+#
+# Par défaut : auto-détection (Git décide si texte ou binaire, convertit LF
+# dans le repo, adapte à l'OS au checkout).
+* text=auto eol=lf
+
+# Scripts explicitement LF (sh, python, yaml, etc.) — doivent rester LF même
+# sur Windows, sinon ils cassent côté tour.
+*.sh        text eol=lf
+*.py        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.toml      text eol=lf
+*.json      text eol=lf
+*.md        text eol=lf
+Dockerfile  text eol=lf
+Makefile    text eol=lf
+
+# Scripts PowerShell en CRLF (Windows) — bonne pratique PS.
+*.ps1       text eol=crlf
+*.psm1      text eol=crlf
+*.psd1      text eol=crlf
+
+# Binaires connus — ne jamais toucher.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.wav       binary
+*.mp3       binary
+*.flac      binary
+*.ogg       binary
+*.mp4       binary
+*.pdf       binary
+*.zip       binary
+*.tar.gz    binary
+*.nupkg     binary
+*.exe       binary
+*.dll       binary
+*.so        binary
+*.dylib     binary
+*.sqlite3   binary
+*.db        binary
