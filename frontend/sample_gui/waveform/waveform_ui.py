@@ -38,6 +38,7 @@ import pyqtgraph as pg
 import qtawesome as qta
 
 from ..marker_manager import MarkerListWidget
+from .waveform_plot_helpers import add_plot_item_once
 
 
 class HoverIconButton(QToolButton):
@@ -268,12 +269,12 @@ class WaveformUIBuilder:
         # Courbes pour chaque canal (gauche et droite)
         w.curve_left = pg.PlotDataItem(pen=pg.mkPen("#E6E6E6", width=1))
         w.curve_right = pg.PlotDataItem(pen=pg.mkPen("#DAA520", width=1))
-        w.plot.addItem(w.curve_right)
-        w.plot.addItem(w.curve_left)
+        add_plot_item_once(w.plot, w.curve_right)
+        add_plot_item_once(w.plot, w.curve_left)
 
         # Pour compatibilité mono, conserver self.curve
         w.curve = pg.PlotDataItem(pen=pg.mkPen("#E6E6E6", width=1))
-        w.plot.addItem(w.curve)
+        add_plot_item_once(w.plot, w.curve)
 
         # recalcule l'enveloppe lorsqu'on zoome ou qu'on pan
         vb = w.plot.getViewBox()
@@ -391,7 +392,7 @@ class WaveformUIBuilder:
         # ----- Read head + timer (logic audio)
         # — Read head + timer
         w.read_head = pg.InfiniteLine(angle=90, pen=pg.mkPen("r", width=2))
-        w.plot.addItem(w.read_head)
+        add_plot_item_once(w.plot, w.read_head)
         w.timer = QTimer(w)
         w.timer.timeout.connect(w.update_read_head)
         w.stop_timer_signal.connect(w.timer.stop)

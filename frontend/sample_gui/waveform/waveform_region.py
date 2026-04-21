@@ -44,7 +44,7 @@ import soundfile as sf
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
-from backend.models.sample import Sample as DBSample
+from .waveform_plot_helpers import add_plot_item_once
 
 logger = logging.getLogger("waveform_region")
 
@@ -53,6 +53,17 @@ class WaveformRegionController:
     def __init__(self, widget, region_cls):
         self.widget = widget
         self.region_cls = region_cls
+
+    def _stop_playback_for_edit(self):
+        w = self.widget
+        if hasattr(w, "stop_audio"):
+            try:
+                w.stop_audio()
+            except Exception as exc:
+                logger.info(f"[WaveformRegion] Erreur stop playback avant edition: {exc}")
+        w.is_playing = False
+        if hasattr(w, "start_sample"):
+            w.start_sample = 0
 
     def on_region_changed(self):
         w = self.widget
@@ -81,6 +92,7 @@ class WaveformRegionController:
     def _do_cut(self, start, end):
         """Coupe la zone [start,end], supprime les markers dedans et decale les suivants."""
         w = self.widget
+        self._stop_playback_for_edit()
         s0, s1 = int(start * w.sample_rate), int(end * w.sample_rate)
         shift = end - start
 
@@ -134,6 +146,7 @@ class WaveformRegionController:
     def _undo_cut(self, cmd):
         """Restaure un cut precedent."""
         w = self.widget
+        self._stop_playback_for_edit()
         start = cmd["start"]
         s0 = int(start * w.sample_rate)
         removed = cmd["removed_samples"]
@@ -195,6 +208,8 @@ class WaveformRegionController:
         # 3) Generation d'un nom de fichier unique
         orig_path = w.audio_file_path
         folder = os.path.dirname(orig_path)
+        from backend.models.sample import Sample as DBSample
+
         next_id = DBSample.get_next_id()
         ext = os.path.splitext(orig_path)[1] or ".wav"
         new_name = f"SMPL_{next_id:04d}{ext}"
@@ -264,7 +279,7 @@ class WaveformRegionController:
         w.region.setBounds([0, w.duration])
         w.region.sigRegionChangeFinished.connect(w.on_region_changed)
         w.region._parent = w
-        w.plot.addItem(w.region)
+        add_plot_item_once(w.plot, w.region)
 
         # Met a jour play_start/play_end et positionne la tete
         w.play_start, w.play_end = t_left, t_right
@@ -287,4 +302,4 @@ class WaveformRegionController:
             angle=90,
             pen=pg.mkPen("b", width=1, style=Qt.PenStyle.DashLine),
         )
-        w.plot.addItem(w.play_start_cursor)
+        add_plot_item_once(w.plot, w.play_start_cursor)

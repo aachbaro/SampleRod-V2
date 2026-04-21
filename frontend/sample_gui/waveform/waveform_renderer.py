@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from .waveform_plot_helpers import add_plot_item_once
+
 
 def compute_envelope(
     segment: np.ndarray,
@@ -123,4 +125,4 @@ class WaveformRenderer:
         w = self.widget
         self.draw_waveform()
         for line in w.marker_lines.values():
-            w.plot.addItem(line)
+            add_plot_item_once(w.plot, line)

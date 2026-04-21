@@ -34,6 +34,7 @@ import bisect
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidgetItem
+from .waveform_plot_helpers import add_plot_item_once
 
 logger = logging.getLogger("waveform_markers")
 
@@ -107,7 +108,7 @@ class WaveformMarkersController:
         w.region.setBounds([0, w.duration])
         w.region.sigRegionChangeFinished.connect(w.on_region_changed)
         w.region._parent = w
-        w.plot.addItem(w.region)
+        add_plot_item_once(w.plot, w.region)
 
         # mets a jour play_start / play_end et place la tete de lecture
         w.play_start, w.play_end = t, t2

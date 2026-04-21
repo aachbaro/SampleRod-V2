@@ -41,14 +41,18 @@
 # -----------------------------------------------------------------------------
 # frontend/sample_gui/wave_form.py
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, Signal
 import pyqtgraph as pg
 import qtawesome as qta
 
-from backend.models.AppContext import AppContext
+if TYPE_CHECKING:
+    from backend.models.AppContext import AppContext
 
 from .marker_manager import MarkerManager
 from .waveform.waveform_loader import WaveformLoaderThread

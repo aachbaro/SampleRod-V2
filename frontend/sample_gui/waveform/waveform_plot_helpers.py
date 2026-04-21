@@ -25,6 +25,20 @@ from PySide6.QtWidgets import QMenu
 import pyqtgraph as pg
 
 
+def add_plot_item_once(plot, item) -> None:
+    """Ajoute un item au plot seulement s'il n'y est pas deja."""
+    if plot is None or item is None:
+        return
+    plot_item = getattr(plot, "plotItem", plot)
+    try:
+        existing_items = getattr(plot_item, "items", None)
+        if existing_items is not None and item in existing_items:
+            return
+    except Exception:
+        pass
+    plot.addItem(item)
+
+
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

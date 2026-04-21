@@ -37,6 +37,7 @@ import logging
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QEvent
+from .waveform_plot_helpers import add_plot_item_once
 
 logger = logging.getLogger("waveform_interactions")
 
@@ -233,7 +234,7 @@ class WaveformInteractionsController:
             w.region.sigRegionChangeFinished.connect(w.on_region_changed)
             # w.region.sigContextMenuRequested.connect(w._on_region_context_menu)
             w.region._parent = w
-            w.plot.addItem(w.region)
+            add_plot_item_once(w.plot, w.region)
             return True
 
         # 2) Redimensionnement **durant** le drag de création

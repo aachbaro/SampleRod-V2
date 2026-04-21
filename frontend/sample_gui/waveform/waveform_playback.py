@@ -45,6 +45,11 @@ class WaveformPlaybackController:
     def __init__(self, widget):
         self.widget = widget
 
+    def _stop_from_callback(self):
+        w = self.widget
+        w.is_playing = False
+        raise sd.CallbackStop()
+
     def play_from_start(self):
         self.stop_audio()
         # Respect current selection
@@ -69,6 +74,8 @@ class WaveformPlaybackController:
         w = self.widget
         if w.waveform_data is None:
             return
+        if w.stream is not None:
+            self.stop_audio()
 
         # position de depart en echantillons
         w.start_sample = int(start_time * w.sample_rate)
@@ -77,23 +84,35 @@ class WaveformPlaybackController:
         w.timer.start(50)
 
         def callback(outdata, frames, time_info, status):
+            outdata.fill(0)
             if status.output_underflow:
                 logger.warning("Underflow audio detecte")
 
-            region_start = int(w.play_start * w.sample_rate)
-            region_end = int(w.play_end * w.sample_rate) if w.play_end > w.play_start else len(w.waveform_data)
+            waveform = w.waveform_data
+            if waveform is None:
+                self._stop_from_callback()
+
+            buffer_length = int(len(waveform))
+            if buffer_length <= 0:
+                self._stop_from_callback()
+
+            raw_region_start = int(w.play_start * w.sample_rate)
+            raw_region_end = int(w.play_end * w.sample_rate) if w.play_end > w.play_start else buffer_length
+            region_start = int(np.clip(raw_region_start, 0, buffer_length - 1))
+            region_end = int(np.clip(raw_region_end, region_start + 1, buffer_length))
 
             if region_end <= region_start:
-                outdata.fill(0)
-                w.is_playing = False
-                raise sd.CallbackStop()
+                self._stop_from_callback()
 
-            st = w.start_sample
+            st = int(w.start_sample)
 
             if w.loop_enabled:
                 length = region_end - region_start
-                idxs = (np.arange(st, st + frames) - region_start) % length + region_start
-                chunk = w.waveform_data[idxs]
+                if length <= 0:
+                    self._stop_from_callback()
+                st = int(np.clip(st, region_start, region_end - 1))
+                idxs = (np.arange(frames, dtype=np.int64) + (st - region_start)) % length + region_start
+                chunk = waveform[idxs]
 
                 if chunk.ndim == 1:
                     chunk = np.repeat(chunk[:, np.newaxis], outdata.shape[1], axis=1)
@@ -104,12 +123,13 @@ class WaveformPlaybackController:
                 w.positionUpdated.emit(w.current_time)
                 return
 
+            st = int(np.clip(st, region_start, region_end))
             remaining = region_end - st
             if remaining <= 0:
-                raise sd.CallbackStop()
+                self._stop_from_callback()
 
             n = min(frames, remaining)
-            segment = w.waveform_data[st:st + n]
+            segment = waveform[st:st + n]
             if segment.ndim == 1:
                 segment = np.repeat(segment[:, np.newaxis], outdata.shape[1], axis=1)
             outdata[:n, :] = segment
@@ -119,11 +139,10 @@ class WaveformPlaybackController:
             w.positionUpdated.emit(w.current_time)
 
             if n < frames:
-                raise sd.CallbackStop()
+                self._stop_from_callback()
 
             if not w.loop_enabled and w.start_sample >= region_end:
-                w.is_playing = False
-                raise sd.CallbackStop()
+                self._stop_from_callback()
 
         n_channels = 2 if getattr(w, "is_stereo", False) else 1
         w.stream = sd.OutputStream(

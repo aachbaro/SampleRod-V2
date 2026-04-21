@@ -10,6 +10,14 @@
 # backend/db.py
 
 # backend/db.py
+import os
+import sys
+
+if sys.platform.startswith("win"):
+    # Avoid SQLAlchemy's optional C-extension import path, which can stall on
+    # some Windows/Python setups while probing platform details via WMI.
+    os.environ.setdefault("DISABLE_SQLALCHEMY_CEXT_RUNTIME", "1")
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 import logging

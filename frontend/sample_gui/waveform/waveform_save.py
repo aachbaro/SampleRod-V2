@@ -42,7 +42,6 @@ class WaveformSaveController:
         from PySide6.QtWidgets import QMessageBox, QInputDialog
         import os, soundfile as sf
         from backend.models.sample import Sample as DBSample
-        import librosa
 
         # 1) Choix Overwrite vs Copy
         orig = w.audio_file_path

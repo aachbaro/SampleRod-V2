@@ -12,9 +12,10 @@
 class HistoryStack:
     """Simple undo/redo command history."""
 
-    def __init__(self):
+    def __init__(self, max_commands: int = 128):
         self._commands = []
         self._index = -1
+        self._max_commands = max(1, int(max_commands))
         import logging
         self.logger = logging.getLogger("history_stack")
 
@@ -22,6 +23,9 @@ class HistoryStack:
         """Append a command and discard any redo history."""
         del self._commands[self._index + 1 :]
         self._commands.append(cmd)
+        overflow = len(self._commands) - self._max_commands
+        if overflow > 0:
+            del self._commands[:overflow]
         self._index = len(self._commands) - 1
         self.logger.info(f"[HistoryStack] push -> {cmd}")
 

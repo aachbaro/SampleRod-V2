@@ -40,6 +40,7 @@ class TransientHit:
     layer_score: float = 0.0
     role: str = "other"
     rhythmic_position: str = "subdivision"
+    generator_enabled: bool = True
 
     def to_dict(self) -> dict:
         return asdict(self)

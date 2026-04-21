@@ -18,6 +18,7 @@ import bisect
 import pickle
 import os
 import logging
+from .waveform.waveform_plot_helpers import add_plot_item_once
 logger = logging.getLogger("marker_manager")
 
 class MarkerListWidget(QListWidget):
@@ -212,7 +213,7 @@ class MarkerManager:
         line.old_pos = t
         line.sigPositionChanged.connect(lambda _, l=line: self.on_marker_moved(l))
         line.sigPositionChangeFinished.connect(lambda _, l=line: self.on_marker_move_finished(l))
-        self.plot.addItem(line)
+        add_plot_item_once(self.plot, line)
         self.marker_lines[t] = line
 
     def on_marker_moved(self, line):

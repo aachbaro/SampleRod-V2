@@ -716,9 +716,9 @@ class _ComposerSampleLoader(QThread):
 
     def run(self):
         try:
-            import librosa
+            import soundfile as sf
 
-            y, sr = librosa.load(self.path, sr=None, mono=False)
+            y, sr = sf.read(self.path, dtype="float32", always_2d=True)
             self.loaded.emit(
                 int(self.sample_id),
                 y,

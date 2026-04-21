@@ -29,7 +29,7 @@ Notes sur la normalisation
 On supporte deja (optionnel) la normalisation:
 - Channels: mono<->stereo (duplication / moyenne).
 - Sample rate: resample via scipy.signal.resample_poly si SciPy est dispo.
-  Si SciPy n'est pas installe, on refuse les clips dont le SR differe.
+  Sinon, fallback lineaire via numpy pour garder la feature disponible.
 ------------------------------------------------------------------------------
 """
 
@@ -46,7 +46,8 @@ from PySide6.QtCore import QObject, Signal
 logger = logging.getLogger("sample_composer_model")
 
 try:
-    # SciPy est optionnel: le compositeur fonctionne sans, mais refusera les SR differents.
+    # SciPy reste optionnel pour la release Windows. Si disponible, on
+    # privilegie resample_poly, sinon on tombe sur une interpolation lineaire.
     from scipy.signal import resample_poly  # type: ignore
 except Exception:  # pragma: no cover - environment dependant
     resample_poly = None  # type: ignore[assignment]
@@ -114,28 +115,47 @@ def _convert_channels(audio: np.ndarray, target_channels: int) -> np.ndarray:
 
 
 def _resample(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
-    """Resample (axis=0) avec SciPy si dispo, sinon erreur."""
+    """Resample (axis=0) avec SciPy si dispo, sinon fallback numpy."""
     if orig_sr == target_sr:
         return audio
-
-    if resample_poly is None:
-        raise RuntimeError(
-            "SciPy is not available: cannot resample audio. "
-            "Install with `pip install scipy` or use matching sample rates."
-        )
 
     if orig_sr <= 0 or target_sr <= 0:
         raise ValueError(f"Invalid sample rates: orig_sr={orig_sr}, target_sr={target_sr}.")
 
-    # Ratio exact ou approximation raisonnable (ex: 44100->48000 = 160/147).
-    frac = Fraction(target_sr, orig_sr).limit_denominator(1000)
-    up, down = int(frac.numerator), int(frac.denominator)
+    if audio.shape[0] == 0:
+        return np.ascontiguousarray(audio, dtype=np.float32)
 
-    # resample_poly renvoie float64 -> on revient en float32.
-    res = resample_poly(audio, up=up, down=down, axis=0)
-    res = np.asarray(res, dtype=np.float32)
-    res = np.ascontiguousarray(res, dtype=np.float32)
-    return res
+    if resample_poly is not None:
+        # Ratio exact ou approximation raisonnable (ex: 44100->48000 = 160/147).
+        frac = Fraction(target_sr, orig_sr).limit_denominator(1000)
+        up, down = int(frac.numerator), int(frac.denominator)
+
+        # resample_poly renvoie float64 -> on revient en float32.
+        res = resample_poly(audio, up=up, down=down, axis=0)
+        res = np.asarray(res, dtype=np.float32)
+        return np.ascontiguousarray(res, dtype=np.float32)
+
+    src_len = int(audio.shape[0])
+    target_len = max(1, int(round(src_len * float(target_sr) / float(orig_sr))))
+
+    if src_len == 1:
+        if audio.ndim == 1:
+            return np.full((target_len,), float(audio[0]), dtype=np.float32)
+        return np.repeat(audio.astype(np.float32), target_len, axis=0)
+
+    src_x = np.arange(src_len, dtype=np.float64)
+    dst_x = np.linspace(0.0, float(src_len - 1), num=target_len, dtype=np.float64)
+
+    if audio.ndim == 1:
+        res = np.interp(dst_x, src_x, audio.astype(np.float64, copy=False))
+        return np.ascontiguousarray(res, dtype=np.float32)
+
+    channels = [
+        np.interp(dst_x, src_x, audio[:, channel].astype(np.float64, copy=False))
+        for channel in range(audio.shape[1])
+    ]
+    res = np.stack(channels, axis=1)
+    return np.ascontiguousarray(res, dtype=np.float32)
 
 
 @dataclass(slots=True)
