@@ -1,0 +1,23 @@
+services:
+  samplerod-site:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    ports:
+      - "${SAMPLEROD_SITE_PORT:-8003}:8003"
+    volumes:
+      - /srv/samplerod/data:/app/data
+      # needs write access: /api/admin/publish updates the `current` symlink
+      - /srv/samplerod/releases:/srv/releases
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles:
+      - tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - samplerod-site

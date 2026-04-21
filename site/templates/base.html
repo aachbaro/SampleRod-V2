@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SampleRod{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; }
+    .wrap { max-width: 48rem; margin: 0 auto; padding: 2rem 1rem; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <header class="border-b border-slate-200 bg-white">
+    <div class="wrap flex items-center justify-between">
+      <a href="/" class="text-xl font-semibold">SampleRod</a>
+      <nav class="flex items-center gap-4 text-sm">
+        {% if user.is_authenticated %}
+          <a href="/account" class="hover:underline">Mon compte</a>
+          <a href="/auth/logout" class="hover:underline">Déconnexion</a>
+        {% else %}
+          <a href="/auth/login" class="hover:underline">Connexion</a>
+        {% endif %}
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    {% if messages %}
+      <ul class="mb-4 space-y-1">
+        {% for message in messages %}
+          <li class="rounded border border-slate-200 bg-white px-3 py-2 text-sm">{{ message }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="mt-16 border-t border-slate-200 bg-white">
+    <div class="wrap text-xs text-slate-500">
+      SampleRod &middot; hébergé par pascuans.dev
+    </div>
+  </footer>
+</body>
+</html>

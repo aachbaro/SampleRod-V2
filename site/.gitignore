@@ -1,0 +1,8 @@
+.env
+.env.prod
+*.pyc
+__pycache__/
+staticfiles/
+data/
+releases-dev/
+.venv/

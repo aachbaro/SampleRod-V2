@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Paiement confirmé — SampleRod{% endblock %}
+
+{% block content %}
+  <h1 class="text-2xl font-bold">Merci !</h1>
+  {% if license %}
+    <p class="mt-2 text-slate-700">
+      Ton paiement est confirmé. Ta licence SampleRod est active.
+    </p>
+    {% if release_error %}
+      <div class="mt-4 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+        Le telechargement Windows est temporairement indisponible :
+        {{ release_error }}
+      </div>
+    {% endif %}
+    <div class="mt-6 flex gap-3">
+      {% if download_available %}
+        <a href="/download" class="inline-flex items-center rounded-lg bg-slate-900 px-4 py-2 font-medium text-white hover:bg-slate-700">
+          Télécharger Setup.exe
+        </a>
+      {% else %}
+        <span class="inline-flex items-center rounded-lg bg-slate-300 px-4 py-2 font-medium text-slate-700">
+          Setup.exe indisponible
+        </span>
+      {% endif %}
+      <a href="/account" class="inline-flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-100">
+        Aller sur mon compte
+      </a>
+    </div>
+  {% else %}
+    <p class="mt-2 text-slate-700">
+      Stripe a confirmé le paiement mais la licence n'est pas encore enregistrée côté serveur.
+      C'est normal si tu viens à peine d'être redirigé&nbsp;: rafraîchis la page dans quelques
+      secondes, ou va directement sur <a href="/account" class="underline">mon compte</a>.
+    </p>
+  {% endif %}
+{% endblock %}

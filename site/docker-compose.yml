@@ -1,0 +1,11 @@
+services:
+  samplerod-site:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./data:/app/data
+      - ./releases-dev:/app/releases-dev
