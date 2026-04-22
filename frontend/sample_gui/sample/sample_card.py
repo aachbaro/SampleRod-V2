@@ -56,6 +56,7 @@ class SampleCard(QWidget):
     removeFromHistory  = Signal(int)          # emet l'ID du sample a retirer de l'historique
     concatWithPrevious = Signal(int)          # emet l'ID (sample courant) a concatener avec precedent
     dismissConcat      = Signal(int)          # emet l'ID (sample courant) pour ignorer la concat
+    activated          = Signal(int)          # emet l'ID lorsqu'une carte devient l'entree active
     concatPreviewHoverChanged = Signal(
         int, bool, object
     )  # (sample_id, hover_active, prev_id|None)
@@ -74,6 +75,7 @@ class SampleCard(QWidget):
         self.isRenaming = False
         self.showWaveform = False
         self.wave_edition_widget = None
+        self.external_waveform_handler = None
 
         self.isChecked = False
         self.concat_prev_id = None
@@ -102,6 +104,7 @@ class SampleCard(QWidget):
 
     def _on_theme_changed(self, _name: str):
         SampleCardUIBuilder.restyle(self)
+        self.refresh_display()
 
     def _build_shortcuts(self):
         """Raccourcis actifs seulement quand la carte (ou un enfant) a le focus."""
@@ -131,6 +134,7 @@ class SampleCard(QWidget):
     # ---- Interactions (focus / drag)
     def mousePressEvent(self, event):
         self.interactions.mouse_press(event)
+        self.activated.emit(int(self.sample.id))
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -193,7 +197,17 @@ class SampleCard(QWidget):
         self.header_actions.submit_rename()
 
     def toggleWaveform(self):
+        if callable(self.external_waveform_handler):
+            self.external_waveform_handler(self.sample)
+            return
         self.waveform.toggle()
+
+    def set_external_waveform_handler(self, handler):
+        self.external_waveform_handler = handler
+        if hasattr(self, "waveform_button"):
+            self.waveform_button.setToolTip(
+                "Ouvrir dans le labo" if callable(handler) else "Afficher le waveform"
+            )
 
     def confirmDelete(self):
         self.header_actions.confirm_delete()
@@ -262,6 +276,7 @@ class SampleCard(QWidget):
     # ---- Focus hooks
     def focusInEvent(self, event):
         self.interactions.focus_in(event)
+        self.activated.emit(int(self.sample.id))
         super().focusInEvent(event)
 
     def focusOutEvent(self, event):

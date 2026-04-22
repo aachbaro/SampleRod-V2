@@ -54,28 +54,25 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
         cut = menu.addAction("Cut                      Ctrl + X")
         export = menu.addAction("Export Selection         Ctrl + E")
         add_markers_action = menu.addAction("Add markers at edges     Ctrl + Shift + G")
+        menu.addSeparator()
+        stem_action = menu.addAction("Envoyer au separateur de stems")
 
-        # place ici tes autres actions...
-
-        # récupère la position globale du curseur
         global_pos = QCursor.pos()
         action = menu.exec(global_pos)
 
         if action is cut:
-            # on appelle la méthode _cut_region sur le parent
             self._parent._cut_region(start, end)
-
         elif action is export:
-            # on appelle la méthode _export_region sur le parent (n’écrase pas la waveform en mémoire)
             self._parent._export_region(start, end)
         elif action is add_markers_action:
-            # on ajoute des marqueurs aux bords de la région
             if end > start:
                 self._parent.add_marker(start)
                 self._parent.add_marker(end)
             else:
-                # si la région est quasiment nulle, on place un seul marker
                 self._parent.add_marker(start)
+        elif action is stem_action:
+            if hasattr(self._parent, "send_selection_to_stem_separator"):
+                self._parent.send_selection_to_stem_separator()
 
         ev.accept()
 

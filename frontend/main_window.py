@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSplitter,
     QGroupBox,
     QScrollArea,
 )
@@ -32,14 +31,13 @@ import qtawesome as qta
 from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
 from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
-from frontend.sample_gui.sample.sample_list import SampleListWidget
 from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
 from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
 from frontend.screenshot_gui.screenshot_list import ScreenshotListWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
-from frontend.right_panel.tools_panel import RightToolsPanel
+from frontend.workspace.atelier_widget import AtelierWidget
 from frontend.styles import theme
 
 from backend.services.directory_service import DirectoryService
@@ -84,27 +82,16 @@ class MainWindow(QMainWindow):
         self.record_widget.show()
         # On ne l'ajoute pas aux tabs, c'est une fenÃªtre indÃ©pendante
 
-        # --- Onglet 'Liste des Samples'
-        samples_tab = QWidget()
-        samples_layout = QHBoxLayout(samples_tab)
-        self.sample_list_widget = SampleListWidget(
-            app_context=self.app_context
-        )
-
-        # ---- Right tools panel (Directory + future tools like Sample Composer) ----
-        self.right_tools_panel = RightToolsPanel(
+        # --- Onglet 'Atelier'
+        atelier_tab = QWidget()
+        atelier_layout = QVBoxLayout(atelier_tab)
+        atelier_layout.setContentsMargins(0, 0, 0, 0)
+        self.atelier_widget = AtelierWidget(
             directory_service=self.directory_service,
             app_context=self.app_context,
         )
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(self.sample_list_widget)
-        splitter.addWidget(self.right_tools_panel)
-        splitter.setSizes([350, 100])
-
-        samples_layout.addWidget(splitter)
-
-        self.tab_widget.addTab(samples_tab, "Liste des Samples")
+        atelier_layout.addWidget(self.atelier_widget)
+        self.tab_widget.addTab(atelier_tab, "Atelier")
 
         # --- Onglet 'Screenshots'
         screenshots_tab = QWidget()

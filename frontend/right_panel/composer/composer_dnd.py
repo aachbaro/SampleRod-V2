@@ -34,6 +34,8 @@ from typing import Any
 import numpy as np
 from PySide6.QtCore import QMimeData
 
+from backend.services.audio_metadata import is_audio_file, normalize_audio_path
+
 logger = logging.getLogger("sample_composer_dnd")
 
 MIME_SAMPLE_SLICE = "application/x-sample-slice-data"
@@ -46,6 +48,16 @@ def has_slice(mime: QMimeData) -> bool:
 
 def has_sample_card(mime: QMimeData) -> bool:
     return mime.hasFormat(MIME_SAMPLE_CARD)
+
+
+def has_audio_file_urls(mime: QMimeData) -> bool:
+    if not mime.hasUrls():
+        return False
+    for url in mime.urls():
+        local_file = url.toLocalFile()
+        if local_file and is_audio_file(local_file):
+            return True
+    return False
 
 
 def parse_slice_mime(mime: QMimeData) -> dict[str, Any]:
@@ -111,3 +123,13 @@ def parse_sample_card_mime(mime: QMimeData) -> dict[str, Any]:
         raise ValueError(f"Invalid sample-card payload: sample_id={sample_id!r}") from e
 
     return {"sample_id": sample_id, "source": dict(payload)}
+
+
+def parse_audio_file_urls(mime: QMimeData) -> list[str]:
+    paths = []
+    for url in mime.urls():
+        local_file = url.toLocalFile()
+        if not local_file or not is_audio_file(local_file):
+            continue
+        paths.append(normalize_audio_path(local_file))
+    return paths

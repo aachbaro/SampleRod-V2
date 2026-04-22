@@ -76,6 +76,13 @@ class WaveformRegionController:
         # Maj visuelle + variables de lecture
         w.region.setRegion([start, end])
         w.play_start, w.play_end = start, end
+        # Met a jour la ligne de selection dans la liste de markers (rapide, sans rebuild)
+        mm = getattr(w, "marker_manager", None)
+        if mm is not None:
+            try:
+                mm.refresh_selection_row()
+            except Exception:
+                pass
 
     def _cut_region(self, start, end):
         w = self.widget
@@ -285,6 +292,13 @@ class WaveformRegionController:
         w.play_start, w.play_end = t_left, t_right
         w.read_head.setPos(t_left)
         logger.info(f"Region creee par Ctrl+double-clic : {t_left:.3f}s -> {t_right:.3f}s")
+        # Affiche immediatement la ligne de selection dans la liste
+        mm = getattr(w, "marker_manager", None)
+        if mm is not None:
+            try:
+                mm.refresh_selection_row()
+            except Exception:
+                pass
 
     def _set_play_start_cursor(self, x: float):
         """Place un curseur visuel de depart (annule la region si besoin)."""
@@ -294,12 +308,15 @@ class WaveformRegionController:
             w.plot.removeItem(w.region)
             w.region = None
 
-        logger.info(f"Curseur de depart place a {x:.3f}s")
-        if w.play_start_cursor:
+        # Place le curseur de depart (ligne bleue)
+        x = float(x)
+        if w.play_start_cursor is not None:
             w.plot.removeItem(w.play_start_cursor)
-        w.play_start_cursor = pg.InfiniteLine(
-            pos=x,
-            angle=90,
-            pen=pg.mkPen("b", width=1, style=Qt.PenStyle.DashLine),
-        )
+            w.play_start_cursor = None
+
+        w.play_start_cursor = pg.InfiniteLine(pos=x, angle=90, pen=pg.mkPen('b', width=2))
         add_plot_item_once(w.plot, w.play_start_cursor)
+        w.play_start = x
+        w.play_end = x
+        w.read_head.setPos(x)
+        logger.info(f"Curseur de depart place a {x:.3f}s")

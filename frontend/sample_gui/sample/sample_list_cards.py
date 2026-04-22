@@ -95,9 +95,13 @@ class SampleListCards:
     # ---- Refresh list
     def refresh_list(self):
         self._clear_concat_preview()
-        ordered_samples = sorted(self.widget.samples, key=lambda s: s.id, reverse=True)
+        ordered_samples = self.widget.get_filtered_samples()
+        self.widget.filtered_samples = list(ordered_samples)
 
         total_samples = len(ordered_samples)
+        max_pages = max(1, ((total_samples - 1) // self.widget.samples_per_page) + 1) if total_samples else 1
+        if self.widget.current_page > max_pages:
+            self.widget.current_page = max_pages
         start_idx = (self.widget.current_page - 1) * self.widget.samples_per_page
         end_idx = start_idx + self.widget.samples_per_page
         page_samples = ordered_samples[start_idx:end_idx]
@@ -146,6 +150,10 @@ class SampleListCards:
                 start_idx + 1, min(end_idx, total_samples), total_samples
             )
 
+        visible_ids = {int(sample.id) for sample in page_samples}
+        if self.widget._current_sample_id is not None and self.widget._current_sample_id not in visible_ids:
+            self.widget.set_current_reserve_sample(None)
+
         self.widget.updateSelectActions()
 
     # ---- Helpers
@@ -160,6 +168,13 @@ class SampleListCards:
         card.concatWithPrevious.connect(self.widget.concat_with_previous)
         card.dismissConcat.connect(self.widget.dismiss_concat)
         card.concatPreviewHoverChanged.connect(self.widget.onConcatPreviewHoverChanged)
+        card.activated.connect(self.widget.set_current_reserve_sample)
+        if self.widget.reserve_actions is not None:
+            card.set_external_waveform_handler(
+                lambda sample, w=self.widget: w.reserve_actions.open_waveform(
+                    w._entry_from_sample(sample)
+                )
+            )
 
         prev_id = self.widget.sample_store.get_concat_previous_id(samp.id)
         card.setConcatCandidate(prev_id is not None, prev_id)

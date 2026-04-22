@@ -269,6 +269,13 @@ class WaveformInteractionsController:
                 w._creating = False
                 w._set_play_start_cursor(release_x)
             # sinon on garde la région telle quelle (handles actifs)
+            # dans les deux cas, on met a jour la ligne de selection
+            mm = getattr(w, "marker_manager", None)
+            if mm is not None:
+                try:
+                    mm.refresh_selection_row()
+                except Exception:
+                    pass
             return True
 
         # 4) tout le reste passe à la moulinette par défaut

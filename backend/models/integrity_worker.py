@@ -1,29 +1,27 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
 # - Worker Qt (QThread) de coherence DB/FS.
-# - Lance au demarrage pour verifier que chaque sample en base a son fichier
-#   sur disque et que sa duree enregistree est correcte.
-#
-# SIGNAUX EMIS
-# - fileMissing(int)           : l'entree DB est supprimee par SampleService
-# - durationMismatch(int,float): la duree est corrigee en base
+# - Verifie au demarrage que chaque sample en base existe encore sur disque et
+#   que sa duree correspond bien au fichier reel.
 # -----------------------------------------------------------------------------
 
+from __future__ import annotations
+
 import os
-import wave
 
 from PySide6.QtCore import QThread, Signal
 
 from backend.db import SessionLocal
 from backend.models.sample import Sample
+from backend.services.audio_metadata import get_audio_duration
 from backend.services.notification_service import NotificationType
 
 
 class IntegrityCheckWorker(QThread):
     """Verifie que la DB et les fichiers sont coherents au demarrage."""
 
-    durationMismatch = Signal(int, float)   # (sample_id, new_duration)
-    fileMissing      = Signal(int)          # sample_id
+    durationMismatch = Signal(int, float)
+    fileMissing = Signal(int, bool)
 
     def __init__(self, app_context):
         super().__init__()
@@ -34,36 +32,45 @@ class IntegrityCheckWorker(QThread):
         try:
             samples = session.query(Sample).all()
             for samp in samples:
-                sid  = samp.id
+                sid = samp.id
                 path = samp.path
 
-                # 1) Fichier manquant ?
                 if not os.path.isfile(path):
-                    self.fileMissing.emit(sid)
+                    session_inst = session.get(Sample, sid)
+                    if session_inst and not bool(session_inst.missing):
+                        session_inst.missing = True
+                        session.commit()
+                    self.fileMissing.emit(sid, True)
                     self.app_context.notifications.notify(
-                        title="⚠️ Fichier manquant",
-                        message=f"Pour sample #{sid}, entrée supprimée",
+                        title="Fichier manquant",
+                        message=f"Sample #{sid} marque comme manquant",
                         type=NotificationType.WARNING,
+                        popup=False,
                     )
                     continue
 
-                # 2) Verifier la vraie duree
+                session_inst = session.get(Sample, sid)
+                if session_inst and bool(session_inst.missing):
+                    session_inst.missing = False
+                    session.commit()
+                    self.fileMissing.emit(sid, False)
+
                 try:
-                    with wave.open(path, "rb") as w:
-                        real_dur = w.getnframes() / w.getframerate()
+                    real_dur = get_audio_duration(path)
                 except Exception:
                     continue
 
-                # 3) Si ecart > 0.1s, corriger en DB
-                if abs(real_dur - samp.duration) > 0.1:
+                if abs(real_dur - float(samp.duration or 0.0)) > 0.1:
                     session_inst = session.get(Sample, sid)
-                    session_inst.duration = real_dur
-                    session.commit()
+                    if session_inst:
+                        session_inst.duration = real_dur
+                        session.commit()
                     self.durationMismatch.emit(sid, real_dur)
                     self.app_context.notifications.notify(
-                        title="ℹ️ Durée corrigée",
-                        message=f"Sample #{sid} → {real_dur:.1f}s",
+                        title="Duree corrigee",
+                        message=f"Sample #{sid} -> {real_dur:.1f}s",
                         type=NotificationType.INFO,
+                        popup=False,
                     )
         finally:
             session.close()

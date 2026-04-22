@@ -29,6 +29,8 @@ from typing import Any
 
 from PySide6.QtCore import QMimeData
 
+from frontend.right_panel.composer.composer_dnd import has_audio_file_urls
+
 logger = logging.getLogger("directory_dnd")
 
 # MIME types custom utilises dans l'app (payload pickle cote source).
@@ -41,6 +43,7 @@ def accepts(mime: QMimeData) -> bool:
     return bool(
         mime.hasFormat(MIME_SAMPLE_SLICE_DATA)
         or mime.hasFormat(MIME_SAMPLE_CARD)
+        or has_audio_file_urls(mime)
     )
 
 
@@ -64,6 +67,18 @@ def handle_drop(directory_widget: Any, mime: QMimeData) -> bool:
         logger.info("[DirectoryDnD] drop refuse (mime non supporte)")
         return False
 
+    # Ignore les drops depuis le même dossier (évite les copies/doublons inutiles)
+    if mime.hasUrls():
+        import os as _os
+        same_folder_urls = [
+            url for url in mime.urls()
+            if url.isLocalFile() and _os.path.normpath(_os.path.dirname(url.toLocalFile()))
+            == _os.path.normpath(current_dir)
+        ]
+        if same_folder_urls and len(same_folder_urls) == len([u for u in mime.urls() if u.isLocalFile()]):
+            logger.info("[DirectoryDnD] drop ignore (source dans le meme dossier)")
+            return False
+
     logger.info("[DirectoryDnD] drop accepte")
     try:
         directory_widget.service.handle_drop(current_dir, mime)
@@ -71,11 +86,9 @@ def handle_drop(directory_widget: Any, mime: QMimeData) -> bool:
         logger.info(f"[DirectoryDnD] handle_drop error: {e}")
         return False
 
-    # Rafraichit l'UI pour afficher le(s) nouveau(x) fichier(s).
     try:
         directory_widget.refresh_list()
     except Exception:
         pass
 
     return True
-

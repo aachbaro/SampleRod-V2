@@ -47,7 +47,14 @@ from frontend.sample_gui.waveform.waveform_plot_helpers import ContextMenuLinear
 
 from .composer_model import ComposerModel
 from .composer_ui import build_composer_widget_ui
-from .composer_dnd import has_slice, has_sample_card, parse_slice_mime, parse_sample_card_mime
+from .composer_dnd import (
+    has_audio_file_urls,
+    has_sample_card,
+    has_slice,
+    parse_audio_file_urls,
+    parse_sample_card_mime,
+    parse_slice_mime,
+)
 from .composer_clip_list import ComposerClipRow
 
 logger = logging.getLogger("sample_composer_widget")
@@ -90,6 +97,7 @@ class SampleComposerWidget(QWidget):
         self.clip_list.orderChanged.connect(self._on_order_changed)
         self.clip_list.itemClicked.connect(self._on_clip_item_clicked)
         self.clip_list.sampleCardDropped.connect(self._on_sample_card_dropped)
+        self.clip_list.audioFilesDropped.connect(self.add_file_paths)
 
         # model -> UI
         self.model.clipsChanged.connect(self._sync_clip_list)
@@ -180,7 +188,7 @@ class SampleComposerWidget(QWidget):
                 "[Composer] drop formats=%s",
                 list(mime.formats()),
             )
-        if has_slice(mime) or has_sample_card(mime):
+        if has_slice(mime) or has_sample_card(mime) or has_audio_file_urls(mime):
             if event.type() == QEvent.Type.Drop:
                 if has_slice(mime):
                     try:
@@ -194,6 +202,11 @@ class SampleComposerWidget(QWidget):
                         self._on_sample_card_dropped(payload)
                     except Exception:
                         logger.exception("[Composer] Invalid sample-card drop")
+                elif has_audio_file_urls(mime):
+                    try:
+                        self.add_file_paths(parse_audio_file_urls(mime))
+                    except Exception:
+                        logger.exception("[Composer] Invalid file-url drop")
                 self._set_drop_active(False)
             else:
                 self._set_drop_active(True)
@@ -333,16 +346,38 @@ class SampleComposerWidget(QWidget):
             self.info_label.setText("Sample introuvable dans le cache")
             return
 
-        # Charge en thread pour eviter de bloquer l'UI.
-        if sample_id in self._load_threads:
+        self._queue_audio_file_load(
+            sample_id,
+            sample.path,
+            sample.name,
+            {"sample_id": int(sample.id), "path": sample.path},
+        )
+
+    def add_file_paths(self, paths: list[str]) -> None:
+        normalized_paths = []
+        for path in paths:
+            try:
+                normalized = os.path.normpath(os.path.abspath(path))
+            except Exception:
+                continue
+            if os.path.isfile(normalized):
+                normalized_paths.append(normalized)
+
+        if not normalized_paths:
+            self.info_label.setText("Aucun fichier audio local exploitable")
             return
-        self.info_label.setText(f"Chargement: {sample.name}...")
-        loader = _ComposerSampleLoader(sample_id, sample.path, sample.name, self)
-        loader.loaded.connect(self._on_sample_loaded)
-        loader.failed.connect(self._on_sample_load_failed)
-        loader.finished.connect(lambda: self._load_threads.pop(sample_id, None))
-        self._load_threads[sample_id] = loader
-        loader.start()
+
+        for path in normalized_paths:
+            sample = next(
+                (s for s in self.app_context.sample_store.get_cached() if getattr(s, "path", None) == path),
+                None,
+            )
+            sample_id = int(getattr(sample, "id", 0) or 0) if sample is not None else abs(hash(path))
+            name = getattr(sample, "name", None) or os.path.splitext(os.path.basename(path))[0]
+            source = {"path": path}
+            if sample is not None:
+                source["sample_id"] = int(sample.id)
+            self._queue_audio_file_load(sample_id, path, name, source)
 
     def _on_sample_loaded(self, sample_id: int, audio, sr: int, name: str, source: dict) -> None:
         try:
@@ -359,6 +394,17 @@ class SampleComposerWidget(QWidget):
 
     def _on_sample_load_failed(self, sample_id: int, message: str) -> None:
         self.info_label.setText(f"Erreur chargement sample: {message}")
+
+    def _queue_audio_file_load(self, sample_id: int, path: str, name: str, source: dict | None = None) -> None:
+        if sample_id in self._load_threads:
+            return
+        self.info_label.setText(f"Chargement: {name}...")
+        loader = _ComposerSampleLoader(sample_id, path, name, source=source or {}, parent=self)
+        loader.loaded.connect(self._on_sample_loaded)
+        loader.failed.connect(self._on_sample_load_failed)
+        loader.finished.connect(lambda: self._load_threads.pop(sample_id, None))
+        self._load_threads[sample_id] = loader
+        loader.start()
 
     # ------------------------------------------------------------------ sync UI
     def _sync_all(self) -> None:
@@ -708,23 +754,27 @@ class _ComposerSampleLoader(QThread):
     loaded = Signal(int, object, int, str, dict)
     failed = Signal(int, str)
 
-    def __init__(self, sample_id: int, path: str, name: str, parent=None):
+    def __init__(self, sample_id: int, path: str, name: str, source: dict | None = None, parent=None):
         super().__init__(parent)
         self.sample_id = sample_id
         self.path = path
         self.name = name
+        self.source = dict(source or {})
 
     def run(self):
         try:
             import soundfile as sf
 
             y, sr = sf.read(self.path, dtype="float32", always_2d=True)
+            source = dict(self.source)
+            source.setdefault("path", self.path)
+            source.setdefault("sample_id", int(self.sample_id))
             self.loaded.emit(
                 int(self.sample_id),
                 y,
                 int(sr),
                 self.name,
-                {"sample_id": int(self.sample_id), "path": self.path},
+                source,
             )
         except Exception as e:
             self.failed.emit(int(self.sample_id), str(e))

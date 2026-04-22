@@ -21,11 +21,44 @@ logger = logging.getLogger("normalize_worker")
 
 from PySide6.QtCore import QThread, Signal
 
-try:
-    import pyloudnorm as pyln
-    _PYLOUDNORM_AVAILABLE = True
-except ImportError:
-    _PYLOUDNORM_AVAILABLE = False
+_PYLOUDNORM = None
+_PYLOUDNORM_IMPORT_ATTEMPTED = False
+
+
+def _get_pyloudnorm():
+    global _PYLOUDNORM
+    global _PYLOUDNORM_IMPORT_ATTEMPTED
+
+    if _PYLOUDNORM_IMPORT_ATTEMPTED:
+        return _PYLOUDNORM
+
+    _PYLOUDNORM_IMPORT_ATTEMPTED = True
+    try:
+        import pyloudnorm as pyln
+    except Exception as exc:
+        logger.warning("[NormalizeWorker] pyloudnorm indisponible, fallback RMS: %s", exc)
+        _PYLOUDNORM = None
+        return None
+
+    _PYLOUDNORM = pyln
+    return _PYLOUDNORM
+
+
+def _apply_rms_normalization(data: np.ndarray, target_db: float) -> np.ndarray:
+    rms_lin = np.sqrt(np.mean(np.square(data), axis=0))
+    rms_lin_max = np.max(rms_lin)
+    if rms_lin_max <= 0:
+        return data
+
+    current_rms_db = 20.0 * np.log10(rms_lin_max)
+    gain_db = target_db - current_rms_db
+    gain_lin = 10 ** (gain_db / 20.0)
+    normalized = data * gain_lin
+
+    pic_after = np.max(np.abs(normalized))
+    if pic_after > 0.999:
+        normalized = normalized * (0.999 / pic_after)
+    return normalized
 
 
 class NormalizeWorker(QThread):
@@ -97,23 +130,12 @@ class NormalizeWorker(QThread):
         elif self.mode == "rms":
             # Normalisation RMS : on calcule le niveau RMS actuel en dBFS
             # puis on applique un gain pour atteindre target_db (ex. -18 dBFS)
-            rms_lin = np.sqrt(np.mean(np.square(data), axis=0))
-            # rms_lin est un vecteur par canal ; on prend le maximum pour garder le même gain
-            rms_lin_max = np.max(rms_lin)
-            if rms_lin_max > 0:
-                current_rms_db = 20.0 * np.log10(rms_lin_max)
-                gain_db = self.target_db - current_rms_db
-                gain_lin = 10 ** (gain_db / 20.0)
-                data = data * gain_lin
-                # Vérification du pic après normalisation RMS pour éviter clipping
-                pic_after = np.max(np.abs(data))
-                if pic_after > 0.999:
-                    data = data * (0.999 / pic_after)
-            # Sinon, signal muet : on laisse tel quel
+            data = _apply_rms_normalization(data, self.target_db)
 
         elif self.mode == "lufs":
+            pyln = _get_pyloudnorm()
             # Si pyloudnorm est disponible, on fait de la normalisation LUFS
-            if _PYLOUDNORM_AVAILABLE:
+            if pyln is not None:
                 try:
                     # 1) mesure du loudness
                     meter = pyln.Meter(sr)
@@ -136,28 +158,10 @@ class NormalizeWorker(QThread):
                 except Exception as e:
                     logger.info(f"[NormalizeWorker] Erreur LUFS pour {self.file_path}: {e}")
                     # Fallback en RMS
-                    rms_lin = np.sqrt(np.mean(np.square(data), axis=0))
-                    rms_lin_max = np.max(rms_lin)
-                    if rms_lin_max > 0:
-                        current_rms_db = 20.0 * np.log10(rms_lin_max)
-                        gain_db = self.target_db - current_rms_db
-                        gain_lin = 10 ** (gain_db / 20.0)
-                        data = data * gain_lin
-                        pic_after = np.max(np.abs(data))
-                        if pic_after > 0.999:
-                            data = data * (0.999 / pic_after)
+                    data = _apply_rms_normalization(data, self.target_db)
             else:
                 # pyloudnorm non installé : on passe en mode RMS
-                rms_lin = np.sqrt(np.mean(np.square(data), axis=0))
-                rms_lin_max = np.max(rms_lin)
-                if rms_lin_max > 0:
-                    current_rms_db = 20.0 * np.log10(rms_lin_max)
-                    gain_db = self.target_db - current_rms_db
-                    gain_lin = 10 ** (gain_db / 20.0)
-                    data = data * gain_lin
-                    pic_after = np.max(np.abs(data))
-                    if pic_after > 0.999:
-                        data = data * (0.999 / pic_after)
+                data = _apply_rms_normalization(data, self.target_db)
 
         else:
             # Mode inconnu : on ne fait rien

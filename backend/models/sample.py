@@ -7,176 +7,170 @@
 # - backend/services/sample_service.py
 # - frontend/sample_gui/sample/sample_card.py
 # -----------------------------------------------------------------------------
-# backend/models/sample.py
 
-# /backend/models/sample.py
+from __future__ import annotations
 
-import os
-import wave
-import shutil
 import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, func
-from sqlalchemy.exc import SQLAlchemyError
-from backend.db import Base, SessionLocal
 import logging
+import os
+import shutil
+
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, func
+from sqlalchemy.exc import SQLAlchemyError
+
+from backend.db import Base, SessionLocal
+from backend.services.audio_metadata import collect_audio_file_metadata, normalize_audio_path
+
 logger = logging.getLogger("sample")
 
 
 class Sample(Base):
-    """Classe représentant un sample audio dans la base de données."""
+    """Classe representant un sample audio dans la base de donnees."""
+
     __tablename__ = "samples"
 
-    id         = Column(Integer, primary_key=True, index=True)
-    path       = Column(String(200), nullable=False, unique=True)
-    name       = Column(String(100), nullable=False)
-    duration   = Column(Float, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
+    path = Column(String(200), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
+    duration = Column(Float, nullable=False)
     created_at = Column(DateTime, nullable=False)
+    missing = Column(Boolean, nullable=False, default=False, server_default="0")
+    rms_level = Column(Float, nullable=True)
+    analyzed_at = Column(DateTime, nullable=True)
 
-    def __init__(self, path: str):
-        # Extraction métadonnées
-        self.path       = path
-        self.name       = self._extract_name()
-        self.duration   = self._extract_duration()
-        self.created_at = self._extract_creation_date()
+    def __init__(
+        self,
+        path: str,
+        *,
+        duration: float | None = None,
+        created_at: datetime.datetime | None = None,
+        rms_level: float | None = None,
+        missing: bool = False,
+        analyzed_at: datetime.datetime | None = None,
+    ):
+        normalized_path = normalize_audio_path(path)
+        include_rms = rms_level is None and not missing
+        metadata = None
+        if duration is None or created_at is None or include_rms:
+            metadata = collect_audio_file_metadata(normalized_path, include_rms=include_rms)
 
-        # Enregistrement en base
+        self.path = normalized_path
+        self.name = os.path.splitext(os.path.basename(normalized_path))[0]
+        self.duration = float(duration if duration is not None else metadata.duration)
+        self.created_at = created_at or metadata.created_at
+        self.missing = bool(missing)
+        self.rms_level = rms_level if rms_level is not None else metadata.rms_level
+        self.analyzed_at = analyzed_at
+
         session = SessionLocal()
         session.expire_on_commit = False
         try:
             session.add(self)
             session.commit()
-        except SQLAlchemyError as e:
+        except SQLAlchemyError:
             session.rollback()
             raise
         finally:
             session.close()
-        
-        logger.info(f"[Sample] Création de l'échantillon {self.name} ({self.id})")
+
+        logger.info("[Sample] Creation de l'echantillon %s (%s)", self.name, self.id)
 
     def delete(self):
-        """
-        Supprime le fichier physique (s’il existe) puis
-        l’entrée Base (commit ou rollback en cas d’erreur).
-        """
-        # 1) Fichier
+        """Supprime le fichier physique puis l'entree en base."""
         if os.path.isfile(self.path):
             try:
                 os.remove(self.path)
-                logger.info(f"[Sample] Fichier {self.path} supprimé")
-            except OSError as e:
-                # if you want to log: logger.info(f"[Sample.delete] remove error: {e}")
-                logger.info(f"[Sample] Impossible de supprimer le fichier {self.path}: {e}")
-                pass  # on continue : on supprime au moins la base
+                logger.info("[Sample] Fichier %s supprime", self.path)
+            except OSError as exc:
+                logger.info("[Sample] Impossible de supprimer le fichier %s: %s", self.path, exc)
 
-        # 2) Base
         session = SessionLocal()
         try:
-            # recharger l’instance attachée à la session
             inst = session.get(Sample, self.id)
             if inst:
                 session.delete(inst)
                 session.commit()
-                logger.info(f"[Sample] Échantillon {self.name} ({self.id}) supprimé de la base de données")
+                logger.info("[Sample] Echantillon %s (%s) supprime", self.name, self.id)
         except SQLAlchemyError:
             session.rollback()
-            logger.info(f"[Sample] Erreur lors de la suppression de l'échantillon {self.name} ({self.id})")
+            logger.info("[Sample] Erreur lors de la suppression de %s (%s)", self.name, self.id)
             raise
         finally:
             session.close()
 
     def rename(self, new_name: str):
-        """
-        Renomme le fichier (même extension), met à jour path & name,
-        et commit les changements en base.
-        """
+        """Renomme le fichier, puis met a jour le chemin et le nom en base."""
         folder, old_filename = os.path.split(self.path)
         ext = os.path.splitext(old_filename)[1]
         new_filename = new_name.strip() + ext
-        new_path = os.path.join(folder, new_filename)
+        new_path = normalize_audio_path(os.path.join(folder, new_filename))
 
-        # 1) Fichier
         try:
             os.rename(self.path, new_path)
-            logger.info(f"[Sample] Renommage de {self.path} en {new_path}")
-        except OSError as e:
-            logger.info(f"[Sample] Erreur de renommage de {self.path} en {new_path}: {e}")
-            raise RuntimeError(f"Impossible de renommer {self.path} → {new_path}: {e}")
-        
+            logger.info("[Sample] Renommage de %s en %s", self.path, new_path)
+        except OSError as exc:
+            logger.info("[Sample] Erreur de renommage de %s en %s: %s", self.path, new_path, exc)
+            raise RuntimeError(f"Impossible de renommer {self.path} -> {new_path}: {exc}")
 
-        # 2) Base
         session = SessionLocal()
         try:
             inst = session.get(Sample, self.id)
             inst.path = new_path
             inst.name = new_name.strip()
             session.commit()
-            # Mettre à jour l’objet courant aussi
             self.path = new_path
             self.name = new_name.strip()
-            logger.info(f"[Sample] Échantillon renommé en {self.name} ({self.id})")
-        except SQLAlchemyError as e:
-            logger.info(f"[Sample] Erreur lors du renommage de l'échantillon {self.name} ({self.id}): {e}")
+            logger.info("[Sample] Echantillon renomme en %s (%s)", self.name, self.id)
+        except SQLAlchemyError:
             session.rollback()
-            # tenter de restaurer l’ancien nom de fichier
             try:
                 os.rename(new_path, self.path)
             except Exception:
                 pass
+            logger.info("[Sample] Erreur lors du renommage de %s (%s)", self.name, self.id)
             raise
         finally:
             session.close()
 
     def move_to(self, target_folder: str):
-        """
-        Déplace physiquement le fichier dans `target_folder` puis met à jour
-        `path` en base. Conserve le même nom de fichier.
-        """
+        """Deplace physiquement le fichier dans `target_folder` puis met a jour la base."""
         os.makedirs(target_folder, exist_ok=True)
         basename = os.path.basename(self.path)
-        new_path = os.path.join(target_folder, basename)
+        new_path = normalize_audio_path(os.path.join(target_folder, basename))
 
-        # 1) Fichier
         try:
             shutil.move(self.path, new_path)
-            logger.info(f"[Sample] Déplacement de {self.path} vers {new_path}")
-        except (OSError, shutil.Error) as e:
-            logger.info(f"[Sample] Erreur de déplacement de {self.path} vers {new_path}: {e}")
-            raise RuntimeError(f"Impossible de déplacer {self.path} → {new_path}: {e}")
+            logger.info("[Sample] Deplacement de %s vers %s", self.path, new_path)
+        except (OSError, shutil.Error) as exc:
+            logger.info("[Sample] Erreur de deplacement de %s vers %s: %s", self.path, new_path, exc)
+            raise RuntimeError(f"Impossible de deplacer {self.path} -> {new_path}: {exc}")
 
-        # 2) Base
         session = SessionLocal()
         try:
             inst = session.get(Sample, self.id)
             inst.path = new_path
             session.commit()
             self.path = new_path
-            logger.info(f"[Sample] Échantillon déplacé vers {self.path} ({self.id})")
+            logger.info("[Sample] Echantillon deplace vers %s (%s)", self.path, self.id)
         except SQLAlchemyError:
-            logger.info(f"[Sample] Erreur lors du déplacement de l'échantillon {self.name} ({self.id}) vers {new_path}")
             session.rollback()
-            # tenter de remettre à l’ancien emplacement
             try:
                 shutil.move(new_path, self.path)
             except Exception:
                 pass
+            logger.info("[Sample] Erreur lors du deplacement de %s (%s)", self.name, self.id)
             raise
         finally:
             session.close()
 
-    def _extract_name(self) -> str:
-        return os.path.splitext(os.path.basename(self.path))[0]
-
-    def _extract_duration(self) -> float:
-        with wave.open(self.path, 'rb') as wav_file:
-            return wav_file.getnframes() / wav_file.getframerate()
-
-    def _extract_creation_date(self) -> datetime.datetime:
-        return datetime.datetime.fromtimestamp(os.path.getctime(self.path))
+    @property
+    def needs_analysis(self) -> bool:
+        return not bool(self.missing) and self.analyzed_at is None
 
     def __repr__(self):
         return (
-            f"<Sample id={self.id} name={self.name!r} "
-            f"duration={self.duration:.2f}s created_at={self.created_at}>"
+            f"<Sample id={self.id} name={self.name!r} duration={self.duration:.2f}s "
+            f"missing={self.missing} created_at={self.created_at}>"
         )
 
     @staticmethod

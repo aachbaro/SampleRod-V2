@@ -10,7 +10,7 @@
 # frontend/sample_gui/marker_manager.py
 
 from PySide6.QtCore import Qt, QMimeData, QVariantAnimation, QEasingCurve, QEvent, QRectF
-from PySide6.QtWidgets import QListWidget, QListWidgetItem
+from PySide6.QtWidgets import QListWidget, QListWidgetItem, QMenu
 from PySide6.QtGui import QDrag, QPainter, QPen, QColor
 import pyqtgraph as pg
 import numpy as np
@@ -21,6 +21,8 @@ import logging
 from .waveform.waveform_plot_helpers import add_plot_item_once
 logger = logging.getLogger("marker_manager")
 
+_ROLE_TYPE = Qt.ItemDataRole.UserRole + 1   # "selection" | "marker"
+
 class MarkerListWidget(QListWidget):
     """List displaying markers and serving as drag source for slices."""
 
@@ -28,6 +30,8 @@ class MarkerListWidget(QListWidget):
         super().__init__(parent)
         self.editor = editor
         self.setDragEnabled(True)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu_requested)
 
         # UI: animation douce du contour (utilise pour indiquer que "Marker mode" est actif).
         self._active_border_t = 0.0  # 0..1
@@ -61,6 +65,19 @@ class MarkerListWidget(QListWidget):
             self.viewport().update()
         except Exception:
             self.update()
+
+    def _on_context_menu_requested(self, pos):
+        item = self.itemAt(pos)
+        if item is None:
+            return
+        row_type = item.data(_ROLE_TYPE)
+        if row_type == "selection":
+            menu = QMenu(self)
+            stem_action = menu.addAction("Envoyer au separateur de stems")
+            action = menu.exec(self.mapToGlobal(pos))
+            if action is stem_action:
+                if hasattr(self.editor, "send_selection_to_stem_separator"):
+                    self.editor.send_selection_to_stem_separator()
 
     def wheelEvent(self, event):
         """
@@ -176,22 +193,59 @@ class MarkerManager:
         self.marker_lines = {}
         self.current_marker_idx = 0
 
+    def _build_selection_item(self):
+        """Construit le QListWidgetItem de selection courante (None si pas de region)."""
+        w = self.widget
+        region = getattr(w, "region", None)
+        if region is None:
+            return None
+        start, end = region.getRegion()
+        if end <= start:
+            return None
+        duration = end - start
+        sr = w.sample_rate or 44100
+        data = w.waveform_data
+        s0 = int(start * sr)
+        s1 = int(end * sr)
+        slice_array = data[s0:s1].astype("float32") if data is not None else np.array([], dtype="float32")
+        base_name = os.path.basename(w.audio_file_path or "selection")
+
+        item = QListWidgetItem(f"▸ Selection  {start:.2f}s → {end:.2f}s  ({duration:.2f}s)")
+        item.setToolTip(
+            f"Selection courante: {start:.3f}s → {end:.3f}s ({duration:.3f}s)\n"
+            "Glisse pour creer un artefact • Clic droit pour envoyer aux stems"
+        )
+        item.setData(Qt.ItemDataRole.UserRole, {
+            "time": start,
+            "end_time": end,
+            "audio_data": slice_array,
+            "sample_rate": sr,
+            "name": base_name,
+        })
+        item.setData(_ROLE_TYPE, "selection")
+        return item
+
     def refresh_marker_list(self):
         self.marker_list.clear()
+
+        # Ligne de selection (premiere si une region est active)
+        sel_item = self._build_selection_item()
+        if sel_item is not None:
+            self.marker_list.addItem(sel_item)
+
+        # Lignes de markers
         sr = self.widget.sample_rate or 44100
         data = self.widget.waveform_data
-        name = os.path.basename(self.widget.audio_file_path)
+        name = os.path.basename(self.widget.audio_file_path or "")
         for i, t in enumerate(self.markers):
             end_t = self.markers[i + 1] if i + 1 < len(self.markers) else self.widget.duration
             s0 = int(t * sr)
             s1 = int(end_t * sr)
             slice_array = data[s0:s1].astype("float32") if data is not None else np.array([], dtype="float32")
             duration = end_t - t
-            # UI: colonne fine -> texte tres court (1, 2, 3...).
-            # Les details restent accessibles au hover via le tooltip.
-            item = QListWidgetItem(f"{i+1}")
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            item.setToolTip(f"M{i+1} — {t:.3f}s ({duration:.2f}s)")
+            item = QListWidgetItem(f"M{i+1}  {t:.2f}s → {end_t:.2f}s  ({duration:.2f}s)")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            item.setToolTip(f"Marker {i+1}: {t:.3f}s → {end_t:.3f}s ({duration:.3f}s)\nDouble-clic pour supprimer")
             payload = {
                 "time": t,
                 "audio_data": slice_array,
@@ -199,7 +253,27 @@ class MarkerManager:
                 "name": name,
             }
             item.setData(Qt.ItemDataRole.UserRole, payload)
+            item.setData(_ROLE_TYPE, "marker")
             self.marker_list.addItem(item)
+
+    def refresh_selection_row(self):
+        """
+        Met a jour uniquement la ligne de selection sans reconstruire les markers.
+        Rapide, peut etre appele a chaque changement de region (drag de handle).
+        """
+        ml = self.marker_list
+        # Trouve et supprime les eventuelles lignes de selection existantes
+        rows_to_remove = []
+        for i in range(ml.count()):
+            if ml.item(i).data(_ROLE_TYPE) == "selection":
+                rows_to_remove.append(i)
+        for i in reversed(rows_to_remove):
+            ml.takeItem(i)
+
+        # Reconstruit la ligne de selection et l'insere en tete
+        sel_item = self._build_selection_item()
+        if sel_item is not None:
+            ml.insertItem(0, sel_item)
 
     def add_marker(self, t):
         t = float(np.clip(t, 0.0, self.widget.duration))

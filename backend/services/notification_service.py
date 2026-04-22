@@ -10,39 +10,26 @@
 # - Service Qt avec signal `notificationAdded` pour pousser aux widgets.
 # - Compteur interne pour garantir des IDs uniques.
 #
-# CE QUI RESTE A IMPLEMENTER (IDEES)
-# - Niveaux de priorite + affichage en file (queue).
-# - Suppression/expiration automatique (timer global).
-# - Persistance (historique en base) pour audit/debug.
-# - Groupement/dedup des notifications similaires.
-# - Actions (boutons: "Ouvrir", "Annuler", "Reessayer").
-# - Localisation i18n des messages.
-#
 # NOTES
 # - Le service ne depend que de QtCore (pas de widgets).
 # - Les widgets doivent s'abonner a `notificationAdded`.
+# - `popup=False` permet de garder une notification dans le centre sans ouvrir
+#   de fenetre flottante, utile pour les taches de fond.
 # -----------------------------------------------------------------------------
-# backend/services/notification_service.py
 
-"""
-Service centralise d'envoi et de diffusion des notifications
-"""
-# Qt: QObject + signaux
-from PySide6.QtCore import QObject, Signal
-# Dataclass pour le modele Notification
 from dataclasses import dataclass
-# Enum pour les types de notification
-from enum import Enum, auto
-# Timestamp d'emission
 from datetime import datetime
-# Logging
+from enum import Enum, auto
 import logging
-# Logger specifique au service
+
+from PySide6.QtCore import QObject, Signal
+
 logger = logging.getLogger("notification_service")
 
 
 class NotificationType(Enum):
-    """Types de notifications utilisées pour déterminer le style / icône"""
+    """Types de notifications utilises pour determiner le style / icone."""
+
     INFO = auto()
     SUCCESS = auto()
     WARNING = auto()
@@ -51,48 +38,50 @@ class NotificationType(Enum):
 
 @dataclass
 class Notification:
-    """Modèle représentant une notification à afficher"""
+    """Modele representant une notification a afficher."""
+
     id: int
     title: str
     message: str
     timestamp: datetime
     type: NotificationType
-    duration: int  # durée d'affichage en millisecondes
+    duration: int
+    popup: bool = True
 
 
 class NotificationService(QObject):
-    """Service Qt pour gérer la création et la diffusion des notifications"""
+    """Service Qt pour gerer la creation et la diffusion des notifications."""
 
-    # Signal emis lors de l'ajout d'une notification (envoie l'objet Notification)
     notificationAdded = Signal(object)
 
     def __init__(self):
         super().__init__()
-        # Compteur interne pour generer des IDs uniques
         self._next_id = 1
 
-    def notify(self,
-               title: str,
-               message: str,
-               type: NotificationType = NotificationType.INFO,
-               duration: int = 5000):
-        """
-        Crée une notification et émet le signal notificationAdded.
+    def notify(
+        self,
+        title: str,
+        message: str,
+        type: NotificationType = NotificationType.INFO,
+        duration: int = 5000,
+        popup: bool = True,
+    ) -> None:
+        """Cree une notification et emet le signal `notificationAdded`."""
 
-        :param title:   Titre de la notification
-        :param message: Message détaillé
-        :param type:    Type de la notification (INFO, SUCCESS, WARNING, ERROR)
-        :param duration:Durée d'affichage en millisecondes
-        """
-        logger.info(f"NotificationService: Création d'une notification '{title}' ({type.name})")
+        logger.info(
+            "NotificationService: creation d'une notification '%s' (%s, popup=%s)",
+            title,
+            type.name,
+            bool(popup),
+        )
         notif = Notification(
             id=self._next_id,
             title=title,
             message=message,
             timestamp=datetime.now(),
             type=type,
-            duration=duration
+            duration=int(duration),
+            popup=bool(popup),
         )
         self._next_id += 1
-        # Emission du signal vers les widgets abonnes
         self.notificationAdded.emit(notif)

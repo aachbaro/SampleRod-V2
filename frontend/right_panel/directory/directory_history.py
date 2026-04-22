@@ -8,9 +8,11 @@ Centralise la gestion de l'historique des dossiers pour le Directory tool.
 
 Stockage (QSettings)
 --------------------
-On utilise les memes cles que l'implementation initiale:
-- last_directory      : dernier dossier ouvert
-- recent_directories  : liste (max 10) des dossiers recents
+On utilise les memes cles que l'implementation initiale, avec une extension:
+- last_directory       : dernier dossier consulte
+- last_root_directory  : dernier dossier choisi comme point d'entree
+- expanded_directories : noeuds d'arborescence ouverts
+- recent_directories   : liste (max 10) des dossiers recents
 
 Pourquoi l'extraire ?
 ---------------------
@@ -38,6 +40,39 @@ class DirectoryHistory:
 
     def set_last_directory(self, path: str) -> None:
         self._qs.setValue("last_directory", path)
+
+    def get_last_root_directory(self) -> str:
+        return self._qs.value("last_root_directory", "", type=str)
+
+    def set_last_root_directory(self, path: str) -> None:
+        self._qs.setValue("last_root_directory", path)
+
+    # ------------------------------------------------------------- tree state
+    def get_expanded_directories(self) -> List[str]:
+        dirs = self._qs.value("expanded_directories", [], type=list)
+        try:
+            dirs = list(dirs)
+        except Exception:
+            dirs = []
+        return [path for path in dirs if isinstance(path, str) and path]
+
+    def set_expanded_directories(self, dirs: List[str]) -> None:
+        self._qs.setValue("expanded_directories", list(dirs))
+
+    def add_expanded_directory(self, path: str, limit: int = 200) -> None:
+        dirs = self.get_expanded_directories()
+        if path in dirs:
+            dirs.remove(path)
+        dirs.append(path)
+        if limit > 0:
+            dirs = dirs[-limit:]
+        self.set_expanded_directories(dirs)
+
+    def remove_expanded_directory(self, path: str) -> None:
+        dirs = self.get_expanded_directories()
+        if path in dirs:
+            dirs.remove(path)
+            self.set_expanded_directories(dirs)
 
     # ------------------------------------------------------------------ recent dirs
     def get_recent_directories(self) -> List[str]:

@@ -354,12 +354,17 @@ class RemoteControlService:
     def _sample_to_dict(self, sample) -> Dict[str, Any]:
         created_at = getattr(sample, "created_at", None)
         created_iso = created_at.isoformat() if created_at else None
+        analyzed_at = getattr(sample, "analyzed_at", None)
+        analyzed_iso = analyzed_at.isoformat() if analyzed_at else None
         return {
             "id": sample.id,
             "name": sample.name,
             "path": sample.path,
             "duration": float(getattr(sample, "duration", 0)),
             "created_at": created_iso,
+            "missing": bool(getattr(sample, "missing", False)),
+            "rms_level": getattr(sample, "rms_level", None),
+            "analyzed_at": analyzed_iso,
         }
 
     def _add_to_history(self, sample_dict: Dict[str, Any]) -> None:

@@ -60,12 +60,14 @@ class DirectoryStoreSync(QObject):
             return
         try:
             self._w._update_row(sample_id, new_path)
+            self._schedule_status_refresh()
         except Exception:
             pass
 
     def on_sample_deleted(self, sample_id: int):
         try:
             self._w._remove_row(sample_id)
+            self._schedule_status_refresh()
         except Exception:
             pass
 
@@ -91,17 +93,30 @@ class DirectoryStoreSync(QObject):
             if in_list:
                 try:
                     self._w._update_row(sample_id, new_path)
+                    self._schedule_status_refresh()
                 except Exception:
                     pass
             else:
                 try:
                     self._w._add_row(new_path, sample_id)
+                    self._schedule_status_refresh()
                 except Exception:
                     pass
         else:
             if in_list:
                 try:
                     self._w._remove_row(sample_id)
+                    self._schedule_status_refresh()
                 except Exception:
                     pass
+
+    def _schedule_status_refresh(self):
+        scheduler = getattr(self._w, "schedule_index_status_refresh", None)
+        if callable(scheduler):
+            scheduler()
+            return
+        try:
+            self._w._refresh_index_status()
+        except Exception:
+            pass
 

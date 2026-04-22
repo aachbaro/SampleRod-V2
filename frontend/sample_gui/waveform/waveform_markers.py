@@ -114,6 +114,13 @@ class WaveformMarkersController:
         w.play_start, w.play_end = t, t2
         w.read_head.setPos(t)
         logger.info(f"Region mise a jour: {t:.3f}s -> {t2:.3f}s")
+        # Affiche immediatement la ligne de selection dans la liste
+        mm = getattr(w, "marker_manager", None)
+        if mm is not None:
+            try:
+                mm.refresh_selection_row()
+            except Exception:
+                pass
 
     def on_marker_list_double_clicked(self, item: QListWidgetItem):
         payload = item.data(Qt.ItemDataRole.UserRole)

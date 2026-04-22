@@ -33,4 +33,30 @@ Base = declarative_base()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
+def ensure_sqlite_schema() -> None:
+    """Ajoute les colonnes connues manquantes sans reconstruire la base."""
+    if not DATABASE_URL.startswith("sqlite:///"):
+        return
+
+    with engine.begin() as connection:
+        table_exists = connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='samples'"
+        ).fetchone()
+        if not table_exists:
+            return
+
+        columns = {
+            str(row[1]).lower()
+            for row in connection.exec_driver_sql("PRAGMA table_info(samples)").fetchall()
+        }
+        migrations = {
+            "missing": "ALTER TABLE samples ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
+            "rms_level": "ALTER TABLE samples ADD COLUMN rms_level FLOAT",
+            "analyzed_at": "ALTER TABLE samples ADD COLUMN analyzed_at DATETIME",
+        }
+        for column_name, ddl in migrations.items():
+            if column_name not in columns:
+                connection.exec_driver_sql(ddl)
+
+
 

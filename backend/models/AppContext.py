@@ -46,6 +46,7 @@ from backend.services.notification_service import NotificationService
 from backend.services.directory_service import DirectoryService
 from backend.services.remote_control_service import RemoteControlService
 from backend.services.screenshot_service import ScreenshotService
+from backend.services.stem_separator_service import StemSeparatorService
 
 # Contexte global: instancie les services principaux de l'application.
 class AppContext:
@@ -80,6 +81,9 @@ class AppContext:
 
         # Service de capture d'ecran (optionnel via settings)
         self.screenshots = ScreenshotService(self)
+
+        # Service de stem separation (outil externe integre au labo)
+        self.stem_separator = StemSeparatorService(self)
 
         # Service de controle a distance (serveur HTTP local)
         self.remote_control = None
@@ -151,6 +155,12 @@ class AppContext:
             logger.exception("[AppContext] RecorderService: shutdown impossible")
 
         # 3) Libere le player
+        try:
+            self.stem_separator.shutdown()
+        except Exception:
+            logger.exception("[AppContext] StemSeparatorService: shutdown impossible")
+
+        # 4) Libere le player
         try:
             self.audio_player.clear_audio()
         except Exception:

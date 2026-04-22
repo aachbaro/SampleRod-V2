@@ -30,7 +30,7 @@ if sys.platform.startswith("win"):
     import ctypes
     ctypes.windll.ole32.OleInitialize(0)
 
-from backend.db import engine, Base
+from backend.db import engine, Base, ensure_sqlite_schema
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QSharedMemory, QSystemSemaphore, Qt
 import os
@@ -44,6 +44,7 @@ def create_database():
     """Crée la base de données et les tables."""
     logger.info("Création de la base de données...")
     Base.metadata.create_all(bind=engine)
+    ensure_sqlite_schema()
     logger.info("Base de données créée avec succès.")
 
 _singleton_memory = None

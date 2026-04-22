@@ -280,29 +280,13 @@ class WaveformUIBuilder:
         vb = w.plot.getViewBox()
         vb.sigXRangeChanged.connect(w._on_view_range_changed)
 
-        # Layout horizontal: waveform a gauche, colonne markers a droite.
+        # Layout horizontal: waveform pleine largeur (markers deplacés en dessous des controls).
         plot_row = QWidget()
         plot_row.setObjectName("WaveformPlotRow")
         plot_row_layout = QHBoxLayout(plot_row)
         plot_row_layout.setContentsMargins(0, 0, 0, 0)
-        plot_row_layout.setSpacing(6)
+        plot_row_layout.setSpacing(0)
         plot_row_layout.addWidget(w.plot, 1)
-
-        # Colonne markers (fine, a droite).
-        w.marker_list = MarkerListWidget(w)
-        w.marker_list.setObjectName("MarkerList")
-        w.marker_list.setFrameShape(QFrame.Shape.NoFrame)
-        # La colonne doit "matcher" les boutons ronds (24px).
-        # On affiche uniquement l'index numerique du marker (1,2,3...) en petit.
-        w.marker_list.setFixedWidth(24)
-        w.marker_list.setFixedHeight(plot_height)
-        w.marker_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        w.marker_list.itemClicked.connect(w.on_marker_list_clicked)
-        w.marker_list.itemDoubleClicked.connect(w.on_marker_list_double_clicked)
-        w.marker_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # Scrollbar cachee -> colonne plus clean (le wheel scroll fonctionne quand meme).
-        w.marker_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        plot_row_layout.addWidget(w.marker_list, 0, alignment=Qt.AlignmentFlag.AlignTop)
 
         editor_layout.addWidget(plot_row)
 
@@ -388,6 +372,20 @@ class WaveformUIBuilder:
 
         controls_layout.addLayout(toggles)
         editor_layout.addLayout(controls_layout)
+
+        # ----- Liste de markers (pleine largeur, sous les controles)
+        w.marker_list = MarkerListWidget(w)
+        w.marker_list.setObjectName("MarkerList")
+        w.marker_list.setFrameShape(QFrame.Shape.NoFrame)
+        w.marker_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        w.marker_list.setMaximumHeight(120)
+        w.marker_list.setMinimumHeight(0)
+        w.marker_list.setSizeAdjustPolicy(w.marker_list.SizeAdjustPolicy.AdjustToContents)
+        w.marker_list.itemClicked.connect(w.on_marker_list_clicked)
+        w.marker_list.itemDoubleClicked.connect(w.on_marker_list_double_clicked)
+        w.marker_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        w.marker_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        editor_layout.addWidget(w.marker_list)
 
         # ----- Read head + timer (logic audio)
         # — Read head + timer

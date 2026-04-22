@@ -26,7 +26,7 @@ class SampleListPagination:
 
     def change_page(self, page: int):
         # Calcul des IDs de la nouvelle page
-        ordered = sorted(self.widget.samples, key=lambda s: s.created_at, reverse=True)
+        ordered = list(getattr(self.widget, "filtered_samples", None) or self.widget.get_filtered_samples())
         start = (page - 1) * self.widget.samples_per_page
         end = start + self.widget.samples_per_page
         ids_page = {s.id for s in ordered[start:end]}
@@ -60,6 +60,7 @@ class SampleListPagination:
             self.change_page(self.widget.current_page - 1)
 
     def next_page(self):
-        max_pages = (len(self.widget.samples) - 1) // self.widget.samples_per_page + 1
+        ordered = list(getattr(self.widget, "filtered_samples", None) or self.widget.get_filtered_samples())
+        max_pages = ((len(ordered) - 1) // self.widget.samples_per_page + 1) if ordered else 1
         if self.widget.current_page < max_pages:
             self.change_page(self.widget.current_page + 1)

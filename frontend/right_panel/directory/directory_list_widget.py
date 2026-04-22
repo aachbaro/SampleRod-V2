@@ -21,6 +21,7 @@ from typing import Any
 
 import logging
 
+from PySide6.QtCore import QSize, QTimer, Qt
 from PySide6.QtWidgets import QListWidget
 
 from . import directory_dnd
@@ -43,6 +44,7 @@ class DirectoryListWidget(QListWidget):
         self.parent_widget = parent_widget
         logger.info("[DirectoryListWidget] Initialisation DnD (start)")
         self.setAcceptDrops(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         logger.info("[DirectoryListWidget] DnD target ready (acceptDrops=True)")
 
     # ------------------------------------------------------------------ DnD
@@ -64,3 +66,16 @@ class DirectoryListWidget(QListWidget):
             event.acceptProposedAction()
         else:
             event.ignore()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._refresh_item_widths)
+
+    def _refresh_item_widths(self):
+        viewport_width = max(0, self.viewport().width() - 2)
+        for row in range(self.count()):
+            item = self.item(row)
+            widget = self.itemWidget(item)
+            if widget is None:
+                continue
+            item.setSizeHint(QSize(viewport_width, max(1, widget.sizeHint().height(), widget.height())))

@@ -146,12 +146,12 @@ class DirectoryToolWidget(QWidget):
                 return
 
         widget = DirectoryWidget(self.directory_service, self.app_context, path=path)
-        widget.directoryChanged.connect(lambda p, w=widget: self._update_tab_text(w, p))
+        widget.rootDirectoryChanged.connect(lambda p, w=widget: self._update_tab_text(w, p))
 
         tab_name = os.path.basename(path) or path
         index = self.dir_tab_widget.addTab(widget, tab_name)
         self.dir_tab_widget.setCurrentIndex(index)
-        self._update_tab_text(widget, path)
+        self._update_tab_text(widget, getattr(widget, "root_dir", path) or path)
 
     def _update_tab_text(self, widget: DirectoryWidget, path: str) -> None:
         name = os.path.basename(path) or path

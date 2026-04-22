@@ -32,25 +32,65 @@ C'est un atelier pour **capturer, découper, transformer et organiser du son**
 12 modules fonctionnels, organisés en couches. La progression se fait par
 **phases** (voir plus bas) — pas tout en parallèle.
 
-| #   | Module                    | Rôle                                                     |
-| --- | ------------------------- | -------------------------------------------------------- |
-| 1   | Core audio                | Enregistrement système, lecture, waveform, découpe       |
-| 2   | File System Navigator     | Naviguer les dossiers locaux, indexation, DnD timeline   |
-| 3   | Break Processing          | Détection de hits, quantize, randomisation cohérente     |
-| 4   | Stem Separation           | Demucs (drums / bass / vocals / other)                   |
-| 5   | Analyse musicale          | Détection de gamme, BPM, confiance                       |
-| 6   | **Sample DNA**            | Chaque sample = objet (key, BPM, type, énergie, durée…)  |
-| 7   | Recherche intelligente    | Par nom, key, BPM, type, énergie                         |
-| 8   | Suggestions automatiques  | « Samples compatibles avec celui-ci » (rule-based)       |
-| 9   | Pattern / Loop Detection  | Segments répétitifs → blocs exploitables                 |
-| 10  | Resample Chain            | Pipeline créatif : slice → pitch → reverse → normalize   |
-| 11  | Historique / Évolution    | Origine + transformations + versions par sample          |
-| 12  | Mode Digging              | Exploration aléatoire intelligente, remise en surface    |
+| #   | Module                   | Rôle                                                    |
+| --- | ------------------------ | ------------------------------------------------------- |
+| 1   | Core audio               | Enregistrement système, lecture, waveform, découpe      |
+| 2   | File System Navigator    | Naviguer les dossiers locaux, indexation, DnD timeline  |
+| 3   | Break Processing         | Détection de hits, quantize, randomisation cohérente    |
+| 4   | Stem Separation          | Demucs (drums / bass / vocals / other)                  |
+| 5   | Analyse musicale         | Détection de gamme, BPM, confiance                      |
+| 6   | **Sample DNA**           | Chaque sample = objet (key, BPM, type, énergie, durée…) |
+| 7   | Recherche intelligente   | Par nom, key, BPM, type, énergie                        |
+| 8   | Suggestions automatiques | « Samples compatibles avec celui-ci » (rule-based)      |
+| 9   | Pattern / Loop Detection | Segments répétitifs → blocs exploitables                |
+| 10  | Resample Chain           | Pipeline créatif : slice → pitch → reverse → normalize  |
+| 11  | Historique / Évolution   | Origine + transformations + versions par sample         |
+| 12  | Mode Digging             | Exploration aléatoire intelligente, remise en surface   |
 
 **Ce que SampleRod n'est pas :** un DAW multipiste, un synthé, un looper live,
 un lecteur de streaming.
 
 ---
+
+## Architecture produit : Atelier
+
+SampleRod est organisé comme un atelier en deux espaces principaux :
+
+### Réserve
+
+Espace où l’on stocke et explore la matière sonore :
+
+- historique d’enregistrement
+- navigation dans les fichiers (filesystem réel)
+- bibliothèque indexée
+- recherche et filtres (futur)
+
+La Réserve est la source de toute matière utilisée dans l’application.
+
+### Labo
+
+Espace de transformation :
+
+- compositeur
+- stem separation
+- break processing
+- analyse
+- resample chain (futur)
+
+Le Labo permet de transformer la matière.
+
+### Flux de matière
+
+Les éléments générés dans le Labo (stems, one-shots, loops, etc.)
+ne sont pas des produits finaux.
+
+Ils deviennent des artefacts réutilisables, qui peuvent être :
+
+- réinjectés dans la Réserve
+- retravaillés dans le Labo
+
+SampleRod fonctionne comme un cycle :
+Réserve → Labo → Réserve
 
 ## Architecture actuelle
 
@@ -118,6 +158,7 @@ fois son algo stable »**.
 Légende : [x] opérationnel · [~] partiel · [ ] à faire
 
 ### Module 1 — Core audio [~]
+
 - [x] Enregistrement système (`recorder_service`, `recorder_worker`)
 - [x] Lecture + waveform (`sample_gui/waveform`)
 - [x] Découpe / sélection sur waveform
@@ -127,35 +168,43 @@ Légende : [x] opérationnel · [~] partiel · [ ] à faire
 - [ ] Bugs connus de lecture en mode loop (voir backlog)
 
 ### Module 2 — File System Navigator [~]
+
 - [x] `right_panel/directory/` — navigation, history, preview, DnD
 - [x] Drag & drop vers la composer timeline
 - [ ] Indexation persistante (scan dossier → DB)
 - [ ] Lien avec les futurs attributs Sample DNA
 
 ### Module 3 — Break Processing [~, en proto]
+
 - [x] `prototypes/drum_detector/` : détection transients, classification hits,
       générateur de breaks quantifié
 - [ ] Export one-shots (kick / snare / hat par slice)
 - [ ] Intégration dans l'app principale (service + UI dédiée)
 
 ### Module 4 — Stem Separation [ ]
+
 - Rien en code pour l'instant.
 - Cible : Demucs en sous-process (pas d'embedded model à la première passe).
 - Contraintes : **pas de YouTube** dans SampleRod ; l'entrée est toujours un
   fichier local.
 
 ### Module 5 — Analyse musicale [~, partiel]
+
 - [x] Détection de gamme : `prototypes/scale_detector/` (librosa)
 - [ ] Détection BPM : rien
 - [ ] Score de confiance exposé à l'UI
 - [ ] Intégration : service unifié `analysis_service.py` qui wrappe les deux
 
 ### Module 6 — Sample DNA [ ] ← le gros chantier
+
 Actuellement `Sample` stocke seulement :
+
 ```python
 id, path, name, duration, created_at
 ```
+
 Il manque les colonnes qui rendent tout le reste possible :
+
 - `key` (string, ex: "C#m") + `key_confidence` (float)
 - `bpm` (float) + `bpm_confidence` (float)
 - `sample_type` (enum: drum / texture / melodic / vocal / fx / loop / one_shot)
@@ -167,41 +216,51 @@ Il manque les colonnes qui rendent tout le reste possible :
 à ajouter en même temps que ces colonnes).
 
 ### Module 7 — Recherche intelligente [ ]
+
 Dépend du module 6. Une fois les colonnes DNA en place :
+
 - barre de recherche existante → extension avec filtres (key / bpm / type /
   énergie)
 - requête type : « samples compatibles avec {id} » = même key ± voisins (V/IV),
   BPM ±10%, type ≠ current.
 
 ### Module 8 — Suggestions automatiques [ ]
+
 Règles simples au départ, pas d'IA :
+
 - sample sélectionné → top N samples de la DB qui matchent key + BPM
 - si type = drum → propose des textures matchées
 - si type = melodic → propose des breaks à ce tempo
 
 ### Module 9 — Pattern / Loop Detection [ ]
+
 Phase avancée. Utilise les hits du drum_detector pour repérer les cycles
 répétitifs dans un long enregistrement et les exporter comme loops.
 
 ### Module 10 — Resample Chain [ ]
+
 Stack d'actions sur un sample : slice → pitch → reverse → normalize → export.
 UI type « liste d'étapes réorganisable », pas un graphe de nodes.
 
 ### Module 11 — Historique / Évolution [ ]
+
 Table annexe `SampleLineage` (parent_id, transformation, created_at, params).
 Permet de remonter de n'importe quel sample jusqu'à sa source.
 
 ### Module 12 — Mode Digging [ ]
+
 Vue alternative à la liste : propose des combinaisons aléatoires cohérentes,
 ressort des samples oubliés depuis > 30 jours. Nécessite Sample DNA.
 
 ### Infra & release [x]
+
 - [x] Build Windows via PyInstaller + Squirrel (`scripts/build_release.ps1`)
 - [x] Script de publication `scripts/publish_release.ps1`
 - [x] Site marchand Django (Stripe, OIDC, feed tokenisé, `/api/admin/publish`)
 - [x] Tunnel Cloudflare `samplerod.pascuans.dev`
 
 ### Remote control [x]
+
 - [x] `backend/services/remote_control_service.py` + `frontend/remote_ui/`
       (React/Vite) — pilotage mobile de l'enregistrement.
 
@@ -213,7 +272,9 @@ ressort des samples oubliés depuis > 30 jours. Nécessite Sample DNA.
 Pas d'intelligence par-dessus une base bancale.
 
 ### 🔴 Phase 1 — Solidifier (obligatoire)
-*Tu es ici.*
+
+_Tu es ici._
+
 - Stabiliser core audio (bugs de lecture loop, export propre)
 - Finir le file browser côté « indexation DB »
 - Nettoyer les 8 README éparpillés (fait via ce document)
@@ -221,22 +282,26 @@ Pas d'intelligence par-dessus une base bancale.
   `requirement.txt`, `requirements-release.txt` — garder 2 max)
 
 ### 🟠 Phase 2 — Identité produit
+
 - Intégrer le drum_detector comme service (`break_service.py`) + UI dédiée
 - Ajouter l'export one-shots automatique
 - Intégrer Demucs en sous-process pour la stem separation (queue async)
 
 ### 🟡 Phase 3 — Intelligence (Sample DNA)
+
 - Migration SQLAlchemy/Alembic pour ajouter les colonnes DNA
 - Intégrer scale_detector comme `analysis_service.py`
 - Ajouter la détection BPM (librosa `beat_track` pour commencer)
 - Backfill async de la DB existante
 
 ### 🟢 Phase 4 — Magie
+
 - Recherche avancée multi-filtres
 - Moteur de suggestions rule-based
 - UI « samples compatibles avec celui-ci »
 
 ### 🔵 Phase 5 — Avancé
+
 - Pattern / loop detection
 - Resample chain (pipeline créatif)
 - Historique / lineage
@@ -249,6 +314,7 @@ Pas d'intelligence par-dessus une base bancale.
 Bugs et petites features à traiter en parallèle de la phase 1 :
 
 **UX / bugs**
+
 - Lecture loop : le clic gauche sur la waveform après la barre en mode loop
   replace la tête au mauvais endroit (décalage = temps de lecture en cours)
 - Double bordure jaune quand on renomme un sample et on en focus un autre
@@ -258,15 +324,18 @@ Bugs et petites features à traiter en parallèle de la phase 1 :
 - Loader à la fermeture de l'application
 
 **Fonctionnalités rapides**
+
 - Préfixeur par sélection multiple (nom commun + nom initial)
 - Fonction `goto_sample(id)` → scroll + focus dans la liste
   (utile pour les notifs et les liens remote)
 
 **Dette tech**
+
 - Refactor `record_widget.py` (séparer UI / logique comme les autres widgets)
 - Découper les fichiers trop gros
 
 **Déjà faits (gardé comme trace)**
+
 - Concaténateur de samples ✓
 - `Ctrl+R` pour renommer ✓
 - Capture d'écran ✓
@@ -314,4 +383,4 @@ est le point d'entrée ; les suivants entrent dans les détails d'implémentatio
 
 ---
 
-*Dernière mise à jour : 21 avril 2026 — version courante : voir `VERSION`.*
+_Dernière mise à jour : 21 avril 2026 — version courante : voir `VERSION`._

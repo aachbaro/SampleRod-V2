@@ -16,11 +16,20 @@ Sous-modules utilises
 - SampleListCards         : gestion du cycle de vie des SampleCard.
 """
 
+import os
+
 from PySide6.QtWidgets import QWidget, QSizePolicy
-from PySide6.QtCore import Slot, QSettings
+from PySide6.QtCore import Signal, Slot, QSettings
 
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
+from frontend.reserve import (
+    ReserveActions,
+    ReserveEntry,
+    reserve_entry_from_sample,
+    reserve_entry_matches_query,
+    reserve_entry_matches_status,
+)
 from frontend.sample_gui.sample.sample_list_ui import SampleListUIBuilder
 from frontend.styles import theme
 from frontend.sample_gui.sample.sample_list_pagination import SampleListPagination
@@ -33,7 +42,14 @@ from frontend.sample_gui.sample.sample_list_cards import SampleListCards
 
 
 class SampleListWidget(QWidget):
-    def __init__(self, app_context: AppContext, parent=None):
+    reserveEntrySelected = Signal(object)
+
+    def __init__(
+        self,
+        app_context: AppContext,
+        parent=None,
+        reserve_actions: ReserveActions | None = None,
+    ):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
@@ -41,8 +57,13 @@ class SampleListWidget(QWidget):
         self.app_context  = app_context
         self.sample_store: SampleService = app_context.sample_store
         self.settings = self.app_context.settings
+        self.reserve_actions = reserve_actions
         self.samples = []  # liste des samples a afficher
+        self.filtered_samples = []
         self.selected_ids  = set()        # ensemble des IDs coches
+        self._reserve_query_text = ""
+        self._reserve_status_filter = "all"
+        self._current_sample_id: int | None = None
         self._qs = QSettings("SampleRod", "Main")
         self.samples_per_page = self.settings.getSamplesPerPage()
         self.current_page = 1
@@ -97,6 +118,47 @@ class SampleListWidget(QWidget):
     @Slot(list)
     def onSamplesChanged(self, samples: list):
         self.cards.on_samples_changed(samples)
+
+    def set_reserve_query(self, query: str) -> None:
+        query = (query or "").strip()
+        if query == self._reserve_query_text:
+            return
+        self._reserve_query_text = query
+        self.setCurrentPage(1)
+
+    def set_reserve_status_filter(self, status_filter: str) -> None:
+        status_filter = status_filter or "all"
+        if status_filter == self._reserve_status_filter:
+            return
+        self._reserve_status_filter = status_filter
+        self.setCurrentPage(1)
+
+    def current_reserve_entry(self) -> ReserveEntry | None:
+        if self._current_sample_id is None:
+            return None
+        sample = next((item for item in self.samples if int(item.id) == int(self._current_sample_id)), None)
+        if sample is None:
+            return None
+        return self._entry_from_sample(sample)
+
+    def open_waveform_for_entry(self, entry: ReserveEntry | None) -> bool:
+        if entry is None or entry.sample_id is None:
+            return False
+        filtered = self.get_filtered_samples()
+        for index, sample in enumerate(filtered):
+            if int(sample.id) != int(entry.sample_id):
+                continue
+            target_page = (index // self.samples_per_page) + 1
+            if target_page != self.current_page:
+                self.setCurrentPage(target_page)
+            card = self._card_widgets.get(int(entry.sample_id))
+            if card is None:
+                return False
+            card.setFocus()
+            if not card.showWaveform:
+                card.toggleWaveform()
+            return True
+        return False
 
     @Slot(int)
     def onSampleAdded(self, sample_id: int):
@@ -153,6 +215,44 @@ class SampleListWidget(QWidget):
 
     def refreshList(self):
         self.cards.refresh_list()
+
+    def get_filtered_samples(self) -> list:
+        ordered_samples = sorted(self.samples, key=lambda s: s.id, reverse=True)
+        return [
+            sample
+            for sample in ordered_samples
+            if reserve_entry_matches_query(self._entry_from_sample(sample), self._reserve_query_text)
+            and reserve_entry_matches_status(self._entry_from_sample(sample), self._reserve_status_filter)
+        ]
+
+    def set_current_reserve_sample(self, sample_id: int | None) -> None:
+        sample_id = int(sample_id) if sample_id is not None else None
+        if sample_id == self._current_sample_id:
+            return
+        self._current_sample_id = sample_id
+        self.reserveEntrySelected.emit(self.current_reserve_entry())
+
+    def _entry_from_sample(self, sample) -> ReserveEntry:
+        path = getattr(sample, "path", "") or ""
+        return reserve_entry_from_sample(
+            sample,
+            source_kind="history",
+            root_path=self._resolve_library_root(path),
+            folder_path=os.path.dirname(path),
+        )
+
+    def _resolve_library_root(self, path: str) -> str | None:
+        normalized = os.path.normpath(os.path.abspath(path)) if path else ""
+        for library in sorted(self.settings.libraries, key=lambda lib: lib.position):
+            root = os.path.normpath(os.path.abspath(getattr(library, "path", "") or ""))
+            if not root:
+                continue
+            try:
+                if os.path.commonpath([normalized, root]) == root:
+                    return root
+            except ValueError:
+                continue
+        return None
 
     @Slot(int)
     def onSampleDeleted(self, sample_id: int):

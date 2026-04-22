@@ -50,6 +50,9 @@ from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import Qt, Signal
 import pyqtgraph as pg
 import qtawesome as qta
+import os
+import tempfile
+import uuid
 
 if TYPE_CHECKING:
     from backend.models.AppContext import AppContext
@@ -73,8 +76,9 @@ logger = logging.getLogger("waveform_widget")
 
 class WaveformWidget(QWidget):
     stop_timer_signal = Signal()
-    waveformSaved    = Signal(str)
-    positionUpdated = Signal(float)
+    waveformSaved     = Signal(str)
+    positionUpdated   = Signal(float)
+    separationRequested = Signal(str)   # chemin temp d'une selection → stem separator
 
 # -- Construction & état (core)
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
@@ -341,5 +345,110 @@ class WaveformWidget(QWidget):
 
     def add_markers_to_region(self):
         self.shortcuts_controller.add_markers_to_region()
+
+    # -- Keyboard (raccourcis clavier wires ici)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        mods = event.modifiers()
+        Ctrl  = Qt.KeyboardModifier.ControlModifier
+        Alt   = Qt.KeyboardModifier.AltModifier
+        Shift = Qt.KeyboardModifier.ShiftModifier
+
+        if key == Qt.Key.Key_Space:
+            if mods & Ctrl:
+                self.play_from_start()
+            elif mods & Alt:
+                self.stop_and_reset()
+            else:
+                self.pause_or_resume()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_Z and (mods & Ctrl):
+            if mods & Shift:
+                self.redo()
+            else:
+                self.undo()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_S and (mods & Ctrl):
+            self.onSaveClicked()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_X and (mods & Ctrl):
+            self._on_cut_shortcut()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_E and (mods & Ctrl):
+            self._on_export_shortcut()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_L and (mods & Ctrl):
+            self.loop_button.toggle()
+            event.accept()
+            return
+
+        if key == Qt.Key.Key_G and (mods & Ctrl):
+            if mods & Shift:
+                self.add_markers_to_region()
+            else:
+                self.marker_mode_button.toggle()
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+    # -- Stem separation depuis la selection
+
+    def send_selection_to_stem_separator(self):
+        """
+        Extrait la selection courante vers un fichier temp et emet separationRequested.
+        Appelable depuis la liste de markers (clic droit → stem) ou depuis un autre controller.
+        """
+        import numpy as np
+        try:
+            import soundfile as sf
+        except ImportError:
+            logger.warning("[WaveformWidget] soundfile non disponible pour l'export de selection.")
+            return
+
+        if self.waveform_data is None or self.sample_rate is None:
+            return
+
+        region = getattr(self, "region", None)
+        if region is not None:
+            start, end = region.getRegion()
+        elif self.play_start < self.play_end:
+            start, end = self.play_start, self.play_end
+        else:
+            return
+
+        if end <= start:
+            return
+
+        sr = int(self.sample_rate)
+        s0 = int(start * sr)
+        s1 = int(end * sr)
+        data = np.asarray(self.waveform_data)
+        audio = data[s0:s1].astype("float32")
+
+        if audio.size == 0:
+            return
+
+        base = os.path.splitext(os.path.basename(self.audio_file_path or "selection"))[0]
+        filename = f"samplerod_{base}_sel_{uuid.uuid4().hex[:8]}.wav"
+        temp_path = os.path.join(tempfile.gettempdir(), filename)
+        try:
+            sf.write(temp_path, audio, sr)
+        except Exception as exc:
+            logger.warning(f"[WaveformWidget] Erreur ecriture selection: {exc}")
+            return
+
+        self.separationRequested.emit(temp_path)
 
 
