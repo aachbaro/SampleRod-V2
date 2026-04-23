@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-LabArtifactKind = Literal["slice", "current_file", "stem"]
+LabArtifactKind = Literal["slice", "current_file", "stem", "break_preview"]
 
 
 @dataclass(slots=True)
@@ -28,6 +28,8 @@ def artifact_kind_label(kind: LabArtifactKind) -> str:
         return "Slice"
     if kind == "stem":
         return "Stem"
+    if kind == "break_preview":
+        return "Preview quantizee"
     return "Fichier courant"
 
 

@@ -7,7 +7,14 @@ import uuid
 import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from frontend.sample_gui.wave_form import WaveformWidget
 from frontend.styles import theme
@@ -18,7 +25,7 @@ from .waveform_tool_dnd import has_supported_waveform_drop, resolve_waveform_dro
 
 class WaveformToolWidget(QWidget):
     artifactCreated = Signal(object)
-    separationRequested = Signal(list)   # liste de chemins → stem separator
+    separationRequested = Signal(list)
 
     def __init__(self, app_context, parent=None):
         super().__init__(parent)
@@ -49,7 +56,9 @@ class WaveformToolWidget(QWidget):
         self.title_label = QLabel("Waveform")
         self.title_label.setObjectName("WaveformToolTitle")
 
-        self.subtitle_label = QLabel("Edition et capture de matiere a partir du fichier courant.")
+        self.subtitle_label = QLabel(
+            "Edition et capture de matiere a partir du fichier courant."
+        )
         self.subtitle_label.setObjectName("WaveformToolSubtitle")
         self.subtitle_label.setWordWrap(True)
 
@@ -79,7 +88,9 @@ class WaveformToolWidget(QWidget):
         header.addLayout(title_box, 1)
         header.addLayout(actions, 0)
 
-        self.info_label = QLabel("Selectionne une matiere depuis la Reserve pour l'ouvrir ici.")
+        self.info_label = QLabel(
+            "Selectionne une matiere depuis la Reserve pour l'ouvrir ici."
+        )
         self.info_label.setObjectName("WaveformToolInfo")
         self.info_label.setWordWrap(True)
 
@@ -218,12 +229,15 @@ class WaveformToolWidget(QWidget):
         self._refresh_info_message()
         self._refresh_actions()
 
-    def _refresh_actions(self) -> None:
-        ready = bool(
+    def _waveform_ready(self) -> bool:
+        return bool(
             self._waveform_widget is not None
             and getattr(self._waveform_widget, "waveform_data", None) is not None
             and getattr(self._waveform_widget, "sample_rate", None)
         )
+
+    def _refresh_actions(self) -> None:
+        ready = self._waveform_ready()
         self.slice_button.setEnabled(bool(self._current_path) and ready)
         self.current_file_button.setEnabled(bool(self._current_path) and ready)
 
@@ -370,15 +384,13 @@ class WaveformToolWidget(QWidget):
         if self._drop_active:
             self.info_label.setText("Depose un fichier ou un sample de la Reserve pour l'ouvrir ici.")
             return
-        ready = bool(
-            self._waveform_widget is not None
-            and getattr(self._waveform_widget, "waveform_data", None) is not None
-            and getattr(self._waveform_widget, "sample_rate", None)
-        )
+        ready = self._waveform_ready()
         if self._current_path is None:
             self.info_label.setText("Selectionne une matiere depuis la Reserve pour l'ouvrir ici.")
         elif ready:
-            self.info_label.setText("Le fichier est pret. Cree une slice ou capture l'etat courant.")
+            self.info_label.setText(
+                "Le fichier est pret. Cree une slice ou capture l'etat courant."
+            )
         else:
             self.info_label.setText("Chargement du waveform...")
 

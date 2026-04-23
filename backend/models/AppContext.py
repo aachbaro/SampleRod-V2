@@ -46,6 +46,7 @@ from backend.services.notification_service import NotificationService
 from backend.services.directory_service import DirectoryService
 from backend.services.remote_control_service import RemoteControlService
 from backend.services.screenshot_service import ScreenshotService
+from backend.services.drum_analysis_service import DrumAnalysisService
 from backend.services.stem_separator_service import StemSeparatorService
 
 # Contexte global: instancie les services principaux de l'application.
@@ -84,6 +85,7 @@ class AppContext:
 
         # Service de stem separation (outil externe integre au labo)
         self.stem_separator = StemSeparatorService(self)
+        self.drum_analysis = DrumAnalysisService(self)
 
         # Service de controle a distance (serveur HTTP local)
         self.remote_control = None
@@ -159,6 +161,16 @@ class AppContext:
             self.stem_separator.shutdown()
         except Exception:
             logger.exception("[AppContext] StemSeparatorService: shutdown impossible")
+
+        try:
+            self.drum_analysis.shutdown()
+        except Exception:
+            logger.exception("[AppContext] DrumAnalysisService: shutdown impossible")
+
+        try:
+            self.sample_store.shutdown()
+        except Exception:
+            logger.exception("[AppContext] SampleService: shutdown impossible")
 
         # 4) Libere le player
         try:

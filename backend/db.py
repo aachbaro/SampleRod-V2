@@ -53,6 +53,9 @@ def ensure_sqlite_schema() -> None:
             "missing": "ALTER TABLE samples ADD COLUMN missing INTEGER NOT NULL DEFAULT 0",
             "rms_level": "ALTER TABLE samples ADD COLUMN rms_level FLOAT",
             "analyzed_at": "ALTER TABLE samples ADD COLUMN analyzed_at DATETIME",
+            "dominant_note": "ALTER TABLE samples ADD COLUMN dominant_note VARCHAR(4)",
+            "scale_confidence": "ALTER TABLE samples ADD COLUMN scale_confidence FLOAT",
+            "compatible_scales": "ALTER TABLE samples ADD COLUMN compatible_scales TEXT",
         }
         for column_name, ddl in migrations.items():
             if column_name not in columns:

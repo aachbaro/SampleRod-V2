@@ -35,6 +35,7 @@ DARK: dict[str, str] = {
     "TEXT":         "#f2f2f2",
     "TEXT_MUTED":   "#8d95a3",
     "RETRO":        "#2cc6cf",
+    "ACCENT":       "#2cc6cf",
     "RECORDING":    "#e45050",
     "SUCCESS":      "#9bd18f",
     "WARNING":      "#f2c94c",
@@ -53,6 +54,7 @@ LIGHT: dict[str, str] = {
     "TEXT":         "#1a1d23",
     "TEXT_MUTED":   "#6b7280",
     "RETRO":        "#0891b2",
+    "ACCENT":       "#0891b2",
     "RECORDING":    "#dc2626",
     "SUCCESS":      "#16a34a",
     "WARNING":      "#d97706",
@@ -71,7 +73,10 @@ class _PaletteProxy:
         object.__setattr__(self, "_palette", palette)
 
     def __getattr__(self, key: str) -> str:
-        return object.__getattribute__(self, "_palette")[key]
+        try:
+            return object.__getattribute__(self, "_palette")[key]
+        except KeyError:
+            raise AttributeError(f"Palette has no color '{key}'")
 
     def _update(self, palette: dict):
         object.__setattr__(self, "_palette", palette)

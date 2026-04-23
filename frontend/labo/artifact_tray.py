@@ -43,7 +43,12 @@ def _fmt_ms(ms: float) -> str:
 
 
 def _short_kind(kind: str) -> str:
-    return {"slice": "CUT", "stem": "STEM", "current_file": "FILE"}.get(kind, kind.upper()[:4])
+    return {
+        "slice": "CUT",
+        "stem": "STEM",
+        "current_file": "FILE",
+        "break_preview": "QTZ",
+    }.get(kind, kind.upper()[:4])
 
 
 

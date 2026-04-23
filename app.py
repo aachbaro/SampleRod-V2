@@ -33,6 +33,20 @@ if sys.platform.startswith("win"):
 from backend.db import engine, Base, ensure_sqlite_schema
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QSharedMemory, QSystemSemaphore, Qt
+
+# Patch linecache.getlines juste apres le chargement de PySide6.
+# Le hook shiboken (feature_imported) appelle inspect.getsource() sur chaque
+# module importe pour savoir s'il utilise PySide6. Sur Windows, l'ouverture
+# des fichiers source des extensions C (.pyd) peut se bloquer (Defender / IO).
+# En retournant [] pour les fichiers non-.py, on fait lever OSError
+# qu'inspect traite gracieusement, sans bloquer.
+import linecache as _lc
+def _lc_getlines_safe(filename, module_globals=None, _orig=_lc.getlines):
+    if filename and not str(filename).endswith('.py'):
+        return []
+    return _orig(filename, module_globals)
+_lc.getlines = _lc_getlines_safe
+
 import os
 from backend.models.AppContext import AppContext
 from backend.services.settings_service import SettingsService

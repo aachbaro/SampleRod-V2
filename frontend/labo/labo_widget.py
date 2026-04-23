@@ -11,6 +11,7 @@ from frontend.styles import theme
 
 from .artifact_tray import ArtifactTrayWidget
 from .bins_panel import LaboBinsPanel
+from .break_widget import BreakWidget
 from .lab_artifact import LabArtifact, artifact_file_path, build_artifact_filename
 from .stem_separator_tool import StemSeparatorToolWidget
 from .waveform_tool import WaveformToolWidget
@@ -56,9 +57,11 @@ class LaboWidget(QWidget):
         self.waveform_tool = WaveformToolWidget(self.app_context)
         self.stem_separator_tool = StemSeparatorToolWidget(self.app_context)
         self.composer_widget = SampleComposerWidget(self.app_context)
+        self.break_widget = BreakWidget(self.app_context)
 
         self.tools_tabs.addTab(self.waveform_tool, "Waveform")
-        self.tools_tabs.addTab(self.stem_separator_tool, "Stem Separation")
+        self.tools_tabs.addTab(self.break_widget, "Break")
+        self.tools_tabs.addTab(self.stem_separator_tool, "Stems")
         self.tools_tabs.addTab(self.composer_widget, "Compositeur")
         self.tools_tabs.setCurrentIndex(0)
 
@@ -107,6 +110,7 @@ class LaboWidget(QWidget):
     def _bind_signals(self) -> None:
         self.waveform_tool.artifactCreated.connect(self._upsert_artifact)
         self.stem_separator_tool.artifactCreated.connect(self._upsert_artifact)
+        self.break_widget.artifactCreated.connect(self._upsert_artifact)
         self.artifact_tray.saveArtifactRequested.connect(self._save_artifact)
         self.artifact_tray.openArtifactRequested.connect(self._open_artifact_in_waveform)
         self.waveform_tool.separationRequested.connect(self._send_to_stem_separator)

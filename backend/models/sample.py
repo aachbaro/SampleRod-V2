@@ -15,7 +15,7 @@ import logging
 import os
 import shutil
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, func
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, func
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.db import Base, SessionLocal
@@ -37,6 +37,9 @@ class Sample(Base):
     missing = Column(Boolean, nullable=False, default=False, server_default="0")
     rms_level = Column(Float, nullable=True)
     analyzed_at = Column(DateTime, nullable=True)
+    dominant_note = Column(String(4), nullable=True)
+    scale_confidence = Column(Float, nullable=True)
+    compatible_scales = Column(Text, nullable=True)  # JSON array of scale label strings
 
     def __init__(
         self,
@@ -47,6 +50,9 @@ class Sample(Base):
         rms_level: float | None = None,
         missing: bool = False,
         analyzed_at: datetime.datetime | None = None,
+        dominant_note: str | None = None,
+        scale_confidence: float | None = None,
+        compatible_scales: str | None = None,
     ):
         normalized_path = normalize_audio_path(path)
         include_rms = rms_level is None and not missing
@@ -61,6 +67,9 @@ class Sample(Base):
         self.missing = bool(missing)
         self.rms_level = rms_level if rms_level is not None else metadata.rms_level
         self.analyzed_at = analyzed_at
+        self.dominant_note = dominant_note
+        self.scale_confidence = scale_confidence
+        self.compatible_scales = compatible_scales
 
         session = SessionLocal()
         session.expire_on_commit = False

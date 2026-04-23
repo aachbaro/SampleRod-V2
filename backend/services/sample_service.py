@@ -19,6 +19,7 @@ from backend.models.normalize_worker import NormalizeWorker
 from backend.models.sample import Sample
 from backend.services.audio_metadata import get_audio_duration, normalize_audio_path
 from backend.services.notification_service import NotificationType
+from backend.services.scale_analysis_service import ScaleAnalysisService
 
 logger = logging.getLogger("sample_service")
 
@@ -55,6 +56,10 @@ class SampleService(QObject):
         self._integrity_worker.fileMissing.connect(self._onMissingStateChanged)
         self._integrity_worker.durationMismatch.connect(self._onDurationMismatch)
         self._integrity_worker.start()
+
+        self._scale_analysis = ScaleAnalysisService(self)
+        self._scale_analysis.scaleAnalysisComplete.connect(self._on_scale_analysis_complete)
+        self._scale_analysis.scaleAnalysisFailed.connect(self._on_scale_analysis_failed)
 
     def _initialize_cache(self):
         try:
@@ -103,6 +108,9 @@ class SampleService(QObject):
                 )
             else:
                 self._start_auto_normalization(new_sample.id)
+
+            # Enqueue scale analysis in the background
+            self._scale_analysis.enqueue(new_sample.id, new_sample.path)
 
             return new_sample
         except Exception as exc:
@@ -285,6 +293,13 @@ class SampleService(QObject):
         samp = next((sample for sample in self._samples if sample.id == sample_id), None)
         if not samp:
             return
+        # Arrêter la lecture si ce sample est en cours — comme pour la suppression.
+        player = self.app_context.audio_player
+        if getattr(player, "current_sample_id", -1) == sample_id:
+            try:
+                player.clear_audio()
+            except Exception:
+                pass
         try:
             samp.move_to(target_folder)
             self.sampleMoved.emit(sample_id, target_folder)
@@ -604,6 +619,33 @@ class SampleService(QObject):
         )
         worker.start()
         self._normalize_threads[sample_id] = worker
+
+    def _on_scale_analysis_complete(self, sample_id: int) -> None:
+        """Rafraichit le sample en cache apres analyse des gammes."""
+        session = SessionLocal()
+        try:
+            inst = session.get(Sample, sample_id)
+            if inst is None:
+                return
+            # Mettre a jour le cache memoire
+            for i, samp in enumerate(self._samples):
+                if samp.id == sample_id:
+                    self._samples[i] = inst
+                    break
+        except SQLAlchemyError as exc:
+            logger.info("[SampleService] _on_scale_analysis_complete DB error: %s", exc)
+        finally:
+            session.close()
+
+    def _on_scale_analysis_failed(self, sample_id: int, reason: str) -> None:
+        logger.info("[SampleService] Scale analysis failed id=%s: %s", sample_id, reason)
+
+    def shutdown(self) -> None:
+        """Arret propre des services de fond (ScaleAnalysisService)."""
+        try:
+            self._scale_analysis.shutdown()
+        except Exception:
+            logger.exception("[SampleService] scale_analysis shutdown impossible")
 
     @staticmethod
     def _append_wav_files(first_path: str, second_path: str, out_path: str):
