@@ -28,6 +28,12 @@ def _reserve_factory(ctx):
     )
 
 
+def _waveform_factory(ctx):
+    from frontend.labo.waveform_tool import WaveformToolWidget
+
+    return WaveformToolWidget(ctx.app_context)
+
+
 def build_default_registry() -> ModuleRegistry:
     """Registre des modules disponibles dans l'atelier modulaire (v1)."""
     registry = ModuleRegistry()
@@ -39,6 +45,17 @@ def build_default_registry() -> ModuleRegistry:
             icon="folder",
             factory=_reserve_factory,
             default_title="Reserve principale",
+            multi=True,
+        )
+    )
+    registry.register(
+        ModuleType(
+            type_id="waveform",
+            label="Waveform",
+            category="WAVEFORMS",
+            icon="wave",
+            factory=_waveform_factory,
+            default_title="Waveform",
             multi=True,
         )
     )

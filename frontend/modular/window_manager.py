@@ -17,7 +17,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
@@ -236,9 +238,32 @@ class WindowManager(QObject):
         self.instanceUpdated.emit(instance_id)
 
     def _connect_module_signals(self, inst: ModuleInstance, widget: QWidget) -> None:
-        # Point d'extension : cablage inter-modules (reserve -> waveform, etc.).
-        # Implemente au fur et a mesure que les modules rejoignent l'atelier.
-        return
+        # Cablage inter-modules, etendu au fur et a mesure que les modules
+        # rejoignent l'atelier.
+        if inst.module_type == "reserve":
+            signal = getattr(widget, "sendToLaboRequested", None)
+            if signal is not None:
+                signal.connect(self._open_paths_in_waveform)
+
+    def _open_paths_in_waveform(self, paths) -> list[str]:
+        """Ouvre chaque fichier dans sa propre instance Waveform (une par fichier)."""
+        created: list[str] = []
+        if not self._registry.has("waveform"):
+            return created
+        for raw in paths or []:
+            path = str(raw or "")
+            if not path or not os.path.isfile(path):
+                continue
+            instance_id = self.create_instance("waveform", title=Path(path).stem)
+            widget = self._windows[instance_id].centralWidget()
+            opener = getattr(widget, "open_file", None)
+            if callable(opener):
+                try:
+                    opener(path)
+                except Exception:
+                    pass
+            created.append(instance_id)
+        return created
 
     def _auto_title(self, mt: ModuleType) -> str:
         count = sum(
