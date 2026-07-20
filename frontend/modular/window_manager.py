@@ -323,25 +323,38 @@ class WindowManager(QObject):
             if signal is not None:
                 signal.connect(self._open_paths_in_waveform)
 
-    def _open_paths_in_waveform(self, paths) -> list[str]:
-        """Ouvre chaque fichier dans sa propre instance Waveform (une par fichier)."""
-        created: list[str] = []
-        if not self._registry.has("waveform"):
-            return created
-        for raw in paths or []:
-            path = str(raw or "")
-            if not path or not os.path.isfile(path):
-                continue
-            instance_id = self.create_instance("waveform", title=Path(path).stem)
-            widget = self._windows[instance_id].module_widget()
-            opener = getattr(widget, "open_file", None)
-            if callable(opener):
+    def _open_paths_in_waveform(self, paths) -> str | None:
+        """Ouvre chaque fichier en ONGLET dans une instance Waveform.
+
+        Reutilise une fenetre Waveform existante (visible de preference) plutot
+        que d'en creer une par fichier ; en cree une seule si aucune n'existe.
+        """
+        valid = [str(p) for p in (paths or []) if p and os.path.isfile(str(p))]
+        if not valid or not self._registry.has("waveform"):
+            return None
+        target_id = self._pick_waveform_target()
+        if target_id is None:
+            target_id = self.create_instance("waveform")
+        widget = self._windows[target_id].module_widget()
+        opener = getattr(widget, "open_file", None)
+        if callable(opener):
+            for path in valid:
                 try:
                     opener(path)
                 except Exception:
                     pass
-            created.append(instance_id)
-        return created
+        self.show_instance(target_id)
+        return target_id
+
+    def _pick_waveform_target(self) -> str | None:
+        """Choisit une instance Waveform cible : une visible sinon n'importe laquelle."""
+        fallback: str | None = None
+        for inst in self._instances.values():
+            if inst.module_type == "waveform":
+                fallback = inst.instance_id
+                if self.is_visible(inst.instance_id):
+                    return inst.instance_id
+        return fallback
 
     def _auto_title(self, mt: ModuleType) -> str:
         count = sum(

@@ -62,8 +62,14 @@ Modèle conceptuel :
   multi-écran), fenêtre **Workspace** listant les instances par catégorie.
 - **Modules branchés** : **Réserve** et **Waveform** (réutilisent les widgets
   existants tels quels).
-- **Routage Réserve → Waveform** : « envoyer au labo » depuis une Réserve ouvre
-  chaque fichier dans sa propre instance Waveform.
+- **Routage Réserve → Waveform** : « envoyer au labo » ouvre chaque fichier dans
+  un **onglet** du module Waveform (réutilise une fenêtre existante).
+- **Fenêtres immersives** : modules **sans cadre OS** (ni croix ni réduction) ;
+  bordure qui **s'éclaire au focus** ; déplacement par la barre de titre fine,
+  redimensionnement par les bords.
+- **Onglets par fichier** : le module Waveform a un onglet par fichier (bouton
+  `+` pour ouvrir, onglets fermables et déplaçables).
+- **Workspace** : les actions de chaque ligne n'apparaissent qu'**au survol**.
 - **Toggle classique ↔ modulaire** : bouton icône ⧉ en haut-droite de la fenêtre
   principale **bascule** vers l'atelier modulaire (masque l'affichage classique) ;
   un bouton dans le Workspace (ou fermer le Workspace) revient au classique. Les
@@ -91,6 +97,7 @@ frontend/modular/                ← atelier modulaire
 ├── module_registry.py           ModuleType / ModuleRegistry (catalogue)
 ├── window_manager.py            WindowManager (contrôleur) + ModuleContext
 ├── modules_setup.py             enregistrement des modules concrets
+├── waveform_module.py           WaveformModule (conteneur à onglets, 1/fichier)
 └── workspace_window.py          WorkspaceWindow (centre de contrôle)
 ```
 
@@ -110,7 +117,7 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 | 4 | Modèle central d'artefact (id, chemin, métadonnées, lignée) | ⬜ (LabArtifact existe → à formaliser en ArtifactStore) |
 | 5 | Drag-and-drop d'artefacts (MIME `application/x-samplerod-artifact`) | ⬜ |
 | 6 | Sauvegarde/restauration de session + workspaces nommés      | 🟡 persistée en QSettings + restaurée à l'entrée modulaire ; **workspaces nommés multiples à faire** |
-| 7 | Onglets / regroupement d'instances (détachables)            | ⬜ |
+| 7 | Onglets par fichier (module) ✅ · regroupement/détachement d'instances ⬜ | 🟡 |
 
 ### Modules à intégrer
 
@@ -148,7 +155,9 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
   option « démarrer directement en mode modulaire » au lancement de l'app.
   Les modules autres que Waveform ne persistent pas encore d'état interne
   (protocole `save_state`/`restore_state` à implémenter au cas par cas).
-- **Barre de titre custom** frameless cohérente : non faite (cadre natif pour l'instant).
+- **Fenêtres sans cadre** : déplacement (barre fine) et redimensionnement (bords)
+  reposent sur `startSystemMove` / `startSystemResize` — à **valider en usage réel**
+  (non testable en headless).
 - **Artefacts** : le modèle actuel (`frontend/labo/lab_artifact.py`) n'est pas
   encore centralisé en `ArtifactStore` avec lignée (`parent_ids`, `operation`).
 - **Drag-and-drop inter-fenêtres** + drag externe (vers Renoise/Tracker) : à faire.

@@ -29,9 +29,9 @@ def _reserve_factory(ctx):
 
 
 def _waveform_factory(ctx):
-    from frontend.labo.waveform_tool import WaveformToolWidget
+    from .waveform_module import WaveformModule
 
-    return WaveformToolWidget(ctx.app_context)
+    return WaveformModule(ctx.app_context)
 
 
 def build_default_registry() -> ModuleRegistry:
