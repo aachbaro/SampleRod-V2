@@ -39,6 +39,7 @@
 # frontend/main_window.py
 
 from PySide6.QtWidgets import (
+    QApplication,
     QMainWindow,
     QTabWidget,
     QWidget,
@@ -69,6 +70,12 @@ from frontend.notification_widgets import NotificationManager, NotificationCente
 from frontend.workspace.atelier_widget import AtelierWidget
 from frontend.styles import theme
 from frontend.activity import ActivityService, ActivityTrayWidget
+from frontend.ui import IconButton, install_fast_tooltips
+from frontend.modular import (
+    WindowManager,
+    WorkspaceWindow,
+    build_default_registry,
+)
 
 from backend.services.directory_service import DirectoryService
 
@@ -81,7 +88,11 @@ class MainWindow(QMainWindow):
         self.settings = self.app_context.settings
         self.directory_service = DirectoryService(self.app_context.sample_store)
         self.activity_service = ActivityService(self.app_context, self)
-        
+
+        # Atelier modulaire (nouvelle UI, ouverte a la demande, non destructif)
+        self._window_manager: WindowManager | None = None
+        self._workspace_window: WorkspaceWindow | None = None
+
         self._setup_window()
         self._build_ui()
         self._init_signals()
@@ -235,11 +246,24 @@ class MainWindow(QMainWindow):
 
         self.tab_widget.addTab(settings_tab, "ParamÃ¨tres")
 
-        # coin superieur droit : bouton theme + bouton notif
+        # Tooltips rapides sur toute l'application (UI icone-only)
+        app = QApplication.instance()
+        if app is not None:
+            install_fast_tooltips(app, 250)
+
+        # coin superieur droit : atelier modulaire + bouton theme + bouton notif
         _corner = QWidget()
         _corner_layout = QHBoxLayout(_corner)
         _corner_layout.setContentsMargins(0, 0, 4, 0)
         _corner_layout.setSpacing(4)
+
+        self.modular_button = IconButton(
+            "app-window",
+            tooltip="Ouvrir l'atelier modulaire (Workspace)",
+            size="s",
+        )
+        self.modular_button.clicked.connect(self._open_modular_workspace)
+        _corner_layout.addWidget(self.modular_button)
 
         self.theme_button = QPushButton()
         self.theme_button.setFixedSize(28, 28)
@@ -283,6 +307,25 @@ class MainWindow(QMainWindow):
         self._notif_badge.hide()
 
         self.app_context.notifications.notificationAdded.connect(self._increment_badge)
+
+    def _open_modular_workspace(self):
+        """Ouvre l'atelier modulaire (WindowManager + fenetre Workspace).
+
+        Construction paresseuse : le manager et la fenetre Workspace ne sont
+        crees qu'au premier clic. L'onglet Atelier classique reste intact.
+        """
+        if self._window_manager is None:
+            registry = build_default_registry()
+            self._window_manager = WindowManager(
+                self.app_context, self.directory_service, registry, self
+            )
+            self._workspace_window = WorkspaceWindow(self._window_manager)
+        # Premiere ouverture : au moins une reserve pour demarrer.
+        if not self._window_manager.instances():
+            self._window_manager.create_instance("reserve")
+        self._workspace_window.show()
+        self._workspace_window.raise_()
+        self._workspace_window.activateWindow()
 
     def _init_signals(self):
         """Connecte les signaux entre composants"""
