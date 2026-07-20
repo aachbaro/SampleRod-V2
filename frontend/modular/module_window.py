@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Signal
+from PySide6.QtCore import QEvent, QRect, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMainWindow, QWidget
 
@@ -47,6 +47,7 @@ class ModuleWindow(QMainWindow):
     """Fenetre d'une instance de module (hide-on-close + geometrie persistee)."""
 
     windowHidden = Signal(str)  # instance_id : la croix a masque la fenetre
+    activated = Signal(str)     # instance_id : la fenetre est devenue active
 
     def __init__(self, instance_id: str, title: str, content: QWidget, parent=None):
         super().__init__(parent)
@@ -91,3 +92,9 @@ class ModuleWindow(QMainWindow):
         event.ignore()
         self.hide()
         self.windowHidden.emit(self._instance_id)
+
+    def changeEvent(self, event):  # noqa: N802
+        # Fenetre devenue active -> le WindowManager remonte tout le groupe.
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self.activated.emit(self._instance_id)
+        super().changeEvent(event)

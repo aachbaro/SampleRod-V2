@@ -55,6 +55,8 @@ class WindowManager(QObject):
         self._instances: dict[str, ModuleInstance] = {}
         self._windows: dict[str, ModuleWindow] = {}
         self._counters: dict[str, int] = {}
+        self._companions: list[QWidget] = []  # fenetres hors-module (Workspace)
+        self._raising = False                 # garde anti-recursion group raise
 
     # -- Lecture ------------------------------------------------------------
     @property
@@ -206,12 +208,66 @@ class WindowManager(QObject):
             self.close_instance(instance_id)
         self._counters.clear()
 
+    # -- Groupe de fenetres / mode d'affichage ------------------------------
+    def add_companion(self, window: QWidget) -> None:
+        """Ajoute une fenetre hors-module (ex: Workspace) au groupe remonte."""
+        if window not in self._companions:
+            self._companions.append(window)
+
+    def raise_group(self, active_window: QWidget | None = None) -> None:
+        """Remonte toutes les fenetres visibles ensemble (comme une seule).
+
+        La fenetre active est remontee en dernier pour rester au-dessus.
+        Un verrou evite toute recursion via les evenements d'activation.
+        """
+        if self._raising:
+            return
+        self._raising = True
+        try:
+            group: list[QWidget] = []
+            for inst in self._instances.values():
+                if not inst.visible:
+                    continue
+                win = self._windows.get(inst.instance_id)
+                if win is not None and win.isVisible():
+                    group.append(win)
+            group.extend(c for c in self._companions if c.isVisible())
+            for win in group:
+                if win is not active_window:
+                    win.raise_()
+            if active_window is not None:
+                active_window.raise_()
+        finally:
+            self._raising = False
+
+    def suspend(self) -> None:
+        """Masque les fenetres visibles SANS changer leur etat 'visible'.
+
+        Utilise pour basculer vers l'affichage classique sans perdre la
+        composition en cours.
+        """
+        for inst in self._instances.values():
+            win = self._windows.get(inst.instance_id)
+            if win is not None and inst.visible:
+                win.hide()
+
+    def resume(self) -> None:
+        """Re-affiche les fenetres dont l'instance est marquee visible."""
+        for inst in self._instances.values():
+            win = self._windows.get(inst.instance_id)
+            if win is not None and inst.visible:
+                win.show()
+
+    def _on_window_activated(self, instance_id: str) -> None:
+        self.raise_group(active_window=self._windows.get(instance_id))
+
     # -- Interne ------------------------------------------------------------
     def _build_window(self, inst: ModuleInstance) -> ModuleWindow:
         mt = self._registry.get(inst.module_type)
         widget = mt.factory(self._context)
         win = ModuleWindow(inst.instance_id, inst.title, widget)
         win.windowHidden.connect(self._on_window_hidden)
+        win.activated.connect(self._on_window_activated)
         win.apply_geometry(inst.geometry)
         self._windows[inst.instance_id] = win
         self._connect_module_signals(inst, widget)

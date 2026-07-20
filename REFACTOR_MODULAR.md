@@ -64,8 +64,13 @@ Modèle conceptuel :
   existants tels quels).
 - **Routage Réserve → Waveform** : « envoyer au labo » depuis une Réserve ouvre
   chaque fichier dans sa propre instance Waveform.
-- **Lanceur** : bouton icône ⧉ en haut-droite de la fenêtre principale ouvre le
-  Workspace (construction paresseuse ; l'onglet Atelier classique reste intact).
+- **Toggle classique ↔ modulaire** : bouton icône ⧉ en haut-droite de la fenêtre
+  principale **bascule** vers l'atelier modulaire (masque l'affichage classique) ;
+  un bouton dans le Workspace (ou fermer le Workspace) revient au classique. Les
+  deux affichages ne sont jamais visibles en même temps.
+- **Focus groupé** : activer une fenêtre remonte tout le groupe de fenêtres
+  visibles + le Workspace au premier plan, comme si c'était une seule fenêtre
+  (le modulaire sert à organiser l'espace, pas à disperser les fenêtres).
 
 ### Arborescence des nouveaux fichiers
 
@@ -121,11 +126,14 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 ## 5. Comment essayer
 
 1. Lancer l'application normalement (`python app.py`).
-2. Cliquer le bouton icône **⧉** en **haut à droite** de la fenêtre principale.
-3. La fenêtre **Workspace** s'ouvre ; une **Réserve** apparaît en fenêtre indépendante.
-4. Depuis la Réserve, « envoyer au labo » ouvre le(s) fichier(s) en fenêtre(s) Waveform.
-5. Dans le Workspace : `+` crée une instance, l'œil affiche/masque, ✎ renomme,
+2. Cliquer le bouton icône **⧉** en **haut à droite** : bascule vers l'atelier
+   modulaire (l'affichage classique se masque). La fenêtre **Workspace** s'ouvre,
+   une **Réserve** apparaît en fenêtre indépendante.
+3. Depuis la Réserve, « envoyer au labo » ouvre le(s) fichier(s) en fenêtre(s) Waveform.
+4. Dans le Workspace : `+` crée une instance, l'œil affiche/masque, ✎ renomme,
    ⧉ duplique, ✕ ferme. Fermer une fenêtre (croix OS) la masque sans perdre son contenu.
+5. Cliquer n'importe quelle fenêtre remonte tout le groupe au premier plan.
+6. Le bouton retour du Workspace (ou fermer le Workspace) revient à l'affichage classique.
 
 ---
 

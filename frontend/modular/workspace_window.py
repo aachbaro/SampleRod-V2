@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
@@ -105,6 +105,8 @@ class _InstanceRow(QWidget):
 class WorkspaceWindow(QWidget):
     """Centre de controle compact listant les instances par categorie."""
 
+    exitRequested = Signal()  # revenir a l'affichage classique
+
     def __init__(self, window_manager: WindowManager, parent=None):
         super().__init__(parent)
         self._wm = window_manager
@@ -117,7 +119,19 @@ class WorkspaceWindow(QWidget):
         self._wm.instancesChanged.connect(self._rebuild)
         self._wm.instanceUpdated.connect(lambda *_a: self._rebuild())
         theme.manager.themeChanged.connect(lambda *_a: self._apply_styles())
+        self._wm.add_companion(self)
         self._rebuild()
+
+    def changeEvent(self, event):  # noqa: N802
+        # Workspace active -> remonte tout le groupe de fenetres visibles.
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self._wm.raise_group(active_window=self)
+        super().changeEvent(event)
+
+    def closeEvent(self, event):  # noqa: N802
+        # Fermer le Workspace = revenir a l'affichage classique.
+        event.ignore()
+        self.exitRequested.emit()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -128,10 +142,17 @@ class WorkspaceWindow(QWidget):
         header.setObjectName("WsHeader")
         header.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         h = QHBoxLayout(header)
-        h.setContentsMargins(14, 12, 12, 12)
+        h.setContentsMargins(14, 10, 8, 10)
         self._brand = QLabel("SAMPLEROD")
         self._brand.setObjectName("WsBrand")
+        self._exit_btn = IconButton(
+            "window",
+            tooltip="Revenir a l'affichage classique",
+            size="s",
+        )
+        self._exit_btn.clicked.connect(self.exitRequested.emit)
         h.addWidget(self._brand, 1)
+        h.addWidget(self._exit_btn, 0)
         root.addWidget(header)
 
         self._scroll = QScrollArea()

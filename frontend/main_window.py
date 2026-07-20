@@ -259,10 +259,10 @@ class MainWindow(QMainWindow):
 
         self.modular_button = IconButton(
             "app-window",
-            tooltip="Ouvrir l'atelier modulaire (Workspace)",
+            tooltip="Basculer vers l'atelier modulaire",
             size="s",
         )
-        self.modular_button.clicked.connect(self._open_modular_workspace)
+        self.modular_button.clicked.connect(self._enter_modular_mode)
         _corner_layout.addWidget(self.modular_button)
 
         self.theme_button = QPushButton()
@@ -308,11 +308,11 @@ class MainWindow(QMainWindow):
 
         self.app_context.notifications.notificationAdded.connect(self._increment_badge)
 
-    def _open_modular_workspace(self):
-        """Ouvre l'atelier modulaire (WindowManager + fenetre Workspace).
+    def _enter_modular_mode(self):
+        """Bascule vers l'atelier modulaire : masque l'affichage classique.
 
-        Construction paresseuse : le manager et la fenetre Workspace ne sont
-        crees qu'au premier clic. L'onglet Atelier classique reste intact.
+        Construction paresseuse du WindowManager + Workspace au premier appel.
+        On ne montre jamais les deux affichages en meme temps.
         """
         if self._window_manager is None:
             registry = build_default_registry()
@@ -320,12 +320,26 @@ class MainWindow(QMainWindow):
                 self.app_context, self.directory_service, registry, self
             )
             self._workspace_window = WorkspaceWindow(self._window_manager)
+            self._workspace_window.exitRequested.connect(self._exit_modular_mode)
         # Premiere ouverture : au moins une reserve pour demarrer.
         if not self._window_manager.instances():
             self._window_manager.create_instance("reserve")
+        # Bascule : masque le classique, affiche l'atelier modulaire.
+        self.hide()
+        self._window_manager.resume()
         self._workspace_window.show()
         self._workspace_window.raise_()
         self._workspace_window.activateWindow()
+
+    def _exit_modular_mode(self):
+        """Revient a l'affichage classique : masque l'atelier modulaire."""
+        if self._workspace_window is not None:
+            self._workspace_window.hide()
+        if self._window_manager is not None:
+            self._window_manager.suspend()
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _init_signals(self):
         """Connecte les signaux entre composants"""
