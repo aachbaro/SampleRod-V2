@@ -50,9 +50,8 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QScrollArea,
 )
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence
-import json
 import logging
 logger = logging.getLogger("main_window")
 
@@ -100,6 +99,8 @@ class MainWindow(QMainWindow):
         self._init_shortcuts()
         theme.manager.apply()
         theme.manager.themeChanged.connect(self._on_theme_changed)
+        # Restaure le dernier mode d'affichage (classique / modulaire) apres show.
+        QTimer.singleShot(0, self._apply_startup_mode)
 
     def _setup_window(self):
         """Configure la fenÃªtre principale"""
@@ -309,6 +310,8 @@ class MainWindow(QMainWindow):
 
         self.app_context.notifications.notificationAdded.connect(self._increment_badge)
 
+    _MODULAR_MODE_KEY = "modular_ui_mode"
+
     def _enter_modular_mode(self):
         """Bascule vers l'atelier modulaire : masque l'affichage classique.
 
@@ -322,16 +325,9 @@ class MainWindow(QMainWindow):
             )
             self._workspace_window = WorkspaceWindow(self._window_manager)
             self._workspace_window.exitRequested.connect(self._exit_modular_mode)
-            # Restaure la session precedente AVANT de brancher l'auto-save.
-            self._restore_modular_session()
-            self._window_manager.instancesChanged.connect(self._persist_modular_session)
-            self._window_manager.instanceUpdated.connect(
-                lambda *_a: self._persist_modular_session()
-            )
-            app = QApplication.instance()
-            if app is not None:
-                app.aboutToQuit.connect(self._persist_modular_session)
-        # Premiere ouverture (session vide) : au moins une reserve pour demarrer.
+            self._workspace_window.quitRequested.connect(self._quit_app)
+            # NOTE : la restauration des fenetres de session est desactivee
+            # pour l'instant (comportement a revoir plus tard).
         if not self._window_manager.instances():
             self._window_manager.create_instance("reserve")
         # Bascule : masque le classique, affiche l'atelier modulaire.
@@ -340,11 +336,10 @@ class MainWindow(QMainWindow):
         self._workspace_window.show()
         self._workspace_window.raise_()
         self._workspace_window.activateWindow()
+        QSettings("SampleRod", "Main").setValue(self._MODULAR_MODE_KEY, "modular")
 
     def _exit_modular_mode(self):
-        """Revient a l'affichage classique : masque l'atelier modulaire."""
-        # Capture la geometrie courante avant de masquer les fenetres.
-        self._persist_modular_session()
+        """Bascule vers l'affichage classique (les fenetres restent en memoire)."""
         if self._workspace_window is not None:
             self._workspace_window.hide()
         if self._window_manager is not None:
@@ -352,32 +347,21 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+        QSettings("SampleRod", "Main").setValue(self._MODULAR_MODE_KEY, "classic")
 
-    _MODULAR_SESSION_KEY = "modular_session_v1"
+    def _quit_app(self):
+        """Fermer l'orchestrateur ferme l'application (modes au meme niveau)."""
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
-    def _restore_modular_session(self):
-        """Recree les instances de la session precedente (si presente)."""
-        if self._window_manager is None:
-            return
-        raw = QSettings("SampleRod", "Main").value(self._MODULAR_SESSION_KEY, "", type=str)
-        if not raw:
-            return
-        try:
-            data = json.loads(raw)
-        except (ValueError, TypeError):
-            return
-        if isinstance(data, dict) and data.get("instances"):
-            self._window_manager.restore_session(data)
-
-    def _persist_modular_session(self, *_args):
-        """Sauvegarde la session modulaire courante en QSettings (JSON)."""
-        if self._window_manager is None:
-            return
-        try:
-            payload = json.dumps(self._window_manager.save_session())
-            QSettings("SampleRod", "Main").setValue(self._MODULAR_SESSION_KEY, payload)
-        except Exception:
-            pass
+    def _apply_startup_mode(self):
+        """Restaure le dernier mode d'affichage utilise (classique / modulaire)."""
+        mode = QSettings("SampleRod", "Main").value(
+            self._MODULAR_MODE_KEY, "classic", type=str
+        )
+        if mode == "modular":
+            self._enter_modular_mode()
 
     def _init_signals(self):
         """Connecte les signaux entre composants"""

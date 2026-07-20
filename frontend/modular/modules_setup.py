@@ -34,6 +34,12 @@ def _waveform_factory(ctx):
     return WaveformModule(ctx.app_context)
 
 
+def _stems_factory(ctx):
+    from frontend.labo.stem_separator_tool import StemSeparatorToolWidget
+
+    return StemSeparatorToolWidget(ctx.app_context)
+
+
 def build_default_registry() -> ModuleRegistry:
     """Registre des modules disponibles dans l'atelier modulaire (v1)."""
     registry = ModuleRegistry()
@@ -56,6 +62,17 @@ def build_default_registry() -> ModuleRegistry:
             icon="wave",
             factory=_waveform_factory,
             default_title="Waveform",
+            multi=True,
+        )
+    )
+    registry.register(
+        ModuleType(
+            type_id="stems",
+            label="Stem Lab",
+            category="STEM LABS",
+            icon="layers",
+            factory=_stems_factory,
+            default_title="Stem Lab",
             multi=True,
         )
     )

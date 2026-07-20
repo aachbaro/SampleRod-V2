@@ -322,6 +322,10 @@ class WindowManager(QObject):
             signal = getattr(widget, "sendToLaboRequested", None)
             if signal is not None:
                 signal.connect(self._open_paths_in_waveform)
+        elif inst.module_type == "waveform":
+            signal = getattr(widget, "separationRequested", None)
+            if signal is not None:
+                signal.connect(self._open_paths_in_stems)
 
     def _open_paths_in_waveform(self, paths) -> str | None:
         """Ouvre chaque fichier en ONGLET dans une instance Waveform.
@@ -332,7 +336,7 @@ class WindowManager(QObject):
         valid = [str(p) for p in (paths or []) if p and os.path.isfile(str(p))]
         if not valid or not self._registry.has("waveform"):
             return None
-        target_id = self._pick_waveform_target()
+        target_id = self._pick_target("waveform")
         if target_id is None:
             target_id = self.create_instance("waveform")
         widget = self._windows[target_id].module_widget()
@@ -346,11 +350,29 @@ class WindowManager(QObject):
         self.show_instance(target_id)
         return target_id
 
-    def _pick_waveform_target(self) -> str | None:
-        """Choisit une instance Waveform cible : une visible sinon n'importe laquelle."""
+    def _open_paths_in_stems(self, paths) -> str | None:
+        """Envoie les fichiers vers une instance Stem Lab (file de separation)."""
+        valid = [str(p) for p in (paths or []) if p and os.path.isfile(str(p))]
+        if not valid or not self._registry.has("stems"):
+            return None
+        target_id = self._pick_target("stems")
+        if target_id is None:
+            target_id = self.create_instance("stems")
+        widget = self._windows[target_id].module_widget()
+        enqueue = getattr(widget, "enqueue_paths", None)
+        if callable(enqueue):
+            try:
+                enqueue(valid)
+            except Exception:
+                pass
+        self.show_instance(target_id)
+        return target_id
+
+    def _pick_target(self, module_type: str) -> str | None:
+        """Choisit une instance cible du type : une visible sinon n'importe laquelle."""
         fallback: str | None = None
         for inst in self._instances.values():
-            if inst.module_type == "waveform":
+            if inst.module_type == module_type:
                 fallback = inst.instance_id
                 if self.is_visible(inst.instance_id):
                     return inst.instance_id

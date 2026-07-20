@@ -120,7 +120,8 @@ class _InstanceRow(QWidget):
 class WorkspaceWindow(QWidget):
     """Centre de controle compact listant les instances par categorie."""
 
-    exitRequested = Signal()  # revenir a l'affichage classique
+    exitRequested = Signal()  # basculer vers l'affichage classique (bouton toggle)
+    quitRequested = Signal()  # fermer l'application (croix de l'orchestrateur)
 
     def __init__(self, window_manager: WindowManager, parent=None):
         super().__init__(parent)
@@ -144,9 +145,10 @@ class WorkspaceWindow(QWidget):
         super().changeEvent(event)
 
     def closeEvent(self, event):  # noqa: N802
-        # Fermer le Workspace = revenir a l'affichage classique.
+        # Fermer l'orchestrateur = fermer l'application (les deux modes sont
+        # au meme niveau ; pour revenir au classique, utiliser le bouton toggle).
         event.ignore()
-        self.exitRequested.emit()
+        self.quitRequested.emit()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)

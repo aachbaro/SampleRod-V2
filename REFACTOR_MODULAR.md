@@ -60,8 +60,8 @@ Modèle conceptuel :
   (create / show / hide / rename / duplicate / close + save/restore de session
   en mémoire), fenêtres `ModuleWindow` (hide-on-close + géométrie avec clamp
   multi-écran), fenêtre **Workspace** listant les instances par catégorie.
-- **Modules branchés** : **Réserve** et **Waveform** (réutilisent les widgets
-  existants tels quels).
+- **Modules branchés** : **Réserve**, **Waveform** et **Stem Lab** (réutilisent
+  les widgets existants) ; routage Waveform → Stems (envoi au séparateur).
 - **Réserve → Waveform** : « envoyer au labo » **ou glisser-déposer** (depuis la
   Réserve ou un fichier externe) ouvre chaque fichier dans un **onglet** du module
   Waveform (réutilise une fenêtre existante ; le module est cible de drop, même vide).
@@ -71,17 +71,18 @@ Modèle conceptuel :
 - **Onglets par fichier** : le module Waveform a un onglet par fichier (bouton
   `+` pour ouvrir, onglets fermables et déplaçables).
 - **Workspace** : les actions de chaque ligne n'apparaissent qu'**au survol**.
-- **Toggle classique ↔ modulaire** : bouton icône ⧉ en haut-droite de la fenêtre
-  principale **bascule** vers l'atelier modulaire (masque l'affichage classique) ;
-  un bouton dans le Workspace (ou fermer le Workspace) revient au classique. Les
-  deux affichages ne sont jamais visibles en même temps.
+- **Deux modes au même niveau, mémorisés** : bouton icône ⧉ (haut-droite) →
+  atelier modulaire ; bouton toggle du Workspace → retour au classique. Le
+  **dernier mode est restauré au lancement** (QSettings `modular_ui_mode`).
+  **Fermer l'orchestrateur (croix du Workspace) ferme l'application** (comme
+  fermer la fenêtre classique). Les deux affichages ne sont jamais visibles
+  en même temps.
 - **Focus groupé** : activer une fenêtre remonte tout le groupe de fenêtres
   visibles + le Workspace au premier plan, comme si c'était une seule fenêtre
   (le modulaire sert à organiser l'espace, pas à disperser les fenêtres).
-- **Persistance de session** : instances (type, titre, visibilité, géométrie) et
-  **fichier chargé dans chaque Waveform** sauvegardés en QSettings et restaurés à
-  l'entrée en mode modulaire (avec sécurité multi-écran). Un module expose son
-  état via `save_state()` / `restore_state()`.
+- **Mode mémorisé** : le dernier mode (classique / modulaire) est restauré au
+  lancement. La restauration des *fenêtres* de session est temporairement
+  désactivée (voir Limites).
 
 ### Arborescence des nouveaux fichiers
 
@@ -117,7 +118,7 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 | 3 | Plusieurs Waveforms (fenêtres, état indépendant, restauration) | ✅ module + multi-instances + routage + restauration de session |
 | 4 | Modèle central d'artefact (id, chemin, métadonnées, lignée) | ⬜ (LabArtifact existe → à formaliser en ArtifactStore) |
 | 5 | Drag-and-drop d'artefacts (MIME `application/x-samplerod-artifact`) | ⬜ |
-| 6 | Sauvegarde/restauration de session + workspaces nommés      | 🟡 persistée en QSettings + restaurée à l'entrée modulaire ; **workspaces nommés multiples à faire** |
+| 6 | Sauvegarde/restauration de session + workspaces nommés      | 🟡 mode mémorisé ✅ · restauration des fenêtres **désactivée** (temporaire) · workspaces nommés ⬜ |
 | 7 | Onglets par fichier (module) ✅ · regroupement/détachement d'instances ⬜ | 🟡 |
 
 ### Modules à intégrer
@@ -126,7 +127,7 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 | ------------------------------ | ------ |
 | Réserve de samples             | ✅ branché |
 | Waveform / éditeur de découpe  | ✅ branché |
-| Laboratoire de stems           | ⬜ |
+| Laboratoire de stems           | ✅ branché (routage Waveform→Stems) |
 | Générateur de breaks           | ⬜ |
 | Compositeur                    | ⬜ |
 | Bins d'export                  | ⬜ |
@@ -151,11 +152,11 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 
 ## 6. Limites connues / différé
 
-- **Restauration de session** : faite à l'entrée en mode modulaire (QSettings,
-  clé `modular_session_v1`). Reste à faire : **workspaces nommés multiples** et
-  option « démarrer directement en mode modulaire » au lancement de l'app.
-  Les modules autres que Waveform ne persistent pas encore d'état interne
-  (protocole `save_state`/`restore_state` à implémenter au cas par cas).
+- **Restauration des fenêtres de session : DÉSACTIVÉE pour l'instant** (elle
+  créait trop de désordre). La machinerie (`save_session`/`restore_session`,
+  `save_state`/`restore_state`) reste en place mais n'est plus câblée dans
+  `MainWindow` — à réactiver plus tard, avec workspaces nommés multiples.
+  Seul le **mode** (classique/modulaire) est mémorisé, pas les fenêtres.
 - **Fenêtres sans cadre** : déplacement (barre fine) et redimensionnement (bords)
   reposent sur `startSystemMove` / `startSystemResize` — à **valider en usage réel**
   (non testable en headless).
