@@ -58,23 +58,23 @@ SampleRod est organisé comme un atelier en deux espaces principaux :
 
 ### Réserve
 
-Espace où l’on stocke et explore la matière sonore :
+Espace où l'on stocke et explore la matière sonore :
 
-- historique d’enregistrement
+- historique d'enregistrement
 - navigation dans les fichiers (filesystem réel)
 - bibliothèque indexée
 - recherche et filtres (futur)
 
-La Réserve est la source de toute matière utilisée dans l’application.
+La Réserve est la source de toute matière utilisée dans l'application.
 
 ### Labo
 
 Espace de transformation :
 
-- compositeur
+- waveform editor
+- break processing + générateur de patterns
 - stem separation
-- break processing
-- analyse
+- compositeur d'assemblage
 - resample chain (futur)
 
 Le Labo permet de transformer la matière.
@@ -96,11 +96,11 @@ Réserve → Labo → Réserve
 
 ```
 samplerod/
-├── app.py                      # entry point desktop (PySide6)
+├── app.py                          # entry point desktop (PySide6)
 ├── backend/
-│   ├── db.py                   # SQLAlchemy, sqlite:///sample.db
+│   ├── db.py                       # SQLAlchemy, sqlite:///sample.db
 │   ├── models/
-│   │   ├── sample.py           # modèle Sample (path/name/duration/created_at)
+│   │   ├── sample.py               # Sample (+ dominant_note, analyzed_at)
 │   │   ├── SampleLibrary.py
 │   │   ├── AppContext.py
 │   │   ├── recorder_worker.py
@@ -108,35 +108,81 @@ samplerod/
 │   │   ├── integrity_worker.py
 │   │   └── screenshot.py
 │   └── services/
-│       ├── sample_service.py       # CRUD samples + cache + signaux Qt
+│       ├── sample_service.py           # CRUD samples + cache + signaux Qt
 │       ├── directory_service.py
 │       ├── recorder_service.py
 │       ├── remote_control_service.py   # FastAPI/WS, sert frontend/remote_ui
 │       ├── screenshot_service.py
 │       ├── settings_service.py
-│       └── notification_service.py
+│       ├── notification_service.py
+│       ├── library_service.py          # gestion des bibliothèques externes
+│       ├── audio_metadata.py           # lecture metadata audio (durée, samplerate)
+│       ├── drum_analysis_service.py    # détection transients, classification hits
+│       ├── scale_analysis_service.py   # détection de gamme (librosa)
+│       └── stem_separator_service.py   # séparation de stems (Demucs)
 ├── frontend/
-│   ├── main_window.py          # fenêtre principale (tabs)
-│   ├── record_widget.py        # widget flottant d'enregistrement
-│   ├── sample_gui/             # liste, cartes, waveform editor
-│   ├── right_panel/
-│   │   ├── directory/          # file browser (history, preview, DnD)
-│   │   └── composer/           # timeline d'assemblage
-│   ├── screenshot_gui/
-│   ├── settings_gui/
-│   ├── remote_ui/              # UI React pour mobile
+│   ├── main_window.py              # fenêtre principale
+│   ├── record_widget.py            # widget flottant d'enregistrement
+│   ├── record_widget_ui.py
 │   ├── custom_widgets.py
 │   ├── notification_widgets.py
-│   └── splash.py
+│   ├── splash.py
+│   ├── styles/
+│   │   └── theme.py                # feuille de style globale
+│   ├── activity/                   # système de tâches de fond
+│   │   ├── activity_service.py
+│   │   └── activity_tray.py        # barre de progression flottante
+│   ├── workspace/
+│   │   └── atelier_widget.py       # layout principal Réserve / Labo
+│   ├── reserve/                    # espace Réserve
+│   │   ├── reserve_pane.py
+│   │   ├── reserve_actions.py
+│   │   └── reserve_entry.py
+│   ├── labo/                       # espace Labo (module complet)
+│   │   ├── labo_widget.py          # conteneur tabs : Waveform / Break / Stems / Compositeur
+│   │   ├── waveform_tool.py        # waveform editor du Labo
+│   │   ├── waveform_tool_dnd.py    # drag & drop vers le Labo
+│   │   ├── break_widget.py         # analyseur audio + découpeur + annotation hits
+│   │   ├── break_panel.py          # panneau de contrôle break
+│   │   ├── break_generator_panel.py # générateur de patterns (knobs + 4 onglets)
+│   │   ├── stem_separator_tool.py  # interface séparation de stems
+│   │   ├── artifact_tray.py        # barre d'artefacts générés
+│   │   ├── bins_panel.py           # bacs de rangement des slices
+│   │   ├── lab_artifact.py         # modèle d'artefact Labo
+│   │   └── audio_drop.py           # zone de dépôt audio
+│   ├── library_gui/                # gestion des bibliothèques
+│   │   ├── library_widget.py
+│   │   ├── library_detail.py
+│   │   └── library_ui.py
+│   ├── sample_gui/                 # liste, cartes, waveform editor Réserve
+│   │   ├── wave_form.py
+│   │   ├── marker_manager.py
+│   │   ├── sample/                 # refactorisé en sous-modules
+│   │   │   ├── sample_card.py + _actions / _interactions / _move
+│   │   │   ├── sample_card_playback / _selection / _status / _ui / _waveform
+│   │   │   └── sample_list.py + _cards / _dragdrop / _import / _normalize
+│   │   │       + _pagination / _selection / _service / _ui
+│   │   └── waveform/               # refactorisé en sous-modules
+│   │       ├── waveform_ui.py + _loader / _markers / _playback / _renderer
+│   │       └── _interactions / _navigation / _region / _save / _shortcuts
+│   │           + history_stack / waveform_history / waveform_plot_helpers
+│   ├── right_panel/
+│   │   ├── tab_bar.py
+│   │   ├── tools_panel.py
+│   │   ├── directory/              # file browser (history, preview, DnD)
+│   │   └── composer/               # timeline d'assemblage
+│   ├── screenshot_gui/
+│   ├── settings_gui/               # audio / display / libraries / remote / screenshot
+│   └── remote_ui/                  # UI React pour mobile
 ├── prototypes/
-│   ├── drum_detector/          # analyzer + pattern_generator + UI (isolé)
-│   └── scale_detector/         # librosa, détection de gamme (isolé)
-├── tools/squirrel/             # toolchain release Windows
-├── scripts/                    # build_release.ps1 + publish_release.ps1
-├── site/                       # site marchand Django (samplerod.pascuans.dev)
-├── SampleRod.spec              # PyInstaller
-├── VERSION                     # version courante (ex: 0.1.3)
-└── sample.db                   # base locale
+│   ├── drum_detector/              # référence algo (migré → drum_analysis_service)
+│   └── scale_detector/             # référence algo (migré → scale_analysis_service)
+├── tools/squirrel/                 # toolchain release Windows
+├── scripts/                        # build_release.ps1 + publish_release.ps1
+├── site/                           # site marchand Django (samplerod.pascuans.dev)
+├── SampleRod.spec                  # PyInstaller
+├── VERSION                         # 0.1.3
+└── sample.db                       # base locale
 ```
 
 **Trois couches qu'il faut garder séparées :**
@@ -146,10 +192,10 @@ samplerod/
 - `frontend/` = UI pure, consomme les services
 
 **Un pattern précieux à conserver :** les prototypes (`drum_detector`,
-`scale_detector`) sont volontairement isolés du runtime principal. Ça permet
-d'itérer sur un algo bancal sans casser l'app. Le plan d'intégration tient en
+`scale_detector`) sont volontairement conservés comme référence algorithmique,
+même une fois leur code migré en service. Le plan d'intégration tient en
 une phrase : **« un proto devient un `backend/services/<nom>_service.py` une
-fois son algo stable »**.
+fois son algo stable »** — c'est fait pour les deux.
 
 ---
 
@@ -160,7 +206,7 @@ Légende : [x] opérationnel · [~] partiel · [ ] à faire
 ### Module 1 — Core audio [~]
 
 - [x] Enregistrement système (`recorder_service`, `recorder_worker`)
-- [x] Lecture + waveform (`sample_gui/waveform`)
+- [x] Lecture + waveform (`sample_gui/waveform` — refactorisé en sous-modules)
 - [x] Découpe / sélection sur waveform
 - [x] Normalisation (`normalize_worker`)
 - [x] Assemblage basique (`right_panel/composer`)
@@ -174,55 +220,60 @@ Légende : [x] opérationnel · [~] partiel · [ ] à faire
 - [ ] Indexation persistante (scan dossier → DB)
 - [ ] Lien avec les futurs attributs Sample DNA
 
-### Module 3 — Break Processing [~, en proto]
+### Module 3 — Break Processing [x]
 
-- [x] `prototypes/drum_detector/` : détection transients, classification hits,
-      générateur de breaks quantifié
-- [ ] Export one-shots (kick / snare / hat par slice)
-- [ ] Intégration dans l'app principale (service + UI dédiée)
+- [x] `drum_analysis_service.py` : détection transients, classification hits,
+      quantize, reanalyse depuis marqueurs manuels
+- [x] `labo/break_widget.py` : UI complète (waveform annotée, bacs de hits,
+      déclencher analyse depuis marqueurs sans découpe auto)
+- [x] `labo/break_generator_panel.py` : générateur de patterns (4 onglets :
+      Groove / Variations / Pitch / Rendu, knobs, preview en boucle)
+- [x] `labo/bins_panel.py` : rangement et lecture des slices par type (kick / snare / hat…)
+- [x] `labo/artifact_tray.py` : barre d'artefacts produits par le Labo
+- [ ] Export one-shots individuel vers la Réserve (UI non finalisée)
 
-### Module 4 — Stem Separation [ ]
+### Module 4 — Stem Separation [~]
 
-- Rien en code pour l'instant.
-- Cible : Demucs en sous-process (pas d'embedded model à la première passe).
-- Contraintes : **pas de YouTube** dans SampleRod ; l'entrée est toujours un
-  fichier local.
+- [x] `stem_separator_service.py` : séparation Demucs en sous-process (queue async)
+- [x] `labo/stem_separator_tool.py` : UI de lancement + suivi progression
+- [x] `frontend/activity/` : système ActivityService + ActivityTrayWidget pour
+      toutes les tâches de fond longues (stems, analyse, etc.)
+- [ ] Réinjection automatique des stems dans la Réserve
 
-### Module 5 — Analyse musicale [~, partiel]
+### Module 5 — Analyse musicale [~]
 
-- [x] Détection de gamme : `prototypes/scale_detector/` (librosa)
-- [ ] Détection BPM : rien
+- [x] `scale_analysis_service.py` : détection de gamme (librosa), intégré dans l'app
+- [x] Badge de tonalité sur les sample cards (`dominant_note` affiché)
+- [x] Filtre « Compatible avec » dans la liste de samples
+- [ ] Détection BPM
 - [ ] Score de confiance exposé à l'UI
-- [ ] Intégration : service unifié `analysis_service.py` qui wrappe les deux
+- [ ] Service unifié `analysis_service.py` qui wrappe gamme + BPM + énergie
 
-### Module 6 — Sample DNA [ ] ← le gros chantier
+### Module 6 — Sample DNA [~] ← chantier en cours
 
-Actuellement `Sample` stocke seulement :
+Le modèle `Sample` stocke maintenant :
 
 ```python
-id, path, name, duration, created_at
+id, path, name, duration, created_at, analyzed_at, dominant_note
 ```
 
-Il manque les colonnes qui rendent tout le reste possible :
+Il manque encore les colonnes suivantes pour compléter le DNA :
 
-- `key` (string, ex: "C#m") + `key_confidence` (float)
+- `key_confidence` (float)
 - `bpm` (float) + `bpm_confidence` (float)
 - `sample_type` (enum: drum / texture / melodic / vocal / fx / loop / one_shot)
 - `energy` (enum low/mid/high ou float RMS normalisé)
 - `spectral_profile` (JSON optionnel, plus tard)
-- `analyzed_at` (datetime nullable) — pour savoir ce qui reste à analyser
 
-Ça se fait via une migration Alembic (pas encore en place dans le projet —
-à ajouter en même temps que ces colonnes).
+**Important :** les migrations Alembic ne sont pas encore en place.
+Les colonnes actuelles (`analyzed_at`, `dominant_note`) ont été ajoutées
+manuellement. Toute nouvelle colonne DNA doit s'accompagner d'une migration
+versionnée — c'est le moment d'installer Alembic.
 
-### Module 7 — Recherche intelligente [ ]
+### Module 7 — Recherche intelligente [~]
 
-Dépend du module 6. Une fois les colonnes DNA en place :
-
-- barre de recherche existante → extension avec filtres (key / bpm / type /
-  énergie)
-- requête type : « samples compatibles avec {id} » = même key ± voisins (V/IV),
-  BPM ±10%, type ≠ current.
+- [x] Filtre « Compatible avec » (même `dominant_note`) sur la liste principale
+- [ ] Filtres multi-critères (BPM, type, énergie) — dépend du module 6 complet
 
 ### Module 8 — Suggestions automatiques [ ]
 
@@ -271,32 +322,35 @@ ressort des samples oubliés depuis > 30 jours. Nécessite Sample DNA.
 **Principe :** on ne passe à une phase qu'une fois la précédente propre.
 Pas d'intelligence par-dessus une base bancale.
 
-### 🔴 Phase 1 — Solidifier (obligatoire)
+### ✅ Phase 1 — Solidifier (terminée)
+
+- Core audio stabilisé (waveform refactorisée en sous-modules)
+- File browser `right_panel/directory/` complet
+- README unifié (ce document)
+- `record_widget` refactorisé (UI / logique séparées)
+
+### ✅ Phase 2 — Identité produit (terminée)
+
+- `drum_analysis_service.py` intégré depuis le prototype
+- UI Break complète dans `frontend/labo/` (break_widget, bins_panel, generator)
+- `stem_separator_service.py` + `stem_separator_tool.py` (Demucs async)
+- `activity_service.py` + `activity_tray.py` pour toutes les tâches longues
+
+### 🟠 Phase 3 — Intelligence (Sample DNA) — en cours
 
 _Tu es ici._
 
-- Stabiliser core audio (bugs de lecture loop, export propre)
-- Finir le file browser côté « indexation DB »
-- Nettoyer les 8 README éparpillés (fait via ce document)
-- Unifier les dépendances (tu as 3 fichiers : `requirements.txt`,
-  `requirement.txt`, `requirements-release.txt` — garder 2 max)
+- [x] `scale_analysis_service.py` intégré (détection gamme)
+- [x] `dominant_note` stocké en DB, badge dans l'UI
+- [x] Filtre « Compatible avec » (même tonalité)
+- [ ] Migrations Alembic à mettre en place (colonne par colonne, versionnées)
+- [ ] Détection BPM (`librosa.beat_track`)
+- [ ] Colonnes DNA restantes : `bpm`, `sample_type`, `energy`, `key_confidence`
+- [ ] Backfill async de la DB existante
 
-### 🟠 Phase 2 — Identité produit
+### 🟡 Phase 4 — Magie
 
-- Intégrer le drum_detector comme service (`break_service.py`) + UI dédiée
-- Ajouter l'export one-shots automatique
-- Intégrer Demucs en sous-process pour la stem separation (queue async)
-
-### 🟡 Phase 3 — Intelligence (Sample DNA)
-
-- Migration SQLAlchemy/Alembic pour ajouter les colonnes DNA
-- Intégrer scale_detector comme `analysis_service.py`
-- Ajouter la détection BPM (librosa `beat_track` pour commencer)
-- Backfill async de la DB existante
-
-### 🟢 Phase 4 — Magie
-
-- Recherche avancée multi-filtres
+- Recherche avancée multi-filtres (key / BPM / type / énergie)
 - Moteur de suggestions rule-based
 - UI « samples compatibles avec celui-ci »
 
@@ -311,7 +365,7 @@ _Tu es ici._
 
 ## Backlog court terme
 
-Bugs et petites features à traiter en parallèle de la phase 1 :
+Bugs et petites features à traiter :
 
 **UX / bugs**
 
@@ -328,11 +382,14 @@ Bugs et petites features à traiter en parallèle de la phase 1 :
 - Préfixeur par sélection multiple (nom commun + nom initial)
 - Fonction `goto_sample(id)` → scroll + focus dans la liste
   (utile pour les notifs et les liens remote)
+- Export one-shots depuis les bacs Break vers la Réserve
+- Réinjection automatique des stems dans la Réserve après séparation
 
 **Dette tech**
 
-- Refactor `record_widget.py` (séparer UI / logique comme les autres widgets)
-- Découper les fichiers trop gros
+- Mettre en place Alembic (migrations versionnées) — obligatoire avant
+  d'ajouter de nouvelles colonnes DNA
+- Ajouter `bpm` et `sample_type` au modèle Sample (avec migration Alembic)
 
 **Déjà faits (gardé comme trace)**
 
@@ -344,6 +401,14 @@ Bugs et petites features à traiter en parallèle de la phase 1 :
 - Refactor sample_card + sample_list ✓
 - Arborescence `frontend/` regroupée ✓
 - Refonte UI Directory Widget ✓
+- Break Processing intégré (service + UI complète dans Labo) ✓
+- Stem Separation avec Demucs async ✓
+- Détection de gamme intégrée + badge dominant_note ✓
+- Filtre « Compatible avec » (même tonalité) ✓
+- ActivityService + ActivityTrayWidget (tâches de fond) ✓
+- KnobWidget personnalisé (potentiomètres sans scroll molette) ✓
+- Générateur de patterns Break (4 onglets, preview en boucle) ✓
+- `record_widget` refactorisé (UI / logique séparées) ✓
 
 ---
 
@@ -358,9 +423,11 @@ Bugs et petites features à traiter en parallèle de la phase 1 :
    réelles + intégrer dans le flux utilisateur. Une feature pas finie est de la
    dette, pas un acquis.
 4. **Ne pas coupler les prototypes à l'app.** Le pattern actuel (prototypes
-   isolés) est bon. On ne migre un proto en service qu'une fois l'algo stable.
+   isolés comme référence) est bon. On ne migre un proto en service qu'une fois
+   l'algo stable.
 5. **Ne pas laisser la DB dériver.** Chaque changement de modèle = migration
-   Alembic versionnée. Pas de « drop sample.db et reconstruis ».
+   Alembic versionnée. Pas de « drop sample.db et reconstruis ». Alembic est
+   prioritaire avant toute nouvelle colonne DNA.
 
 ---
 
@@ -383,4 +450,4 @@ est le point d'entrée ; les suivants entrent dans les détails d'implémentatio
 
 ---
 
-_Dernière mise à jour : 21 avril 2026 — version courante : voir `VERSION`._
+_Dernière mise à jour : 24 avril 2026 — version courante : voir `VERSION`._
