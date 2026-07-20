@@ -1,3 +1,45 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Le PLATEAU DES ARTEFACTS, en bas de l'onglet Labo : la liste de tout ce
+#   que les outils ont produit (slices, stems, breaks...), avec pour chaque
+#   ligne : lecture/pause, curseur de position, suppression, et menu complet.
+# - C'est aussi un point de DEPART de glisser-deposer : on peut tirer un
+#   artefact vers un dossier, la Reserve, le Compositeur... La semantique
+#   est "deplacer" : une fois depose ailleurs, l'artefact quitte le plateau
+#   (et son fichier temporaire est supprime si la cible a fait une copie).
+#
+# CLASSES ET FONCTIONS (sommaire)
+# - _fmt_ms()     : millisecondes -> "M:SS" ou "X.Xs".
+# - _short_kind() : type -> badge court (CUT, STEM, FILE, QTZ, BRK).
+# - ArtifactTrayRow (QWidget) : une ligne du plateau
+#   - signaux : previewRequested, saveRequested, openRequested,
+#     seekRequested, removeRequested(id, supprimer_fichier?).
+#   - _build_ui()  : bouton play, badge, nom tronque, slider, temps, croix.
+#   - refresh()    : remet la ligne en accord avec la fiche (tooltip riche).
+#   - set_playing()/update_position()/_reset_position()/_apply_play_state():
+#     suivi visuel de la lecture.
+#   - _on_slider_moved() : demande de saut de position pendant le drag.
+#   - mouseDoubleClickEvent() : double-clic = ouvrir dans Waveform.
+#   - mousePress/MoveEvent + _start_drag() : drag du fichier vers une cible
+#     externe (avec suppression de la source selon le resultat du drop).
+#   - contextMenuEvent() : menu clic-droit (lire, ouvrir, sauvegarder,
+#     ouvrir le dossier, supprimer).
+# - ArtifactTrayWidget (QWidget) : le plateau complet
+#   - signaux : saveArtifactRequested, openArtifactRequested (vers LaboWidget).
+#   - _build_ui()/_toggle_expand() : en-tete repliable + liste.
+#   - upsert_artifact()/set_artifacts()/artifact() : gestion des lignes.
+#   - _on_remove_requested() : retire la ligne (et le fichier si demande).
+#   - _toggle_preview()/_on_seek_requested() : pilotage du lecteur audio
+#     partage (un faux "sample_id" est derive du hash de l'artefact).
+#   - _is_playing()/_sync_preview_state() : synchronisation 10x/s de l'etat
+#     visuel avec le lecteur.
+#   - _update_count()/_apply_styles().
+#
+# LIENS CLES
+# - frontend/labo/labo_widget.py : cree le plateau et traite save/open.
+# - backend/models/AppContext.py : AudioPlayer (lecteur partage).
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -43,16 +85,20 @@ def _fmt_ms(ms: float) -> str:
 
 
 def _short_kind(kind: str) -> str:
+    """Type d'artefact -> badge court affiche dans la ligne."""
     return {
         "slice": "CUT",
         "stem": "STEM",
         "current_file": "FILE",
         "break_preview": "QTZ",
+        "break_pattern": "BRK",
     }.get(kind, kind.upper()[:4])
 
 
 
 class ArtifactTrayRow(QWidget):
+    """Une ligne du plateau : [play] [badge] nom [slider] temps [x]."""
+
     previewRequested = Signal(str)
     saveRequested = Signal(str)
     openRequested = Signal(str)
@@ -131,6 +177,12 @@ class ArtifactTrayRow(QWidget):
     # Mise à jour des données
 
     def refresh(self) -> None:
+        """Met la ligne en accord avec la fiche de l'artefact.
+
+        Met a jour badge, nom (tronque avec "..." si trop long), bornes du
+        slider, tooltip detaille, et desactive lecture/slider si le fichier
+        audio n'existe plus.
+        """
         artifact = self.artifact
         active_path = artifact_file_path(artifact)
         stem_name = str(artifact.metadata.get("stem_name", "") or "").strip()
@@ -268,6 +320,13 @@ class ArtifactTrayRow(QWidget):
             self.removeRequested.emit(self.artifact.artifact_id, True)
 
     def _start_drag(self) -> None:
+        """Demarre le glisser-deposer du fichier de l'artefact.
+
+        Le fichier est propose comme URL locale (compris par l'explorateur
+        Windows et par les zones de depot de l'application). Quelle que soit
+        la maniere dont la cible le recoit (move ou copy), l'artefact est
+        ensuite retire du plateau : il ne doit vivre qu'a UN seul endroit.
+        """
         path = artifact_file_path(self.artifact)
         if not path or not os.path.isfile(path):
             return
@@ -290,6 +349,8 @@ class ArtifactTrayRow(QWidget):
 # ======================================================================
 
 class ArtifactTrayWidget(QWidget):
+    """Le plateau complet : en-tete repliable + liste des artefacts."""
+
     saveArtifactRequested = Signal(str)
     openArtifactRequested = Signal(str)
 
@@ -359,6 +420,7 @@ class ArtifactTrayWidget(QWidget):
     # Gestion des artefacts
 
     def upsert_artifact(self, artifact: LabArtifact) -> None:
+        """Ajoute une ligne pour l'artefact, ou met a jour l'existante."""
         row_data = self._rows.get(artifact.artifact_id)
         if row_data is None:
             item = QListWidgetItem(self.list_widget)
@@ -381,6 +443,7 @@ class ArtifactTrayWidget(QWidget):
         self._sync_preview_state()
 
     def set_artifacts(self, artifacts: list[LabArtifact]) -> None:
+        """Remplace tout le contenu du plateau par la liste donnee."""
         self.list_widget.clear()
         self._rows.clear()
         for artifact in artifacts:
@@ -388,6 +451,7 @@ class ArtifactTrayWidget(QWidget):
         self._update_count()
 
     def artifact(self, artifact_id: str) -> LabArtifact | None:
+        """Retrouve la fiche d'un artefact affiche (None si absent)."""
         row_data = self._rows.get(artifact_id)
         return row_data[1].artifact if row_data else None
 
@@ -428,6 +492,12 @@ class ArtifactTrayWidget(QWidget):
     # Lecture
 
     def _toggle_preview(self, artifact_id: str) -> None:
+        """Lance/pause l'ecoute d'un artefact via le lecteur partage.
+
+        Le lecteur identifie les sons par un id numerique : les artefacts
+        n'en ayant pas, on en derive un (stable) du hash de leur id texte.
+        Si un autre artefact joue deja, on l'arrete d'abord.
+        """
         artifact = self.artifact(artifact_id)
         if artifact is None:
             return
@@ -459,6 +529,7 @@ class ArtifactTrayWidget(QWidget):
         self._sync_preview_state()
 
     def _on_seek_requested(self, artifact_id: str, pos_ms: float) -> None:
+        """Saute a la position demandee (drag du slider d'une ligne)."""
         artifact = self.artifact(artifact_id)
         if artifact is None:
             return
@@ -476,6 +547,7 @@ class ArtifactTrayWidget(QWidget):
         self._sync_preview_state()
 
     def _is_playing(self, artifact: LabArtifact) -> bool:
+        """Vrai si le lecteur partage joue actuellement CE fichier."""
         path = artifact_file_path(artifact)
         if not path:
             return False
@@ -486,6 +558,7 @@ class ArtifactTrayWidget(QWidget):
         return current == os.path.normcase(os.path.normpath(path))
 
     def _sync_preview_state(self) -> None:
+        """Synchronise toutes les lignes avec le lecteur (appele 10x/s)."""
         player = self.app_context.audio_player
         pos_ms = -1.0
         try:

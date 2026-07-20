@@ -1,14 +1,39 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Panneau de correction manuelle des hits detectes par le drum analyzer.
-# - Affiche la liste des slices, permet la lecture et la re-classification.
-# - Bouton "re-analyser depuis les markers" pour forcer une nouvelle passe
-#   avec les markers courants du waveform tool.
+# - Panneau de CORRECTION MANUELLE des coups detectes par l'analyse de break :
+#   l'algorithme se trompe parfois (un kick pris pour un tom...), ce panneau
+#   permet d'ecouter chaque coup et de corriger son type a la main.
+# - Les corrections sont stockees comme "overrides" {index du coup -> type} :
+#   l'analyse d'origine n'est pas modifiee, on garde la correction par-dessus.
+# - Propose aussi une detection de gamme du break (utile pour les breaks
+#   melodiques) affichee en "pilules" colorees.
+#
+# CLASSES ET FONCTIONS (sommaire)
+# - HIT_LABELS / HIT_SHORT / HIT_COLOR : le catalogue des types de coups
+#   (kick, snare, hats...), leurs abreviations et leurs couleurs.
+# - _hit_color()  : couleur d'un type (gris si inconnu).
+# - _play_slice() : ecoute non-bloquante d'un coup via sounddevice
+#   (dans un thread, pour ne pas geler l'interface).
+# - HitRow (QWidget) : une ligne = un coup (bouton play, badge colore,
+#   position, type) ; signaux selected / playClicked.
+#   - set_selected()/set_label()/_refresh_badge_style().
+# - HitTypeEditor (QWidget) : la grille de boutons pour choisir le type ;
+#   signal labelPicked.
+# - _ScaleWorker (QThread) : detection de gamme en arriere-plan.
+# - ScaleResultWidget (QWidget) : affichage du resultat de gamme (pilules).
+# - BreakPanelWidget (QWidget) : le panneau complet
+#   - set_source_path()/set_result() : alimentation depuis l'onglet Break.
+#   - get_overrides()    : les corrections manuelles posees.
+#   - effective_label()  : type effectif d'un coup (override > detection).
+#   - _rebuild_list()/_refresh_info_bar() : reconstruction de la liste.
+#   - _on_row_selected()/_on_play_clicked()/_on_label_selected() : les
+#     interactions (selection, ecoute, correction de type).
+#   - _run_scale_detection()/_on_scale_finished()/_on_scale_failed().
+#   - _hit_by_index()/_apply_styles().
 #
 # LIENS CLES
-# - frontend/labo/labo_widget.py  (ajout de l'onglet Break)
-# - frontend/labo/waveform_tool.py  (signal analysisResultChanged)
-# - backend/services/drum_analysis_service.py  (reanalyze_from_markers)
+# - frontend/labo/break_widget.py : heberge ce panneau et lit les overrides.
+# - backend/services/drum_analysis_service.py : la source des analyses.
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -544,11 +569,13 @@ class BreakPanelWidget(QWidget):
         return dict(self._overrides)
 
     def effective_label(self, hit: DrumSlice) -> str:
+        """Type effectif d'un coup : la correction manuelle prime sur la detection."""
         return self._overrides.get(hit.index, hit.label)
 
     # ── Construction de la liste ───────────────────────────────────────────────
 
     def _rebuild_list(self) -> None:
+        """Reconstruit la liste des lignes de coups depuis l'analyse courante."""
         # Supprimer les anciennes rows
         for row in self._rows.values():
             self._list_layout.removeWidget(row)
@@ -574,6 +601,7 @@ class BreakPanelWidget(QWidget):
             self._rows[hit.index] = row
 
     def _refresh_info_bar(self) -> None:
+        """Met a jour le bandeau d'infos : "172.0 BPM · 14 hits · break"."""
         r = self._result
         if r is None:
             self._info_bar.setText("Aucune analyse chargee.")
@@ -588,6 +616,7 @@ class BreakPanelWidget(QWidget):
     # ── Interactions ───────────────────────────────────────────────────────────
 
     def _on_row_selected(self, index: int) -> None:
+        """Selection d'un coup : surbrillance + ouverture de l'editeur de type."""
         # Deselectionner l'ancien
         if self._selected_index is not None and self._selected_index != index:
             old = self._rows.get(self._selected_index)
@@ -608,6 +637,7 @@ class BreakPanelWidget(QWidget):
             self._type_sep.setVisible(True)
 
     def _on_play_clicked(self, index: int) -> None:
+        """Ecoute du coup clique (et selection de sa ligne)."""
         hit = self._hit_by_index(index)
         if hit is None or self._result is None:
             return
@@ -616,6 +646,7 @@ class BreakPanelWidget(QWidget):
         self._on_row_selected(index)
 
     def _on_label_selected(self, label: str) -> None:
+        """L'utilisateur a choisi un type : on pose la correction (override)."""
         if self._selected_index is None:
             return
         self._overrides[self._selected_index] = label
@@ -624,6 +655,7 @@ class BreakPanelWidget(QWidget):
             row.set_label(label)
 
     def _run_scale_detection(self) -> None:
+        """Lance la detection de gamme du fichier en arriere-plan."""
         if not self._source_path:
             return
         self._scale_detect_btn.setEnabled(False)
@@ -659,6 +691,7 @@ class BreakPanelWidget(QWidget):
         self._scale_result.clear()
 
     def _hit_by_index(self, index: int) -> DrumSlice | None:
+        """Retrouve un coup de l'analyse par son index (None si absent)."""
         if self._result is None:
             return None
         return next((s for s in self._result.slices if s.index == index), None)

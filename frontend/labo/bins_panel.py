@@ -1,3 +1,42 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Le panneau des BINS (bacs), colonne de droite de l'onglet Labo : des
+#   bulles rondes representant chacune un DOSSIER du disque, pour trier la
+#   matiere audio a la volee sans ouvrir ces dossiers.
+# - Usage : on glisse n'importe quoi d'audio (slice, carte de sample,
+#   fichier, artefact) sur une bulle -> le fichier est DEPLACE dans le
+#   dossier du bin. Clic droit sur une bulle : ouvrir dans la Reserve,
+#   ouvrir dans l'explorateur, retirer le bin.
+# - La liste des bins est memorisee en JSON dans QSettings : on retrouve
+#   ses bacs d'une session a l'autre (les dossiers disparus sont ignores).
+#
+# CLASSES ET FONCTIONS (sommaire)
+# - LaboBin (dataclass)   : un bin = id + etiquette + chemin du dossier.
+# - BinBubble (QWidget)   : la bulle visuelle d'un bin
+#   - signaux : openInReserveRequested, removeRequested, moveHereRequested.
+#   - drag*/dropEvent     : accepte le survol/depot des contenus supportes,
+#     avec mise en evidence (bordure bleue) pendant le survol.
+#   - contextMenuEvent    : le menu clic-droit.
+#   - _set_drop_active()/_refresh() : etat visuel et textes.
+# - LaboBinsPanel (QWidget) : la colonne complete
+#   - signaux : openInReserveRequested, reserveRefreshRequested,
+#     sourcePathsMoved (pour que la Reserve se rafraichisse).
+#   - _choose_bin_folder()/add_bin()/_remove_bin() : gestion des bins.
+#   - _load_bins()/_save_bins() : persistance JSON dans QSettings.
+#   - _rebuild()          : reconstruit toutes les bulles.
+#   - _on_move_here_requested() : LE coeur — traite un depot selon sa
+#     nature : slice (audio brut a ecrire en WAV), carte de sample (deplace
+#     via SampleService), fichiers (deplaces, ou via SampleService s'ils
+#     sont deja suivis en base).
+#   - _unique_target_path() : evite d'ecraser un fichier existant.
+# - _has_supported_bin_drop() : le depot est-il acceptable ?
+# - _compact_label()      : etiquette raccourcie pour tenir dans la bulle.
+#
+# LIENS CLES
+# - frontend/labo/labo_widget.py : heberge ce panneau et relaie ses signaux.
+# - backend/services/sample_service.py : deplacements de samples suivis.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -34,12 +73,16 @@ _BINS_SETTINGS_KEY = "labo_bins_v1"
 
 @dataclass(slots=True)
 class LaboBin:
+    """Un bac de tri : identifiant, etiquette affichee, dossier cible."""
+
     bin_id: str
     label: str
     path: str
 
 
 class BinBubble(QWidget):
+    """La bulle ronde d'un bin : zone de depot + menu clic-droit."""
+
     openInReserveRequested = Signal(str)
     removeRequested = Signal(str)
     moveHereRequested = Signal(str, object)
@@ -135,6 +178,11 @@ class BinBubble(QWidget):
         event.accept()
 
     def _set_drop_active(self, active: bool) -> None:
+        """Allume/eteint la mise en evidence pendant le survol d'un drag.
+
+        La propriete Qt "dropActive" est lue par la feuille de style ;
+        unpolish/polish force Qt a reappliquer le style apres changement.
+        """
         active = bool(active)
         if self._drop_active == active:
             return
@@ -153,6 +201,8 @@ class BinBubble(QWidget):
 
 
 class LaboBinsPanel(QWidget):
+    """La colonne des bins : en-tete, bouton +, et pile de bulles."""
+
     openInReserveRequested = Signal(str)
     reserveRefreshRequested = Signal()
     sourcePathsMoved = Signal(object)
@@ -220,12 +270,14 @@ class LaboBinsPanel(QWidget):
         self._apply_styles()
 
     def _choose_bin_folder(self) -> None:
+        """Bouton + : choisir un dossier du disque pour creer un bin."""
         start_dir = os.path.expanduser("~")
         folder = QFileDialog.getExistingDirectory(self, "Choisir un dossier pour le bin", start_dir)
         if folder:
             self.add_bin(folder)
 
     def add_bin(self, folder: str) -> None:
+        """Cree un bin pour ce dossier (refuse les doublons et dossiers absents)."""
         normalized = normalize_audio_path(folder)
         if not os.path.isdir(normalized):
             return
@@ -242,11 +294,14 @@ class LaboBinsPanel(QWidget):
         self._rebuild()
 
     def _remove_bin(self, bin_id: str) -> None:
+        """Retire un bin de la liste (le dossier lui-meme n'est pas touche)."""
         self._bins = [bin_data for bin_data in self._bins if bin_data.bin_id != bin_id]
         self._save_bins()
         self._rebuild()
 
     def _load_bins(self) -> None:
+        """Recharge les bins memorises (JSON dans QSettings), en filtrant
+        ceux dont le dossier n'existe plus."""
         raw = self._qs.value(_BINS_SETTINGS_KEY, "", type=str)
         bins: list[LaboBin] = []
         if raw:
@@ -272,9 +327,11 @@ class LaboBinsPanel(QWidget):
         self._rebuild()
 
     def _save_bins(self) -> None:
+        """Sauvegarde la liste des bins en JSON dans QSettings."""
         self._qs.setValue(_BINS_SETTINGS_KEY, json.dumps([asdict(bin_data) for bin_data in self._bins]))
 
     def _rebuild(self) -> None:
+        """Detruit toutes les bulles et les recree depuis la liste des bins."""
         while self.content_layout.count() > 1:
             item = self.content_layout.takeAt(0)
             widget = item.widget()
@@ -290,6 +347,17 @@ class LaboBinsPanel(QWidget):
             self._bubble_widgets[bin_data.bin_id] = bubble
 
     def _on_move_here_requested(self, bin_id: str, mime: QMimeData) -> None:
+        """Traite un depot sur un bin, selon la nature du contenu.
+
+        Trois cas, dans l'ordre :
+        1. une SLICE (audio brut decoupe dans l'editeur) : ecrite en WAV
+           dans le dossier du bin et ajoutee au catalogue ;
+        2. une CARTE de sample suivi en base : deplacement via SampleService
+           (qui met la base a jour en meme temps que le fichier) ;
+        3. des FICHIERS (urls) : ceux deja suivis en base passent par
+           SampleService, les autres sont simplement deplaces sur le disque
+           (et la Reserve est prevenue via sourcePathsMoved).
+        """
         bin_data = next((item for item in self._bins if item.bin_id == bin_id), None)
         if bin_data is None:
             return
@@ -354,6 +422,7 @@ class LaboBinsPanel(QWidget):
 
     @staticmethod
     def _unique_target_path(folder: str, filename: str) -> str:
+        """Trouve un chemin libre dans le dossier (suffixe _2, _3... si pris)."""
         base, ext = os.path.splitext(filename)
         candidate = os.path.join(folder, filename)
         if not os.path.exists(candidate):
@@ -426,10 +495,12 @@ class LaboBinsPanel(QWidget):
 
 
 
+# Format MIME "maison" d'une slice (audio brut transporte dans le drag).
 _MIME_SLICE = "application/x-sample-slice-data"
 
 
 def _has_supported_bin_drop(mime: QMimeData) -> bool:
+    """Le contenu glisse est-il acceptable par un bin ? (carte/slice/audio)."""
     if has_sample_card(mime):
         return True
     if mime.hasFormat(_MIME_SLICE):
@@ -444,6 +515,7 @@ def _has_supported_bin_drop(mime: QMimeData) -> bool:
 
 
 def _compact_label(text: str) -> str:
+    """Raccourcit l'etiquette pour tenir dans la bulle (max 18 caracteres)."""
     cleaned = " ".join((text or "").strip().split())
     if not cleaned:
         return "Bin"

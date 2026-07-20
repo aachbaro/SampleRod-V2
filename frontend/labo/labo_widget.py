@@ -1,10 +1,60 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - L'onglet LABO : la "table de travail" ou l'on transforme la matiere audio.
+# - Organisation visuelle :
+#   * en haut : quatre outils en onglets - Waveform (editeur de forme
+#     d'onde), Break (analyse/decoupage de boucles de batterie), Stems
+#     (separation voix/batterie/basse...), Compositeur (assemblage) ;
+#   * en bas : le plateau des ARTEFACTS, ou atterrissent tous les resultats
+#     produits par ces outils (slices, stems, breaks generes...) ;
+#   * a droite : les BACS (bins) lies a la Reserve.
+# - Ce widget est surtout un CHEF DE GARE : il cree les outils, relie leurs
+#   signaux entre eux (un outil produit un artefact -> le plateau l'affiche ;
+#   le plateau demande "sauvegarder" -> on copie le fichier et on l'ajoute
+#   au catalogue ; "ouvrir" -> l'editeur Waveform charge le fichier...).
+#
+# FONCTIONS (sommaire)
+# - LaboWidget (QWidget)
+#   - signaux : openReserveDirectoryRequested, reserveRefreshRequested,
+#     reservePathsMoved (relayes depuis les bacs vers la Reserve).
+#   - _build_ui()        : assemble outils, plateau, bacs ; restaure la
+#                          position du separateur depuis QSettings.
+#   - _on_splitter_moved(): memorise la position du separateur.
+#   - _apply_default_splitter_sizes() : repartition initiale 40/60.
+#   - _bind_signals()    : tous les cablages decrits ci-dessus.
+#   - _send_to_stem_separator() : envoie des fichiers au separateur.
+#   - open_paths()       : ouvre un fichier dans l'editeur Waveform
+#                          (utilise par le double-clic ailleurs dans l'app).
+#   - _upsert_artifact() : enregistre/actualise un artefact + plateau.
+#   - _save_artifact()   : dialogue de dossier, copie du fichier, ajout au
+#                          catalogue des samples, marque "persiste".
+#   - _open_artifact_in_waveform() : recharge un artefact dans l'editeur.
+#   - _default_export_dir(): meilleur dossier propose (dernier utilise >
+#                          dossier source > premiere librairie > home).
+#   - _unique_target_path(): evite d'ecraser un fichier (suffixe _2, _3...).
+#   - _apply_styles()    : styles dependant du theme.
+#
+# LIENS CLES
+# - frontend/labo/waveform_tool.py / break_widget.py / stem_separator_tool.py
+# - frontend/right_panel/composer/composer_widget.py
+# - frontend/labo/artifact_tray.py / bins_panel.py
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
 import shutil
 
-from PySide6.QtCore import Qt, QSettings, Signal
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QSplitter, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QSettings, QTimer, Signal
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QSplitter,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from frontend.right_panel.composer.composer_widget import SampleComposerWidget
 from frontend.styles import theme
@@ -38,18 +88,11 @@ class LaboWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(6)
 
         self.title_label = QLabel("Labo")
         self.title_label.setObjectName("LaboTitle")
-
-        self.subtitle_label = QLabel(
-            "Zone de transformation. Le Waveform Editor devient le premier outil de manipulation, "
-            "et ses sorties redeviennent de la matiere."
-        )
-        self.subtitle_label.setObjectName("LaboSubtitle")
-        self.subtitle_label.setWordWrap(True)
 
         self.tools_tabs = QTabWidget()
         self.tools_tabs.setObjectName("LaboTabs")
@@ -64,28 +107,27 @@ class LaboWidget(QWidget):
         self.tools_tabs.addTab(self.stem_separator_tool, "Stems")
         self.tools_tabs.addTab(self.composer_widget, "Compositeur")
         self.tools_tabs.setCurrentIndex(0)
+        self.tools_tabs.setMinimumHeight(250)
 
         self.artifact_tray = ArtifactTrayWidget(self.app_context)
-        self.artifact_tray.setMinimumHeight(36)  # au moins l'en-tête visible
+        self.artifact_tray.setMinimumHeight(220)
 
-        # Splitter vertical : tools (haut) / artefacts (bas), redimensionnable
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setObjectName("LaboSplitter")
         self.splitter.addWidget(self.tools_tabs)
         self.splitter.addWidget(self.artifact_tray)
-        self.splitter.setStretchFactor(0, 1)
-        self.splitter.setStretchFactor(1, 0)
-        self.splitter.setChildrenCollapsible(True)
+        self.splitter.setStretchFactor(0, 2)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setChildrenCollapsible(False)
 
-        # Restaure la position du splitter
-        saved_state = self._qs.value("labo_splitter_state")
+        saved_state = self._qs.value("labo_splitter_state_v5")
         if saved_state:
             try:
                 self.splitter.restoreState(saved_state)
             except Exception:
-                self.splitter.setSizes([400, 180])
+                QTimer.singleShot(0, self._apply_default_splitter_sizes)
         else:
-            self.splitter.setSizes([400, 180])
+            QTimer.singleShot(0, self._apply_default_splitter_sizes)
 
         self.splitter.splitterMoved.connect(self._on_splitter_moved)
 
@@ -99,13 +141,26 @@ class LaboWidget(QWidget):
         body_row.addWidget(self.bins_panel, 0)
 
         layout.addWidget(self.title_label)
-        layout.addWidget(self.subtitle_label)
         layout.addLayout(body_row, 1)
 
         self._apply_styles()
 
     def _on_splitter_moved(self, *_) -> None:
-        self._qs.setValue("labo_splitter_state", self.splitter.saveState())
+        self._qs.setValue("labo_splitter_state_v5", self.splitter.saveState())
+
+    def _apply_default_splitter_sizes(self) -> None:
+        total = self.splitter.height() or self.height() or 900
+        top = max(self.tools_tabs.minimumHeight(), int(total * 0.40))
+        bottom = max(self.artifact_tray.minimumHeight(), total - top)
+        if top + bottom > total:
+            overflow = top + bottom - total
+            reducible_top = max(0, top - self.tools_tabs.minimumHeight())
+            reduce_by = min(reducible_top, overflow)
+            top -= reduce_by
+            overflow -= reduce_by
+            if overflow > 0:
+                bottom = max(self.artifact_tray.minimumHeight(), bottom - overflow)
+        self.splitter.setSizes([top, bottom])
 
     def _bind_signals(self) -> None:
         self.waveform_tool.artifactCreated.connect(self._upsert_artifact)
@@ -124,15 +179,14 @@ class LaboWidget(QWidget):
             return
         count = self.stem_separator_tool.enqueue_paths(paths)
         if count > 0:
-            # Feedback discret dans le waveform tool — les stems apparaitront dans les artefacts
             info = getattr(self.waveform_tool, "info_label", None)
             if info is not None:
-                names = ", ".join(
-                    __import__("os").path.basename(p) for p in paths[:2]
+                info.setText(
+                    "Envoye au separateur de stems - les stems arriveront dans les artefacts."
                 )
-                info.setText(f"Envoyé au séparateur de stems — les stems arriveront dans les artefacts.")
 
     def open_paths(self, paths: list[str]) -> None:
+        """Ouvre le premier fichier valide dans l'editeur Waveform et y bascule."""
         if not paths:
             return
         target_path = next((path for path in paths if path and os.path.isfile(path)), None)
@@ -143,10 +197,12 @@ class LaboWidget(QWidget):
             self.waveform_tool.setFocus()
 
     def _upsert_artifact(self, artifact: LabArtifact) -> None:
+        """Ajoute ou met a jour un artefact dans le registre et le plateau."""
         self._artifacts[artifact.artifact_id] = artifact
         self.artifact_tray.upsert_artifact(artifact)
 
     def _save_artifact(self, artifact_id: str) -> None:
+        """Sauvegarde definitive d'un artefact choisi dans le plateau."""
         artifact = self._artifacts.get(artifact_id)
         source_path = artifact_file_path(artifact) if artifact is not None else ""
         if artifact is None or not source_path or not os.path.isfile(source_path):
@@ -163,7 +219,10 @@ class LaboWidget(QWidget):
 
         self._qs.setValue("labo_last_artifact_dir", target_dir)
 
-        target_path = self._unique_target_path(target_dir, build_artifact_filename(artifact))
+        target_path = self._unique_target_path(
+            target_dir,
+            build_artifact_filename(artifact),
+        )
         shutil.copy2(source_path, target_path)
         self.app_context.sample_store.add(target_path)
 
@@ -172,6 +231,7 @@ class LaboWidget(QWidget):
         self.artifact_tray.upsert_artifact(artifact)
 
     def _open_artifact_in_waveform(self, artifact_id: str) -> None:
+        """Recharge le fichier d'un artefact dans l'editeur Waveform."""
         artifact = self._artifacts.get(artifact_id)
         path = artifact_file_path(artifact) if artifact is not None else ""
         if not path or not os.path.isfile(path):
@@ -181,6 +241,7 @@ class LaboWidget(QWidget):
             self.waveform_tool.setFocus()
 
     def _default_export_dir(self, artifact: LabArtifact) -> str:
+        """Meilleur dossier a proposer dans le dialogue de sauvegarde."""
         last_dir = self._qs.value("labo_last_artifact_dir", "")
         if isinstance(last_dir, str) and last_dir and os.path.isdir(last_dir):
             return last_dir
@@ -196,6 +257,7 @@ class LaboWidget(QWidget):
 
     @staticmethod
     def _unique_target_path(folder: str, filename: str) -> str:
+        """Trouve un chemin libre dans le dossier (suffixe _2, _3... si pris)."""
         base, ext = os.path.splitext(filename)
         candidate = os.path.join(folder, filename)
         if not os.path.exists(candidate):
@@ -218,12 +280,8 @@ class LaboWidget(QWidget):
             }}
             QLabel#LaboTitle {{
                 color: {p.TEXT};
-                font-size: 16px;
-                font-weight: 700;
-            }}
-            QLabel#LaboSubtitle {{
-                color: {p.TEXT_MUTED};
-                font-size: 11px;
+                font-size: 14px;
+                font-weight: 600;
             }}
             QTabWidget#LaboTabs::pane {{
                 border: none;

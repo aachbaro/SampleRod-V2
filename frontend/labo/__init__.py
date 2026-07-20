@@ -1,3 +1,9 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Index du paquet "labo" (l'onglet Labo : outils d'experimentation audio).
+#   Permet d'importer les widgets principaux directement depuis frontend.labo.
+# -----------------------------------------------------------------------------
+
 """Labo widgets and artifact helpers."""
 
 from .artifact_tray import ArtifactTrayWidget

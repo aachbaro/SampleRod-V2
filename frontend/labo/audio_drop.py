@@ -1,3 +1,22 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Petit utilitaire partage par les outils du Labo pour accepter les
+#   glisser-deposer audio, quels qu'ils soient : fichiers venant de
+#   l'explorateur Windows OU cartes de samples venant de l'application.
+#
+# FONCTIONS (sommaire)
+# - has_supported_audio_drop()  : ce depot contient-il de l'audio exploitable ?
+#   (utilise pour accepter/refuser le survol pendant le drag).
+# - resolve_audio_drop_paths()  : transforme le depot en liste de chemins de
+#   fichiers valides — les cartes de samples sont converties en chemins via
+#   la fonction sample_path_lookup fournie par l'appelant ; doublons et
+#   fichiers inexistants sont elimines.
+#
+# LIENS CLES
+# - frontend/right_panel/composer/composer_dnd.py : decodage des formats MIME.
+# - frontend/labo/* : les outils qui acceptent ces depots.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -15,6 +34,7 @@ from frontend.right_panel.composer.composer_dnd import (
 
 
 def has_supported_audio_drop(mime: QMimeData) -> bool:
+    """Vrai si le depot contient des fichiers audio ou une carte de sample."""
     return has_audio_file_urls(mime) or has_sample_card(mime)
 
 
@@ -23,6 +43,7 @@ def resolve_audio_drop_paths(
     *,
     sample_path_lookup: Callable[[int], str | None],
 ) -> list[str]:
+    """Convertit un depot en liste de chemins audio valides et uniques."""
     paths: list[str] = []
 
     if has_audio_file_urls(mime):

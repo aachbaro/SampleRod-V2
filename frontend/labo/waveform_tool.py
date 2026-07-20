@@ -1,3 +1,42 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - L'onglet "Waveform" du Labo : il heberge l'editeur de forme d'onde
+#   (WaveformWidget) et permet d'en CAPTURER de la matiere :
+#   * "Creer une slice" : extrait la selection courante (region ou
+#     intervalle entre marqueurs) dans un nouvel artefact ;
+#   * "Capturer le fichier courant" : photographie l'etat actuel de
+#     l'audio (avec toutes les editions) dans un artefact.
+#   Chaque capture est ecrite dans un WAV temporaire et part au plateau
+#   d'artefacts via le signal artifactCreated.
+# - On peut deposer ici un fichier audio ou une carte de sample : il est
+#   ouvert dans l'editeur (le precedent est proprement detruit).
+#
+# FONCTIONS (sommaire)
+# - WaveformToolWidget (QWidget)
+#   - signaux : artifactCreated(LabArtifact), separationRequested(paths)
+#     (relaye depuis l'editeur vers le separateur de stems).
+#   - _build_ui()        : en-tete, boutons d'action, zone d'accueil.
+#   - open_file()        : charge un fichier dans un nouvel editeur.
+#   - current_path()     : fichier actuellement ouvert.
+#   - create_selection_artifact()   : bouton "Creer une slice".
+#   - create_current_file_artifact(): bouton "Capturer le fichier courant".
+#   - _replace_waveform_widget()/_destroy_waveform_widget() : cycle de vie
+#     de l'editeur (arret du son, du timer, destruction propre).
+#   - _on_waveform_loaded()/_waveform_ready()/_refresh_actions() : etats.
+#   - _selection_bounds(): determine la plage a decouper — la region si
+#     elle existe, sinon l'intervalle [marqueur courant, marqueur suivant].
+#   - _extract_segment() : decoupe les echantillons audio de la plage.
+#   - _write_temp_snapshot() : ecrit l'audio capture dans un WAV temp.
+#   - _show_warning()    : message + boite d'alerte.
+#   - eventFilter()/drag*/dropEvent/_handle_* : glisser-deposer d'ouverture.
+#   - _paths_from_mime()/_path_for_sample_id() : decodage des depots.
+#   - _set_drop_active()/_refresh_info_message()/_apply_styles().
+#
+# LIENS CLES
+# - frontend/sample_gui/wave_form.py : l'editeur de forme d'onde integre.
+# - frontend/labo/labo_widget.py     : recoit les artefacts crees ici.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -8,10 +47,12 @@ import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -43,53 +84,49 @@ class WaveformToolWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(2)
 
+        self.editor_shell = QFrame()
+        self.editor_shell.setObjectName("WaveformToolShell")
+        self.editor_shell.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        shell_layout = QVBoxLayout(self.editor_shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(2)
+
+        # Ligne unique : [Waveform] [chemin tronqué]  stretch  [Créer slice] [Capturer]
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
 
-        title_box = QVBoxLayout()
-        title_box.setContentsMargins(0, 0, 0, 0)
-        title_box.setSpacing(2)
-
         self.title_label = QLabel("Waveform")
         self.title_label.setObjectName("WaveformToolTitle")
 
-        self.subtitle_label = QLabel(
-            "Edition et capture de matiere a partir du fichier courant."
-        )
-        self.subtitle_label.setObjectName("WaveformToolSubtitle")
-        self.subtitle_label.setWordWrap(True)
-
-        self.current_file_label = QLabel("Aucun fichier charge")
+        self.current_file_label = QLabel("Aucun fichier chargé")
         self.current_file_label.setObjectName("WaveformToolCurrentFile")
-        self.current_file_label.setWordWrap(True)
+        self.current_file_label.setSizePolicy(
+            self.current_file_label.sizePolicy().horizontalPolicy(),
+            self.current_file_label.sizePolicy().verticalPolicy(),
+        )
 
-        title_box.addWidget(self.title_label)
-        title_box.addWidget(self.subtitle_label)
-        title_box.addWidget(self.current_file_label)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(8)
-
-        self.slice_button = QPushButton("Creer une slice")
+        self.slice_button = QPushButton("Créer une slice")
         self.slice_button.setObjectName("WaveformToolAction")
         self.slice_button.clicked.connect(self.create_selection_artifact)
 
-        self.current_file_button = QPushButton("Capturer le fichier courant")
+        self.current_file_button = QPushButton("Capturer")
         self.current_file_button.setObjectName("WaveformToolAction")
         self.current_file_button.clicked.connect(self.create_current_file_artifact)
 
-        actions.addWidget(self.slice_button)
-        actions.addWidget(self.current_file_button)
+        header.addWidget(self.title_label)
+        header.addWidget(self.current_file_label, 1)
+        header.addWidget(self.slice_button)
+        header.addWidget(self.current_file_button)
 
-        header.addLayout(title_box, 1)
-        header.addLayout(actions, 0)
-
+        # info_label : placeholder visible uniquement quand aucun fichier n'est chargé
         self.info_label = QLabel(
-            "Selectionne une matiere depuis la Reserve pour l'ouvrir ici."
+            "Glisse un fichier ou sélectionne un sample dans la Reserve."
         )
         self.info_label.setObjectName("WaveformToolInfo")
         self.info_label.setWordWrap(True)
@@ -97,19 +134,34 @@ class WaveformToolWidget(QWidget):
         self.waveform_host = QWidget()
         self.waveform_host.setObjectName("WaveformToolHost")
         self.waveform_host.setAcceptDrops(True)
+        self.waveform_host.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        self.waveform_host.setMaximumHeight(390)
         self.waveform_host.installEventFilter(self)
         self.waveform_layout = QVBoxLayout(self.waveform_host)
         self.waveform_layout.setContentsMargins(0, 0, 0, 0)
         self.waveform_layout.setSpacing(0)
 
-        layout.addLayout(header)
-        layout.addWidget(self.info_label)
-        layout.addWidget(self.waveform_host, 1)
+        self.current_file_label.setVisible(False)
+
+        shell_layout.addLayout(header)
+        shell_layout.addWidget(self.info_label)
+        shell_layout.addWidget(self.waveform_host, 0, Qt.AlignmentFlag.AlignTop)
+
+        layout.addWidget(self.editor_shell, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addStretch(1)
 
         self._apply_styles()
         self._refresh_actions()
 
     def open_file(self, path: str) -> bool:
+        """Ouvre un fichier audio dans l'editeur (recree le widget).
+
+        Si le fichier demande est deja ouvert, on se contente de reprendre
+        le focus. Renvoie True si le fichier est (ou etait) ouvert.
+        """
         normalized = os.path.normpath(os.path.abspath(path))
         if not os.path.isfile(normalized):
             return False
@@ -128,6 +180,13 @@ class WaveformToolWidget(QWidget):
         return self._current_path
 
     def create_selection_artifact(self) -> None:
+        """Bouton "Creer une slice" : capture la selection en artefact.
+
+        Etapes : trouver la plage selectionnee, extraire les echantillons,
+        les ecrire dans un WAV temporaire, fabriquer la fiche LabArtifact
+        et l'emettre vers le plateau. Chaque probleme (pas de selection,
+        slice vide...) est explique a l'utilisateur.
+        """
         waveform = self._waveform_widget
         if waveform is None or waveform.waveform_data is None or waveform.sample_rate is None:
             self._show_warning("Le waveform n'est pas encore pret.")
@@ -164,6 +223,11 @@ class WaveformToolWidget(QWidget):
         self.artifactCreated.emit(artifact)
 
     def create_current_file_artifact(self) -> None:
+        """Bouton "Capturer le fichier courant" : photographie l'audio entier.
+
+        Capture l'etat ACTUEL de l'editeur (editions comprises), pas le
+        fichier d'origine sur le disque.
+        """
         waveform = self._waveform_widget
         if waveform is None or waveform.waveform_data is None or waveform.sample_rate is None:
             self._show_warning("Le waveform n'est pas encore pret.")
@@ -189,15 +253,21 @@ class WaveformToolWidget(QWidget):
         self.artifactCreated.emit(artifact)
 
     def _replace_waveform_widget(self, path: str) -> None:
+        """Detruit l'editeur courant et en cree un neuf pour ce fichier."""
         self._destroy_waveform_widget()
 
         waveform = WaveformWidget(path, self.app_context)
+        waveform.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        waveform.setMaximumHeight(380)
         waveform.setAcceptDrops(True)
         waveform.installEventFilter(self)
         waveform.separationRequested.connect(
             lambda p: self.separationRequested.emit([p])
         )
-        self.waveform_layout.addWidget(waveform)
+        self.waveform_layout.addWidget(waveform, 0, Qt.AlignmentFlag.AlignTop)
         self._waveform_widget = waveform
 
         loader = getattr(waveform, "loader", None)
@@ -207,6 +277,7 @@ class WaveformToolWidget(QWidget):
             self._on_waveform_loaded()
 
     def _destroy_waveform_widget(self) -> None:
+        """Demonte proprement l'editeur : son coupe, timer arrete, widget detruit."""
         if self._waveform_widget is None:
             return
         try:
@@ -242,6 +313,12 @@ class WaveformToolWidget(QWidget):
         self.current_file_button.setEnabled(bool(self._current_path) and ready)
 
     def _selection_bounds(self) -> tuple[float, float] | None:
+        """Determine la plage de temps a decouper (en secondes).
+
+        Priorite a la REGION (la zone surlignee creee a la souris) ; a
+        defaut, on prend l'intervalle entre le marqueur courant et le
+        suivant (ou la fin du fichier). None si rien d'exploitable.
+        """
         waveform = self._waveform_widget
         if waveform is None:
             return None
@@ -264,6 +341,11 @@ class WaveformToolWidget(QWidget):
         return start, end
 
     def _extract_segment(self, start_time: float, end_time: float):
+        """Decoupe les echantillons audio entre deux instants (en secondes).
+
+        Conversion temps -> index d'echantillon : seconde x frequence
+        d'echantillonnage (ex : 2,5 s a 44100 Hz = echantillon 110250).
+        """
         waveform = self._waveform_widget
         if waveform is None or waveform.waveform_data is None or waveform.sample_rate is None:
             return np.array([], dtype="float32")
@@ -274,6 +356,7 @@ class WaveformToolWidget(QWidget):
         return data[start_sample:end_sample].astype("float32").copy()
 
     def _write_temp_snapshot(self, audio, sample_rate: int, display_name: str) -> str:
+        """Ecrit l'audio capture dans un WAV temporaire au nom unique."""
         filename = f"samplerod_{display_name}_{uuid.uuid4().hex[:8]}.wav"
         temp_path = os.path.join(tempfile.gettempdir(), filename)
         sf.write(temp_path, audio, int(sample_rate))
@@ -382,17 +465,20 @@ class WaveformToolWidget(QWidget):
 
     def _refresh_info_message(self) -> None:
         if self._drop_active:
-            self.info_label.setText("Depose un fichier ou un sample de la Reserve pour l'ouvrir ici.")
+            self.info_label.setText("Dépose un fichier ou un sample de la Reserve.")
+            self.info_label.setVisible(True)
+            self.current_file_label.setVisible(False)
             return
-        ready = self._waveform_ready()
         if self._current_path is None:
-            self.info_label.setText("Selectionne une matiere depuis la Reserve pour l'ouvrir ici.")
-        elif ready:
-            self.info_label.setText(
-                "Le fichier est pret. Cree une slice ou capture l'etat courant."
-            )
+            self.info_label.setText("Glisse un fichier ou sélectionne un sample dans la Reserve.")
+            self.info_label.setVisible(True)
+            self.current_file_label.setVisible(False)
         else:
-            self.info_label.setText("Chargement du waveform...")
+            self.info_label.setVisible(False)
+            name = os.path.basename(self._current_path)
+            self.current_file_label.setText(name)
+            self.current_file_label.setToolTip(self._current_path)
+            self.current_file_label.setVisible(True)
 
     def _apply_styles(self) -> None:
         p = theme.manager.p
@@ -408,20 +494,27 @@ class WaveformToolWidget(QWidget):
                 border: 1px dashed transparent;
                 border-radius: 10px;
             }}
+            QFrame#WaveformToolShell {{
+                background: transparent;
+                border: none;
+            }}
             QWidget#WaveformToolHost[dropActive="true"] {{
                 background: {p.BG_CARD};
                 border-color: {p.INFO};
             }}
             QLabel#WaveformToolTitle {{
                 color: {p.TEXT};
-                font-size: 16px;
-                font-weight: 700;
+                font-size: 13px;
+                font-weight: 600;
             }}
-            QLabel#WaveformToolSubtitle,
-            QLabel#WaveformToolCurrentFile,
+            QLabel#WaveformToolCurrentFile {{
+                color: {p.TEXT_MUTED};
+                font-size: 11px;
+            }}
             QLabel#WaveformToolInfo {{
                 color: {p.TEXT_MUTED};
                 font-size: 11px;
+                padding: 4px 0;
             }}
             QPushButton#WaveformToolAction {{
                 background: {p.BG_CARD};
