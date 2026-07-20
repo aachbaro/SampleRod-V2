@@ -1,0 +1,55 @@
+diff --git a/node_modules/react-native-screens/android/build/generated/source/codegen/jni/CMakeLists.txt b/node_modules/react-native-screens/android/build/generated/source/codegen/jni/CMakeLists.txt
+new file mode 100644
+index 0000000..253c05c
+--- /dev/null
++++ b/node_modules/react-native-screens/android/build/generated/source/codegen/jni/CMakeLists.txt
+@@ -0,0 +1,28 @@
++# Copyright (c) Meta Platforms, Inc. and affiliates.
++#
++# This source code is licensed under the MIT license found in the
++# LICENSE file in the root directory of this source tree.
++
++cmake_minimum_required(VERSION 3.13)
++set(CMAKE_VERBOSE_MAKEFILE on)
++
++file(GLOB react_codegen_SRCS CONFIGURE_DEPENDS *.cpp react/renderer/components/rnscreens/*.cpp)
++
++add_library(
++  react_codegen_rnscreens
++  OBJECT
++  ${react_codegen_SRCS}
++)
++
++target_include_directories(react_codegen_rnscreens PUBLIC . react/renderer/components/rnscreens)
++
++target_link_libraries(
++  react_codegen_rnscreens
++  fbjni
++  jsi
++  # We need to link different libraries based on whether we are building rncore or not, that's necessary
++  # because we want to break a circular dependency between react_codegen_rncore and reactnative
++  reactnative
++)
++
++target_compile_reactnative_options(react_codegen_rnscreens PRIVATE)
+diff --git a/node_modules/react-native-screens/android/src/main/jni/CMakeLists.txt b/node_modules/react-native-screens/android/src/main/jni/CMakeLists.txt
+index b2dfc56..6188038 100644
+--- a/node_modules/react-native-screens/android/src/main/jni/CMakeLists.txt
++++ b/node_modules/react-native-screens/android/src/main/jni/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 3.13)
++﻿cmake_minimum_required(VERSION 3.13)
+ set(CMAKE_VERBOSE_MAKEFILE ON)
+ 
+ set(LIB_LITERAL rnscreens)
+@@ -20,8 +20,8 @@ add_compile_options(
+   -Wno-dollar-in-identifier-extension
+ )
+ 
+-file(GLOB LIB_CUSTOM_SRCS CONFIGURE_DEPENDS *.cpp ${LIB_COMMON_COMPONENTS_DIR}/*.cpp ${LIB_COMMON_COMPONENTS_DIR}/utils/*.cpp)
+-file(GLOB LIB_CODEGEN_SRCS CONFIGURE_DEPENDS ${LIB_ANDROID_GENERATED_COMPONENTS_DIR}/*.cpp)
++file(GLOB LIB_CUSTOM_SRCS *.cpp ${LIB_COMMON_COMPONENTS_DIR}/*.cpp ${LIB_COMMON_COMPONENTS_DIR}/utils/*.cpp)
++file(GLOB LIB_CODEGEN_SRCS ${LIB_ANDROID_GENERATED_COMPONENTS_DIR}/*.cpp)
+ 
+ add_library(
+   ${LIB_TARGET_NAME}
