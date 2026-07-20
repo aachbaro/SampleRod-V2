@@ -4,11 +4,14 @@
 # - Utilise par les services (settings, samples, recorder, etc.) pour informer
 #   l'utilisateur sans coupler le code metier aux widgets.
 #
-# CE QUI EST DEJA EN PLACE
-# - Enum NotificationType (INFO/SUCCESS/WARNING/ERROR).
-# - Dataclass Notification (id, titre, message, timestamp, type, duree).
-# - Service Qt avec signal `notificationAdded` pour pousser aux widgets.
-# - Compteur interne pour garantir des IDs uniques.
+# CLASSES ET FONCTIONS (sommaire)
+# - NotificationType (Enum)     : INFO / SUCCESS / WARNING / ERROR, determine
+#                                 la couleur et l'icone affichees.
+# - Notification (dataclass)    : une notification (id, titre, message, date,
+#                                 type, duree d'affichage, popup oui/non).
+# - NotificationService (QObject)
+#   - notify() : cree la notification et la diffuse via le signal
+#                notificationAdded ; tous les widgets abonnes la recoivent.
 #
 # NOTES
 # - Le service ne depend que de QtCore (pas de widgets).

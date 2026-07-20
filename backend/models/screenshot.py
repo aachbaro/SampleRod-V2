@@ -1,13 +1,32 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Modele "pur" pour la capture d'ecran.
-# - Gere la persistence disque (dossier, index.json, nommage IMG_XXXX).
-# - Expose une API simple pour lister / capturer / renommer / supprimer.
+# - Toute la mecanique des captures d'ecran, SANS interface : prendre la
+#   photo d'un ecran, la ranger dans un dossier, tenir le catalogue a jour.
+# - Contrairement aux samples, les captures ne sont PAS en base de donnees :
+#   un simple fichier "index.json" dans le dossier des captures sert de
+#   catalogue (id, nom de fichier, date, ecran, dimensions).
+# - Les fichiers sont nommes IMG_0001.png, IMG_0002.png, etc.
+#
+# CLASSES ET FONCTIONS (sommaire)
+# - ScreenshotItem : fiche descriptive d'une capture (id, fichier, date...).
+# - ScreenshotModel
+#   - is_ready()       : le dossier de destination est-il configure ?
+#   - _load_index() / _save_index() : lecture/ecriture du catalogue JSON
+#                        (ecriture "atomique" : fichier temporaire + rename).
+#   - _next_id()       : prochain numero IMG_XXXX disponible.
+#   - list_screens()   : liste des ecrans branches (multi-moniteurs).
+#   - list_items()     : liste des captures du catalogue.
+#   - get_path()       : chemin complet d'une capture par son id.
+#   - capture()        : prend la photo d'un ecran et l'ajoute au catalogue.
+#   - rename()/delete(): renomme ou supprime une capture (fichier + index).
+#   - _sanitize_name() : nettoie un nom saisi par l'utilisateur.
+#   - _enumerate_monitors_windows() : interroge Windows sur les ecrans.
+#   - _grab_all_screens() : photo de tout le bureau (multi-ecrans).
 #
 # NOTES
-# - Pas de dependance au reste de l'app (pas de services, pas de UI).
+# - Pas de dependance au reste de l'app (pas de services, pas de UI) :
+#   c'est backend/services/screenshot_service.py qui fait le lien.
 # - Utilise PIL.ImageGrab + enumeration Windows via ctypes.
-# - Si besoin, le service peut fournir un autre dossier ou un autre index.
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -27,6 +46,8 @@ logger = logging.getLogger("screenshot_model")
 
 @dataclass
 class ScreenshotItem:
+    """Fiche descriptive d'une capture : ce qu'on stocke dans index.json."""
+
     id: int
     filename: str
     created_at: str
@@ -53,10 +74,12 @@ class ScreenshotModel:
             self.index_path = None
 
     def is_ready(self) -> bool:
+        """Vrai si un dossier de destination est configure (captures possibles)."""
         return self.base_dir is not None and self.index_path is not None
 
     # ------------------------------------------------------------------ Index
     def _load_index(self) -> List[Dict]:
+        """Lit le catalogue index.json ; liste vide si absent ou corrompu."""
         if not self.is_ready():
             return []
         if not self.index_path.exists():
@@ -68,6 +91,12 @@ class ScreenshotModel:
             return []
 
     def _save_index(self, items: List[Dict]) -> None:
+        """Ecrit le catalogue de facon "atomique".
+
+        On ecrit d'abord dans un fichier temporaire, puis on le renomme
+        par-dessus l'index : ainsi, meme si l'application est coupee en
+        pleine ecriture, l'index n'est jamais a moitie ecrit.
+        """
         if not self.is_ready():
             return
         tmp_path = self.index_path.with_suffix(".json.tmp")
@@ -75,6 +104,7 @@ class ScreenshotModel:
         tmp_path.replace(self.index_path)
 
     def _next_id(self, items: List[Dict]) -> int:
+        """Prochain numero libre (max des ids existants + 1)."""
         if not items:
             return 1
         return max(int(it.get("id", 0)) for it in items) + 1
@@ -90,9 +120,11 @@ class ScreenshotModel:
 
     # -------------------------------------------------------------- Public API
     def list_items(self) -> List[Dict]:
+        """Renvoie toutes les captures connues (contenu du catalogue)."""
         return self._load_index()
 
     def get_path(self, item_id: int) -> Optional[str]:
+        """Renvoie le chemin complet du fichier image d'une capture, ou None."""
         if not self.is_ready():
             return None
         items = self._load_index()
@@ -102,9 +134,17 @@ class ScreenshotModel:
         return str(self.base_dir / it["filename"])
 
     def capture(self, screen_index: int = 0) -> Dict:
+        """Prend une capture de l'ecran demande et l'ajoute au catalogue.
+
+        Subtilite multi-ecrans : avec plusieurs moniteurs, certains ont des
+        coordonnees negatives (ecran a gauche du principal). On photographie
+        donc TOUT le bureau virtuel d'un coup, puis on decoupe (crop) la
+        zone correspondant a l'ecran voulu. Renvoie la fiche de la capture.
+        """
         if not self.is_ready():
             raise RuntimeError("Screenshot folder not configured.")
         screens = self.list_screens()
+        # Index hors limites -> on retombe sur l'ecran principal.
         if screen_index < 0 or screen_index >= len(screens):
             screen_index = 0
         screen = screens[screen_index]
@@ -138,6 +178,7 @@ class ScreenshotModel:
             # fallback simple si la capture globale echoue
             img = self._grab_all_screens((left, top, right, bottom))
 
+        # Enregistrement : nom IMG_XXXX.png + nouvelle entree dans l'index.
         items = self._load_index()
         new_id = self._next_id(items)
         filename = f"IMG_{new_id:04d}.png"
@@ -157,6 +198,7 @@ class ScreenshotModel:
         return meta
 
     def rename(self, item_id: int, new_name: str) -> Optional[Dict]:
+        """Renomme le fichier d'une capture (nom nettoye, extension .png gardee)."""
         if not self.is_ready():
             return None
         items = self._load_index()
@@ -178,6 +220,7 @@ class ScreenshotModel:
         return it
 
     def delete(self, item_id: int) -> bool:
+        """Supprime une capture : le fichier image puis sa fiche dans l'index."""
         if not self.is_ready():
             return False
         items = self._load_index()
@@ -199,13 +242,23 @@ class ScreenshotModel:
     # -------------------------------------------------------------- Utils
     @staticmethod
     def _sanitize_name(name: str) -> str:
+        """Nettoie un nom saisi : espaces -> _, caracteres exotiques retires.
+
+        Evite de creer des noms de fichiers invalides sous Windows.
+        Limite a 80 caracteres.
+        """
         name = name.strip().replace(" ", "_")
         name = "".join(ch for ch in name if ch.isalnum() or ch in ("_", "-"))
         return name[:80]
 
     @staticmethod
     def _enumerate_monitors_windows() -> List[Dict]:
-        # Windows monitor enumeration via ctypes (EnumDisplayMonitors)
+        """Demande a Windows la liste des ecrans et leurs positions.
+
+        Passe par l'API systeme EnumDisplayMonitors (via ctypes) : pour
+        chaque moniteur, Windows appelle notre fonction _enum_proc qui note
+        sa position (left/top/right/bottom) et s'il est l'ecran principal.
+        """
         import ctypes
         from ctypes import wintypes
 

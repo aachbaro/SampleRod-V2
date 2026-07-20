@@ -23,6 +23,23 @@
 # - Gerer la taille du buffer retro (pre_seconds + sample_rate + block_size).
 # - Assembler "retro + live" au moment du stop puis ecrire le fichier WAV.
 #
+# VOCABULAIRE
+# - "loopback"     : enregistrer ce qui SORT des enceintes (et non un micro).
+# - "buffer retro" : memoire tampon circulaire qui garde en permanence les
+#   X dernieres secondes entendues ; quand on appuie sur Enregistrer, on peut
+#   ainsi recuperer ce qui vient JUSTE d'etre joue (le "pre-record").
+# - "live"         : ce qui est capture apres l'appui sur Enregistrer.
+#
+# FONCTIONS (sommaire)
+# - _generate_unique_filename() : trouve un nom de fichier libre (suffixe _1, _2...).
+# - recorder_worker()           : LA fonction principale du processus ; contient :
+#   - _export_job_loop()  : thread interne qui ecrit les WAV finaux sans
+#                           bloquer la capture (assemblage retro + live).
+#   - open_microphone()   : trouve et ouvre le peripherique audio demande.
+#   - boucle externe      : (re)ouverture du device apres erreur/changement.
+#   - boucle interne      : lit l'audio bloc par bloc et traite les commandes
+#                           (start, stop, enable_retro, set_device...).
+#
 # NOTES
 # - Le retro_time (selection courante) doit rester <= pre_seconds (taille max).
 # - En cas de changement de sample_rate, on recalcule la taille du buffer.
@@ -104,6 +121,16 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
     export_q = queue.Queue()
 
     def _export_job_loop():
+        """Thread d'ecriture des fichiers WAV finaux.
+
+        Quand un enregistrement s'arrete, assembler "retro + live" et ecrire
+        le fichier peut prendre du temps. Pour ne pas figer la capture audio
+        (et perdre des blocs), ce travail est confie a ce thread : la boucle
+        principale depose un "job" dans export_q et repart aussitot ecouter.
+        Chaque job decrit : le chemin de sortie, les blocs retro, le fichier
+        temporaire du live, et la frequence d'echantillonnage.
+        Un job "None" signifie : termine, on arrete le thread.
+        """
         while True:
             job = export_q.get()
             if job is None:
@@ -118,6 +145,7 @@ def recorder_worker(cmd_q, resp_q, pre_seconds, sample_rate, block_size, initial
             sequential_with_previous = bool(job.get("sequential_with_previous", False))
 
             try:
+                # Le fichier final = blocs retro (memoire) + live (fichier temp).
                 has_pre = len(pre) > 0
                 has_live = (
                     live_temp_path is not None

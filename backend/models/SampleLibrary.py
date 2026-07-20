@@ -1,11 +1,22 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Modele ORM de bibliotheque de samples (table SampleBank).
-# - Fournit les operations CRUD de base pour les librairies audio.
+# - Decrit la table "SampleBank" : la liste des dossiers que l'utilisateur a
+#   declares comme librairies de samples (chaque ligne = un dossier du disque).
+# - Chaque librairie a une position (son ordre d'affichage dans l'interface).
+# - Fournit les operations de base : ajouter, lister, supprimer, reordonner.
+#
+# CLASSE ET FONCTIONS (sommaire)
+# - SampleBank (une ligne de la table = une librairie)
+#   - colonnes : id, path (chemin du dossier), position (ordre d'affichage)
+#   - __init__()            : verifie le dossier puis l'enregistre en base.
+#   - to_dict()             : version "dictionnaire" pour l'interface.
+#   - get_all_libraries()   : toutes les librairies, triees par position.
+#   - delete_library()      : supprime une librairie et resserre les positions.
+#   - reorder_libraries()   : applique un nouvel ordre choisi par l'utilisateur.
 #
 # LIENS CLES
-# - backend/services/settings_service.py
-# - frontend/settings_gui/libraries_list.py
+# - backend/services/library_service.py        : service qui orchestre ces appels.
+# - frontend/settings_gui/libraries_list.py    : ecran de gestion des librairies.
 # -----------------------------------------------------------------------------
 # backend/models/SampleLibrary.py
 
@@ -26,6 +37,13 @@ class SampleBank(Base):
     position = Column(Integer, nullable=False)
 
     def __init__(self, path: str):
+        """Cree une nouvelle librairie a partir d'un chemin de dossier.
+
+        Etapes : verifier que le dossier existe vraiment, qu'il n'est pas
+        deja enregistre, lui attribuer la derniere position, puis
+        l'enregistrer en base. Toute anomalie leve une ValueError avec un
+        message clair (affiche tel quel a l'utilisateur).
+        """
         session = SessionLocal()
         session.expire_on_commit = False
         logger.info(f"Sample Bank: Initialisation avec {path}")
@@ -45,7 +63,8 @@ class SampleBank(Base):
 
         self.path = path_resolved
 
-        # Déterminer la position maximale
+        # La nouvelle librairie prend la place suivante dans l'ordre
+        # d'affichage (position max existante + 1, ou 0 si c'est la premiere).
         max_position = session.query(func.max(SampleBank.position)).scalar()
         self.position = 0 if max_position is None else max_position + 1
 

@@ -1,16 +1,28 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Service central de configuration (QSettings) pour l'app audio.
-# - Source de verite des parametres UI/Audio/Librairies/Normalisation.
-# - Emet des signaux Qt pour synchroniser les autres services (Recorder, UI...).
+# - LA source de verite de tous les reglages de l'application. Les valeurs
+#   sont stockees via QSettings (sous Windows : dans le registre, cle
+#   "SampleRod/Main") et survivent donc d'une session a l'autre.
+# - Schema identique pour chaque reglage : un "getter" (lire la valeur), un
+#   "setter" (ecrire + persister + emettre un signal Qt). Les autres services
+#   et les ecrans de reglages s'abonnent aux signaux pour reagir en direct.
 #
-# CE QUI EST DEJA EN PLACE
-# - Retro-recording: enable/disable + preSeconds.
-# - Audio: sample rate + loopback device (soundcard).
-# - Libraries: ajout/suppression/reorder.
-# - Normalization: auto-normalize + niveau LUFS.
-# - Display: pagination des samples.
-# - Remote control: toggle + port serveur HTTP.
+# FONCTIONS (sommaire, groupees par theme)
+# - Retro-recording : toggleRetro(), setPreSeconds(), isRetroEnabled(),
+#   getPreSeconds() — le buffer qui garde les X dernieres secondes entendues.
+# - Librairies : addSampleLibrary(), removeSampleLibrary(),
+#   updateLibraryOrder() — delegue a SampleBank puis re-emet la liste.
+# - Audio : _init_audio_settings() (restaure device + sample rate au
+#   demarrage), setSampleRate(), setLoopbackDevice().
+# - Normalisation : toggleAutoNormalize(), setNormalizationLevel(),
+#   isAutoNormalizeEnabled(), getNormalizationLevel() (cible en LUFS).
+# - Affichage : setSamplesPerPage(), getSamplesPerPage() (pagination).
+# - Controle distant : is/setRemoteControlEnabled(), get/setRemoteControlPort()
+#   (les variables d'env REMOTE_CONTROL_* servent de valeurs par defaut).
+# - Captures d'ecran : is/setScreenshotEnabled(), get/setScreenshotLibraryPath(),
+#   get/setScreenshotDefaultScreen().
+# - Forme d'onde : is/setFillMarkersReplace() (comportement du remplissage
+#   de marqueurs dans l'editeur).
 #
 # CE QUI RESTE A IMPLEMENTER (IDEES)
 # - Latence/buffer: taille de buffer, taille de bloc, device input/output.
@@ -60,6 +72,7 @@ class SettingsService(QObject):
     screenshotToggled = Signal(bool)
     screenshotLibraryChanged = Signal(str)
     screenshotDefaultScreenChanged = Signal(int)
+    fillMarkersReplaceChanged = Signal(bool)
 
     def __init__(self, app_context):
         super().__init__()
@@ -167,6 +180,13 @@ class SettingsService(QObject):
 
     # ------------------------------------------------------------------ Audio Settings
     def _init_audio_settings(self):
+        """Restaure les reglages audio au demarrage (sample rate + device).
+
+        Pour le peripherique loopback : on cherche d'abord celui dont le nom
+        a ete sauvegarde ; s'il a disparu (casque debranche...), on retombe
+        sur le peripherique correspondant aux haut-parleurs par defaut, puis
+        sur le premier disponible.
+        """
         # → Sample rate
         # Charge/emet le sample rate sauvegarde
         rate = self._qs.value("sampleRate", 44100, type=int)
@@ -311,6 +331,18 @@ class SettingsService(QObject):
         return self._qs.value("screenshot/default_screen", 0, type=int)
 
     def setScreenshotDefaultScreen(self, index: int):
+        """Change l'ecran capture par defaut et previent les abonnes."""
         self.screenshot_default_screen = index
         self._qs.setValue("screenshot/default_screen", index)
         self.screenshotDefaultScreenChanged.emit(index)
+
+    # ------------------------------------------------------------------ Waveform / Decoupage Settings
+
+    def isFillMarkersReplace(self) -> bool:
+        """Retourne si le fill markers doit remplacer les marqueurs existants dans la zone."""
+        return self._qs.value("waveform/fill_markers_replace", False, type=bool)
+
+    def setFillMarkersReplace(self, replace: bool) -> None:
+        """Persiste le comportement du fill markers (remplacer ou ignorer les existants)."""
+        self._qs.setValue("waveform/fill_markers_replace", replace)
+        self.fillMarkersReplaceChanged.emit(replace)

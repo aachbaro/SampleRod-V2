@@ -16,6 +16,23 @@
 # FLUX GLOBAL
 # UI -> RecorderService (signal/slot) -> cmd_queue -> recorder_worker (process)
 # recorder_worker -> resp_queue -> RecorderService.poll -> UI/Stockage/Notifications
+#
+# CLASSE ET FONCTIONS (sommaire)
+# - RecorderService (QObject)
+#   - signal recordingStateChanged(bool) : previent l'UI (bouton REC...).
+#   - __init__()        : lit la config, cree et demarre le processus worker.
+#   - onRetroToggled() / onPreSecondsChanged() / onLoopbackDeviceChanged() /
+#     onSampleRateChanged() : slots relayant les changements de reglages
+#     vers le worker (via la file de commandes).
+#   - record_button_clicked() : bouton REC -> start ou stop selon l'etat.
+#   - enable_retro() / disable_retro() : (de)active le buffer retrospectif.
+#   - start() / stop()  : demarre / arrete une prise d'enregistrement.
+#   - shutdown()        : arret propre du processus worker (avec accuse).
+#   - poll()            : lit les messages du worker (appele periodiquement
+#                         par l'UI) ; c'est ici qu'un enregistrement termine
+#                         est verifie (silence ?) puis ajoute au catalogue.
+#   - _set_recording_state() : met a jour l'etat et emet le signal.
+#   - _is_wav_silent()  : detecte un fichier ne contenant que du silence.
 # -----------------------------------------------------------------------------
 # PySide6: QObject + decorateurs de slots pour recevoir les signaux
 from PySide6.QtCore import QObject, Slot, Signal

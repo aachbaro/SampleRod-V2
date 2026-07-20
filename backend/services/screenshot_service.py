@@ -7,6 +7,21 @@
 #
 # FLUX GLOBAL
 # UI/Remote -> ScreenshotService -> ScreenshotModel -> FS/index.json -> UI
+#
+# CLASSE ET FONCTIONS (sommaire)
+# - ScreenshotService (QObject)
+#   - signaux : screenshotAdded(id), screenshotDeleted(id),
+#               screenshotsChanged(liste complete).
+#   - _refresh_model()  : (re)cree le modele selon les parametres
+#                         (fonction activee ? quel dossier ?).
+#   - _ensure_ready()   : verifie qu'un dossier est configure, sinon
+#                         previent l'utilisateur et refuse l'action.
+#   - list_screens()    : ecrans disponibles (pour le choix dans les reglages).
+#   - list_items()      : toutes les captures du catalogue.
+#   - capture()         : prend une capture (ecran par defaut des reglages
+#                         si non precise) + notification + signaux.
+#   - rename()/delete() : renomme/supprime une capture + signaux.
+#   - get_path()        : chemin du fichier image d'une capture.
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations

@@ -15,6 +15,8 @@
 #   - GET  /libraries       -> liste des librairies disponibles
 #   - POST /record/start    -> demarrer un enregistrement
 #   - POST /record/stop     -> arreter l'enregistrement
+#   - POST /mobile/upload   -> recevoir un fichier audio depuis l'app mobile
+#                              (body binaire brut + header X-Filename)
 # - CORS simple (pour acces depuis un navigateur).
 # - Option de securite via token (X-Api-Key ou Authorization: Bearer).
 #
@@ -32,6 +34,34 @@
 # - Ce service peut etre demarre au lancement de l'app, puis stop a la fermeture.
 # - Les commandes appellent RecorderService directement (thread serveur).
 #   Si besoin, passe un dispatcher pour executer dans le thread UI.
+# - SSE (Server-Sent Events) : technique web ou le navigateur garde une
+#   connexion ouverte (/events) et le serveur y "pousse" les nouveautes en
+#   direct (enregistrement demarre, sample ajoute...) sans que la page ait
+#   besoin de redemander.
+#
+# CLASSE ET FONCTIONS (sommaire)
+# - RemoteControlService
+#   Cycle de vie : start(), stop(), is_running.
+#   UI web statique : prepare_static(), _is_build_needed(), _latest_mtime(),
+#     _build_ui() (npm install/build auto si la source a change),
+#     _is_api_path(), _try_serve_static(), _send_file().
+#   Routage HTTP : _make_handler() (classe Handler liee au service),
+#     _handle_options() (CORS), _handle_request() (LE routeur : associe
+#     chaque URL a son traitement), _handle_samples_route(),
+#     _handle_screenshots_route().
+#   Constructeurs de reponses : _build_status_payload(),
+#     _build_libraries_payload(), _sample_to_dict(), _add_to_history(),
+#     _get_sample_by_id(), _get_screenshot_by_id().
+#   Commandes : _handle_start() (lance l'enregistrement),
+#     _handle_stop() (l'arrete), _handle_mobile_upload() (fichier audio depuis
+#     l'app mobile → sauvegarde + import banque), _execute() (direct ou via
+#     dispatcher), _resolve_output_folder() (quel dossier de sortie utiliser ?).
+#   Outils : _parse_sample_id()/_parse_int(), _read_json(), _authorize()
+#     (verification du token), _send_cors_headers(), _send_json().
+#   Temps reel (SSE) : push_status(), push_sample_added/deleted/renamed(),
+#     push_screenshot_added/deleted(), push_screenshots_changed(),
+#     _register/_unregister/_close_sse_clients(), _broadcast_event(),
+#     _handle_sse() (boucle d'envoi par client), _write_sse().
 # -----------------------------------------------------------------------------
 # backend/services/remote_control_service.py
 
@@ -40,7 +70,7 @@ Service HTTP local pour controler l'enregistrement a distance.
 """
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from typing import Any, Callable, Dict, Optional
 from pathlib import Path
 import json
@@ -310,6 +340,10 @@ class RemoteControlService:
             self._send_json(handler, response["code"], response["body"])
             return
 
+        if method == "POST" and path == "/mobile/upload":
+            self._handle_mobile_upload(handler)
+            return
+
         if path.startswith("/samples/"):
             handled = self._handle_samples_route(handler, method, path)
             if handled:
@@ -341,10 +375,12 @@ class RemoteControlService:
         return {"libraries": libraries}
 
     def _get_sample_by_id(self, sample_id: int):
+        """Retrouve un sample dans le cache du SampleService (None si absent)."""
         samples = self.app_context.sample_store.get_cached()
         return next((s for s in samples if s.id == sample_id), None)
 
     def _get_screenshot_by_id(self, item_id: int):
+        """Retrouve la fiche d'une capture d'ecran par son id (None si absente)."""
         svc = getattr(self.app_context, "screenshots", None)
         if not svc:
             return None
@@ -352,6 +388,7 @@ class RemoteControlService:
         return next((i for i in items if int(i.get("id", -1)) == item_id), None)
 
     def _sample_to_dict(self, sample) -> Dict[str, Any]:
+        """Convertit un sample en dictionnaire JSON-compatible pour le web."""
         created_at = getattr(sample, "created_at", None)
         created_iso = created_at.isoformat() if created_at else None
         analyzed_at = getattr(sample, "analyzed_at", None)
@@ -368,6 +405,12 @@ class RemoteControlService:
         }
 
     def _add_to_history(self, sample_dict: Dict[str, Any]) -> None:
+        """Ajoute (ou remonte) un sample en tete de l'historique de session.
+
+        L'historique alimente la page web (/samples/history) ; il est limite
+        aux 50 derniers et protege par un verrou car plusieurs requetes HTTP
+        peuvent le modifier en meme temps.
+        """
         with self._history_lock:
             self._sample_history = [
                 s for s in self._sample_history if s.get("id") != sample_dict.get("id")
@@ -408,7 +451,95 @@ class RemoteControlService:
         self._execute(self.app_context.recorder.stop)
         return {"code": 202, "body": {"status": "accepted", "action": "stop"}}
 
+    def _handle_mobile_upload(self, handler: BaseHTTPRequestHandler) -> None:
+        """Recoit un fichier audio depuis l'app mobile et le sauvegarde dans la librairie.
+
+        Le client envoie le fichier en body binaire brut avec:
+          Content-Type : audio/m4a  (ou audio/wav, audio/aac, ...)
+          Content-Length: <taille en octets>
+          X-Filename   : nom_du_fichier.m4a  (optionnel)
+        Query param optionnel: ?library_id=<id>  pour cibler une librairie precise.
+        """
+        # Determine le dossier de destination
+        query = parse_qs(urlparse(handler.path).query)
+        lib_id_raw = query.get("library_id", [None])[0]
+        payload: Dict[str, Any] = {}
+        if lib_id_raw is not None:
+            try:
+                payload["library_id"] = int(lib_id_raw)
+            except ValueError:
+                pass
+        output_folder = self._resolve_output_folder(payload)
+        if not output_folder:
+            self._send_json(handler, 400, {
+                "error": "no_output_folder",
+                "detail": "Aucune librairie disponible. Ajoute une librairie dans les parametres.",
+            })
+            return
+
+        # Taille du body
+        try:
+            length = int(handler.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if length <= 0:
+            self._send_json(handler, 400, {"error": "empty_body"})
+            return
+
+        # Nom du fichier (fourni par le client ou genere automatiquement)
+        raw_filename = (handler.headers.get("X-Filename") or "").strip()
+        if raw_filename:
+            filename = os.path.basename(raw_filename)
+        else:
+            content_type = handler.headers.get("Content-Type", "")
+            ext = ".wav" if "wav" in content_type else ".aac" if "aac" in content_type else ".m4a"
+            filename = f"mobile_{int(time.time())}{ext}"
+
+        # Evite les collisions de noms dans le dossier de destination
+        dest = Path(output_folder) / filename
+        stem, suffix = dest.stem, dest.suffix
+        counter = 1
+        while dest.exists():
+            dest = Path(output_folder) / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+        # Lecture du body et ecriture sur disque
+        try:
+            data = handler.rfile.read(length)
+            dest.write_bytes(data)
+        except Exception:
+            logger.exception("[RemoteControl] mobile_upload: ecriture echouee")
+            self._send_json(handler, 500, {"error": "write_failed"})
+            return
+
+        # Import dans la banque de samples (best-effort: plusieurs noms de methode tentes)
+        sample_id = None
+        try:
+            store = self.app_context.sample_store
+            for method_name in ("import_file", "add_file", "register_file"):
+                if hasattr(store, method_name):
+                    result = getattr(store, method_name)(str(dest))
+                    sample_id = int(result) if isinstance(result, int) else None
+                    break
+        except Exception:
+            logger.warning("[RemoteControl] mobile_upload: import sample echoue — fichier sauvegarde dans %s", dest)
+
+        logger.info("[RemoteControl] mobile_upload: fichier recu -> %s", dest)
+        self._send_json(handler, 200, {
+            "status": "ok",
+            "filename": dest.name,
+            "path": str(dest),
+            "sample_id": sample_id,
+        })
+
     def _handle_samples_route(self, handler: BaseHTTPRequestHandler, method: str, path: str) -> bool:
+        """Routes /samples/{id}/... : audio, download, rename, delete.
+
+        - audio    : envoie le fichier pour ecoute dans le navigateur ;
+        - download : pareil mais en telechargement (avec nom de fichier) ;
+        - rename / delete : delegues au SampleService, puis diffusion SSE.
+        Renvoie True si la route a ete traitee (sinon le routeur continue).
+        """
         parts = path.strip("/").split("/")
         if len(parts) < 2 or parts[0] != "samples":
             return False
@@ -493,6 +624,12 @@ class RemoteControlService:
         return False
 
     def _handle_screenshots_route(self, handler: BaseHTTPRequestHandler, method: str, path: str) -> bool:
+        """Routes /screenshots/... : list, screens, capture, rename, delete, file.
+
+        Permet de declencher une capture d'ecran du PC depuis le telephone
+        et de consulter/gerer les captures existantes. Renvoie True si la
+        route a ete traitee.
+        """
         parts = path.strip("/").split("/")
         if len(parts) < 2 or parts[0] != "screenshots":
             return False
@@ -632,12 +769,14 @@ class RemoteControlService:
         return None
 
     def _parse_sample_id(self, raw: str) -> Optional[int]:
+        """Convertit un morceau d'URL en id de sample (None si invalide)."""
         try:
             return int(raw)
         except Exception:
             return None
 
     def _parse_int(self, raw: Any) -> Optional[int]:
+        """Conversion en entier tolerante (None si invalide)."""
         try:
             return int(raw)
         except Exception:
@@ -727,24 +866,32 @@ class RemoteControlService:
         self._broadcast_event("sample_renamed", sample_dict)
 
     def push_screenshot_added(self, item_id: int) -> None:
+        """Envoie un event SSE 'screenshot_added'."""
         item = self._get_screenshot_by_id(item_id)
         if not item:
             return
         self._broadcast_event("screenshot_added", item)
 
     def push_screenshot_deleted(self, item_id: int) -> None:
+        """Envoie un event SSE 'screenshot_deleted'."""
         self._broadcast_event("screenshot_deleted", {"id": item_id})
 
     def push_screenshots_changed(self, items: list) -> None:
+        """Envoie la liste complete des captures aux clients connectes."""
         self._broadcast_event("screenshots_changed", {"items": items})
 
+    # Chaque navigateur connecte a /events possede sa propre file (Queue) :
+    # diffuser un evenement = le deposer dans la file de chaque client ;
+    # la boucle _handle_sse de chaque client le lit et l'envoie sur le reseau.
     def _register_sse_client(self) -> queue.Queue:
+        """Inscrit un nouveau client SSE et renvoie sa file personnelle."""
         q: queue.Queue = queue.Queue()
         with self._sse_lock:
             self._sse_clients.append(q)
         return q
 
     def _unregister_sse_client(self, q: queue.Queue) -> None:
+        """Desinscrit un client SSE (deconnexion)."""
         with self._sse_lock:
             try:
                 self._sse_clients.remove(q)
@@ -752,6 +899,7 @@ class RemoteControlService:
                 pass
 
     def _close_sse_clients(self) -> None:
+        """Previent tous les clients que le serveur s'arrete (None = fin)."""
         with self._sse_lock:
             for q in self._sse_clients:
                 try:
@@ -761,6 +909,7 @@ class RemoteControlService:
             self._sse_clients.clear()
 
     def _broadcast_event(self, event: str, payload: Dict[str, Any]) -> None:
+        """Depose un evenement dans la file de chaque client connecte."""
         with self._sse_lock:
             clients = list(self._sse_clients)
         for q in clients:
@@ -770,7 +919,14 @@ class RemoteControlService:
                 pass
 
     def _handle_sse(self, handler: BaseHTTPRequestHandler) -> None:
-        """Ouvre un flux SSE et pousse les evenements."""
+        """Ouvre un flux SSE et pousse les evenements a UN client.
+
+        La connexion reste ouverte : on envoie d'abord un instantane du
+        statut, puis on boucle en attendant les evenements de la file du
+        client. Toutes les 15 s sans evenement, un "keepalive" est envoye
+        pour verifier que le navigateur est toujours la. La boucle se
+        termine a la deconnexion du client ou a l'arret du serveur (None).
+        """
         handler.send_response(200)
         handler.send_header("Content-Type", "text/event-stream; charset=utf-8")
         handler.send_header("Cache-Control", "no-cache")
@@ -813,6 +969,7 @@ class RemoteControlService:
             self._unregister_sse_client(q)
 
     def _write_sse(self, handler: BaseHTTPRequestHandler, event: str, payload: Dict[str, Any]) -> None:
+        """Ecrit un evenement au format SSE ("event: ...\\ndata: ...\\n\\n")."""
         data = json.dumps(payload)
         msg = f"event: {event}\ndata: {data}\n\n"
         handler.wfile.write(msg.encode("utf-8"))
@@ -832,6 +989,7 @@ class RemoteControlService:
             "/record/start",
             "/record/stop",
             "/libraries",
+            "/mobile/upload",
             "/samples/history",
             "/screenshots/list",
             "/screenshots/screens",

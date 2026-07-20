@@ -1,5 +1,62 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Le moteur de l'onglet "Break" : tout ce qui touche a l'analyse de boucles
+#   de batterie (breaks) passe par ici. Cinq capacites :
+#   1. ANALYSER un fichier : detecter le tempo, decouper le break en "slices"
+#      (un slice = un coup de batterie : kick, snare, hat...) ;
+#   2. RE-ANALYSER a partir de marqueurs poses a la main par l'utilisateur ;
+#   3. QUANTIZER : recaler les coups sur une grille rythmique a un tempo cible
+#      et produire un apercu audio (fichier WAV temporaire) ;
+#   4. GENERER un nouveau pattern de batterie a partir des coups detectes ;
+#   5. RENDRE ce pattern en audio ecoutable.
+# - Chaque operation tourne dans son propre QThread (worker) : l'interface
+#   n'attend jamais, elle est prevenue par signaux (Started/Finished/Failed).
+# - Les resultats d'analyse sont mis en CACHE (memoire + fichiers JSON dans
+#   ~/.samplerod/break_cache) : re-ouvrir un break deja analyse est instantane.
+#   Le cache est invalide si le fichier source a change (comparaison de date).
+# - Le "vrai" calcul vit dans prototypes/drum_detector/ (analyzer, preview,
+#   pattern_generator) ; ce service en est l'adaptateur cote application.
+#
+# CLASSES DE DONNEES (resultats transportes vers l'UI)
+# - DrumSlice                 : un coup detecte (position, type, confiance...).
+# - DrumAnalysisResult        : le bilan complet d'une analyse (tempo, slices...).
+# - DrumQuantizedPreview      : apercu audio quantize (fichier temp + infos).
+# - DrumGeneratedPatternResult: pattern genere (avant rendu audio).
+# - DrumPatternRender         : pattern rendu en audio (fichier temp + infos).
+#
+# WORKERS (QThread, un par operation)
+# - _DrumAnalysisWorker / _DrumReanalysisWorker / _DrumQuantizeWorker /
+#   _DrumPatternGenerationWorker / _DrumPatternRenderWorker
+#
+# FONCTIONS ET SERVICE (sommaire)
+# - _load_analyzer_module() etc.   : import paresseux des prototypes (lourds).
+# - drum_analysis_availability_error() : les dependances sont-elles presentes ?
+# - adapt_drum_detection_result()  : traduit le resultat brut du prototype
+#                                    en DrumAnalysisResult "public".
+# - project_quantized_slices()     : recalcule la position des slices apres
+#                                    quantization (pour l'affichage).
+# - _preview_temp_path() / _pattern_render_temp_path() : fichiers WAV temp.
+# - DrumAnalysisService (QObject)  : la facade pour l'UI
+#   - analyze_file()             : lance une analyse en arriere-plan.
+#   - create_quantized_preview() : lance la fabrication d'un apercu quantize.
+#   - quantized_slices()         : positions des slices apres quantization.
+#   - create_break_pattern()     : lance la generation d'un pattern.
+#   - render_break_pattern()     : lance le rendu audio d'un pattern.
+#   - reanalyze_from_markers()   : relance l'analyse depuis marqueurs manuels.
+#   - load_cached()/cache_result()/delete_cached() : gestion du cache.
+#   - shutdown()                 : arrete proprement tous les workers.
+#
+# LIENS CLES
+# - prototypes/drum_detector/*        : les algorithmes d'analyse eux-memes.
+# - frontend/labo/break_widget.py     : l'interface de l'onglet Break.
+# - frontend/labo/break_generator_panel.py : l'interface du generateur.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import json
 import logging
 import os
 import tempfile
@@ -16,13 +73,45 @@ from backend.services.audio_metadata import is_audio_file, normalize_audio_path
 
 logger = logging.getLogger("drum_analysis_service")
 
+# Version du format de cache : incrementer ce numero invalide tous les
+# caches existants (utile quand la structure des resultats change).
+_CACHE_VERSION = 2
+
+# Valeurs par defaut des reglages exposes a l'utilisateur :
+# - split_density : sensibilite du decoupage (plus haut = plus de slices) ;
+# - grid_division : finesse de la grille de quantization (16 = doubles-croches) ;
+# - quantize_strength : 0 = positions d'origine, 1 = collees a la grille ;
+# - target_bpm : tempo cible par defaut du generateur de breaks.
 DEFAULT_SPLIT_DENSITY = 50.0
 DEFAULT_QUANTIZE_GRID_DIVISION = 16
 DEFAULT_QUANTIZE_STRENGTH = 0.7
+DEFAULT_GENERATOR_TARGET_BPM = 140.0
+# "tail_mode" : que faire de la fin d'un coup trop long pour sa case ?
+# cut = couper net, reverse = jouer a l'envers, ping_pong = aller-retour.
+PATTERN_TAIL_MODE_CUT = "cut"
+PATTERN_TAIL_MODE_REVERSE = "reverse"
+PATTERN_TAIL_MODE_PING_PONG = "ping_pong"
+DEFAULT_PATTERN_TAIL_MODE = PATTERN_TAIL_MODE_CUT
+PATTERN_TAIL_MODES: tuple[str, ...] = (
+    PATTERN_TAIL_MODE_CUT,
+    PATTERN_TAIL_MODE_REVERSE,
+    PATTERN_TAIL_MODE_PING_PONG,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class DrumSlice:
+    """Un coup de batterie detecte dans le break.
+
+    start_s/end_s : position dans le fichier source (en secondes).
+    label : type principal detecte (kick, snare, hat...), avec sa confidence
+    (0 a 1) ; secondary_labels liste les autres types entendus en meme temps
+    (coups superposes), layer_score mesurant cette superposition.
+    role / rhythmic_position : place du coup dans le rythme (temps fort...).
+    step_index / preview_* : position recalculee apres quantization
+    (renseignee seulement sur les apercus quantizes).
+    """
+
     index: int
     start_s: float
     end_s: float
@@ -39,6 +128,15 @@ class DrumSlice:
 
 @dataclass(frozen=True, slots=True)
 class DrumAnalysisResult:
+    """Bilan complet de l'analyse d'un break, tel que l'UI le consomme.
+
+    Contient le verdict (label/family/form + confidence), le tempo detecte
+    (tempo_bpm) avec ses indices de fiabilite (pulse_score, regularity),
+    et la liste des coups detectes (slices). prototype_result garde le
+    resultat brut du prototype, necessaire aux operations suivantes
+    (quantization, generation) mais jamais affiche tel quel.
+    """
+
     source_path: str
     label: str
     family: str
@@ -58,6 +156,13 @@ class DrumAnalysisResult:
 
 @dataclass(frozen=True, slots=True)
 class DrumQuantizedPreview:
+    """Apercu audio d'un break recale sur la grille a un tempo cible.
+
+    temp_path pointe vers le fichier WAV temporaire genere, pret a etre
+    ecoute ou glisse ailleurs ; les autres champs decrivent les reglages
+    utilises (tempo source/cible, grille, force de quantization).
+    """
+
     source_path: str
     display_name: str
     temp_path: str
@@ -70,8 +175,42 @@ class DrumQuantizedPreview:
     slices: tuple[DrumSlice, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class DrumGeneratedPatternResult:
+    """Pattern de batterie genere (la "partition"), avant son rendu audio."""
+
+    source_path: str
+    target_bpm: float
+    use_hybrid: bool
+    pattern: Any
+
+
+@dataclass(frozen=True, slots=True)
+class DrumPatternRender:
+    """Pattern genere transforme en audio ecoutable (fichier WAV temporaire).
+
+    seed est le germe aleatoire du pattern : le meme seed redonne exactement
+    le meme break, ce qui permet de le retrouver ou de le partager.
+    """
+
+    source_path: str
+    display_name: str
+    temp_path: str
+    duration_s: float
+    sample_rate: int
+    target_bpm: float
+    tail_mode: str
+    seed: int
+    bars: int
+    pattern: Any
+
+
+# Les trois modules du prototype (analyse, preview, generateur) sont lourds
+# a importer (librosa, numpy...). On ne les charge donc qu'a la premiere
+# utilisation, et une seule fois (lru_cache memorise le module charge).
 @lru_cache(maxsize=1)
 def _load_analyzer_module():
+    """Charge (une seule fois) le module d'analyse du prototype."""
     from prototypes.drum_detector import analyzer as analyzer_module
 
     return analyzer_module
@@ -79,12 +218,27 @@ def _load_analyzer_module():
 
 @lru_cache(maxsize=1)
 def _load_preview_module():
+    """Charge (une seule fois) le module de fabrication d'apercus audio."""
     from prototypes.drum_detector import preview as preview_module
 
     return preview_module
 
 
+@lru_cache(maxsize=1)
+def _load_pattern_generator_module():
+    """Charge (une seule fois) le module generateur de patterns."""
+    from prototypes.drum_detector import pattern_generator as pattern_generator_module
+
+    return pattern_generator_module
+
+
 def drum_analysis_availability_error() -> str | None:
+    """Verifie que l'analyse de break est utilisable sur cette machine.
+
+    Renvoie None si tout va bien, sinon un message d'erreur expliquant la
+    dependance manquante (librosa non installe, etc.) que l'UI affiche
+    a la place de l'onglet Break.
+    """
     try:
         analyzer = _load_analyzer_module()
         return analyzer.get_analysis_dependency_error()
@@ -93,6 +247,13 @@ def drum_analysis_availability_error() -> str | None:
 
 
 def adapt_drum_detection_result(raw_result: Any, *, split_density: float) -> DrumAnalysisResult:
+    """Traduit le resultat brut du prototype en DrumAnalysisResult "public".
+
+    Le prototype renvoie ses propres objets internes ; cette fonction les
+    convertit champ par champ vers les classes de ce module, avec des
+    valeurs par defaut sures (getattr + "or") pour tolerer les champs
+    absents. Le resultat brut reste accessible via prototype_result.
+    """
     source_path = normalize_audio_path(getattr(raw_result, "source_path", "") or "")
     transient_hits = tuple(getattr(raw_result, "transient_hits", ()) or ())
     slices = tuple(
@@ -142,9 +303,18 @@ def project_quantized_slices(
     grid_division: int = DEFAULT_QUANTIZE_GRID_DIVISION,
     quantize_strength: float = DEFAULT_QUANTIZE_STRENGTH,
 ) -> tuple[DrumSlice, ...]:
+    """Calcule ou ATTERRIRAIENT les slices apres quantization (sans audio).
+
+    Sert a l'affichage : la forme d'onde de l'apercu quantize doit montrer
+    les slices a leurs nouvelles positions. On demande au prototype le
+    "planning" de re-timing, puis on copie ces nouvelles positions
+    (step_index, preview_start_s/end_s) dans des copies des slices d'origine.
+    En cas de donnees insuffisantes, renvoie les slices inchangees.
+    """
     if not result.slices:
         return ()
 
+    # Sans tempo source et cible valides, impossible de re-timer.
     source_bpm = float(result.tempo_bpm or 0.0)
     if source_bpm <= 1.0 or float(target_bpm or 0.0) <= 1.0:
         return result.slices
@@ -178,21 +348,51 @@ def project_quantized_slices(
                 preview_end_s=float(getattr(scheduled, "preview_end_s", 0.0)),
             )
         )
+    # Si le planning est plus court que la liste (cas limite), on complete
+    # avec les slices d'origine pour ne rien perdre a l'affichage.
     if len(projected) < len(result.slices):
         projected.extend(result.slices[len(projected) :])
     return tuple(projected)
 
 
 def _preview_temp_path(source_path: str, target_bpm: float) -> str:
+    """Chemin d'un WAV temporaire pour un apercu quantize (nom unique)."""
     temp_root = Path(tempfile.gettempdir()) / "SampleRod" / "break_preview"
     temp_root.mkdir(parents=True, exist_ok=True)
     stem = Path(source_path or "break").stem or "break"
+    # Suffixe aleatoire : deux apercus du meme fichier ne s'ecrasent jamais.
     suffix = uuid.uuid4().hex[:8]
     filename = f"{stem}_quantized_{int(round(target_bpm))}bpm_{suffix}.wav"
     return str(temp_root / filename)
 
 
+def _pattern_render_temp_path(source_path: str, target_bpm: float, seed: int) -> str:
+    """Chemin d'un WAV temporaire pour un break genere (nom unique avec seed)."""
+    temp_root = Path(tempfile.gettempdir()) / "SampleRod" / "break_pattern"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    stem = Path(source_path or "break").stem or "break"
+    suffix = uuid.uuid4().hex[:8]
+    filename = (
+        f"{stem}_break_seed_{int(seed)}_{int(round(target_bpm))}bpm_{suffix}.wav"
+    )
+    return str(temp_root / filename)
+
+
+def _normalized_cache_key(source_path: str) -> str:
+    """Cle de cache d'un fichier : son chemin normalise (casse ignoree)."""
+    return os.path.normcase(os.path.normpath(str(source_path or "")))
+
+
+# =============================================================================
+# WORKERS — un QThread par operation lourde.
+# Schema commun : __init__ memorise les parametres, run() fait le calcul dans
+# le thread secondaire puis emet soit le signal "pret" avec le resultat, soit
+# le signal "echec" avec un message. Aucun worker ne touche a l'interface.
+# =============================================================================
+
 class _DrumAnalysisWorker(QThread):
+    """Analyse complete d'un fichier : tempo + decoupage en slices."""
+
     analysisReady = Signal(object)
     analysisFailed = Signal(str, str)
 
@@ -219,6 +419,10 @@ class _DrumAnalysisWorker(QThread):
 
 
 class _DrumQuantizeWorker(QThread):
+    """Fabrique l'apercu audio quantize : relit le fichier source, demande au
+    prototype de re-timer chaque coup sur la grille au tempo cible, puis
+    ecrit le resultat dans un WAV temporaire."""
+
     previewReady = Signal(object)
     previewFailed = Signal(str, str)
 
@@ -289,8 +493,166 @@ class _DrumQuantizeWorker(QThread):
             self.previewFailed.emit(source_path, str(exc))
 
 
+class _DrumPatternGenerationWorker(QThread):
+    """Genere un nouveau pattern de batterie (la "partition", pas l'audio)
+    a partir des coups detectes et des parametres choisis par l'utilisateur.
+    use_hybrid active la variante qui reutilise des sequences entieres du
+    break d'origine en plus des coups isoles."""
+
+    patternReady = Signal(object)
+    patternFailed = Signal(str, str)
+
+    def __init__(
+        self,
+        result: DrumAnalysisResult,
+        params_payload: dict[str, Any],
+        *,
+        target_bpm: float,
+        use_hybrid: bool,
+        anchors: dict[int, str] | None = None,
+        parent: QObject | None = None,
+    ):
+        super().__init__(parent)
+        self._result = result
+        self._params_payload = dict(params_payload)
+        self._target_bpm = float(target_bpm)
+        self._use_hybrid = bool(use_hybrid)
+        self._anchors = {
+            int(step_index): str(anchor)
+            for step_index, anchor in dict(anchors or {}).items()
+            if str(anchor or "").strip()
+        }
+
+    def run(self) -> None:
+        source_path = self._result.source_path
+        try:
+            raw_result = self._result.prototype_result
+            if raw_result is None:
+                raise ValueError("Analyse brute indisponible pour la generation du pattern")
+
+            pattern_generator = _load_pattern_generator_module()
+            raw_user_motifs = self._params_payload.get("user_motifs") or []
+            if raw_user_motifs:
+                converted: list = []
+                for m in raw_user_motifs:
+                    if isinstance(m, dict):
+                        try:
+                            converted.append(pattern_generator.UserMotif.from_dict(m))
+                        except Exception:
+                            pass
+                    else:
+                        converted.append(m)
+                payload = {**self._params_payload, "user_motifs": converted}
+            else:
+                payload = self._params_payload
+            params = pattern_generator.BreakPatternParams(**payload)
+            hits = tuple(getattr(raw_result, "transient_hits", ()) or ())
+            sequences = tuple(getattr(raw_result, "hit_sequences", ()) or ())
+            if not hits:
+                raise ValueError("Aucun hit disponible pour generer un pattern")
+
+            pattern = pattern_generator.generate_break_pattern_for_mode(
+                hits,
+                params,
+                sequences=sequences,
+                use_hybrid=self._use_hybrid,
+                anchors=self._anchors,
+            )
+            self.patternReady.emit(
+                DrumGeneratedPatternResult(
+                    source_path=source_path,
+                    target_bpm=self._target_bpm,
+                    use_hybrid=self._use_hybrid,
+                    pattern=pattern,
+                )
+            )
+        except Exception as exc:
+            logger.warning("[DrumPatternGenerationWorker] generation impossible %s: %s", source_path, exc)
+            self.patternFailed.emit(source_path, str(exc))
+
+
+class _DrumPatternRenderWorker(QThread):
+    """Transforme un pattern genere en audio ecoutable : decoupe les coups
+    dans le fichier source, les place au bon moment, applique les options
+    (gate = duree des coups, mono_choke = un seul son a la fois,
+    tail_mode = sort des fins de coups) et ecrit un WAV temporaire."""
+
+    renderReady = Signal(object)
+    renderFailed = Signal(str, str)
+
+    def __init__(
+        self,
+        result: DrumAnalysisResult,
+        pattern: Any,
+        *,
+        target_bpm: float,
+        gate: float,
+        mono_choke: bool,
+        tail_mode: str,
+        parent: QObject | None = None,
+    ):
+        super().__init__(parent)
+        self._result = result
+        self._pattern = pattern
+        self._target_bpm = float(target_bpm)
+        self._gate = float(gate)
+        self._mono_choke = bool(mono_choke)
+        self._tail_mode = str(tail_mode or DEFAULT_PATTERN_TAIL_MODE)
+
+    def run(self) -> None:
+        source_path = self._result.source_path
+        try:
+            if self._pattern is None:
+                raise ValueError("Aucun pattern a rendre")
+            if self._target_bpm <= 1.0:
+                raise ValueError("Tempo cible invalide")
+
+            preview_module = _load_preview_module()
+            audio, sample_rate = sf.read(source_path, dtype="float32", always_2d=False)
+            rendered = preview_module.build_pattern_preview(
+                audio,
+                int(sample_rate),
+                self._pattern,
+                target_bpm=self._target_bpm,
+                gate=self._gate,
+                mono_choke=self._mono_choke,
+                tail_mode=self._tail_mode,
+            )
+
+            seed = int(getattr(self._pattern, "seed", 0) or 0)
+            bars = int(getattr(self._pattern, "bars", 1) or 1)
+            temp_path = _pattern_render_temp_path(source_path, self._target_bpm, seed)
+            sf.write(temp_path, rendered.audio, int(rendered.sample_rate))
+            stem = Path(source_path).stem or "break"
+            display_name = f"{stem}_break_seed_{seed}_{int(round(self._target_bpm))}bpm"
+            self.renderReady.emit(
+                DrumPatternRender(
+                    source_path=source_path,
+                    display_name=display_name,
+                    temp_path=temp_path,
+                    duration_s=float(rendered.duration_s or 0.0),
+                    sample_rate=int(rendered.sample_rate),
+                    target_bpm=self._target_bpm,
+                    tail_mode=self._tail_mode,
+                    seed=seed,
+                    bars=bars,
+                    pattern=self._pattern,
+                )
+            )
+        except Exception as exc:
+            logger.warning("[DrumPatternRenderWorker] rendu impossible %s: %s", source_path, exc)
+            self.renderFailed.emit(source_path, str(exc))
+
+
 class _DrumReanalysisWorker(QThread):
-    """Relance la detection de types a partir de markers manuels."""
+    """Relance la detection de types a partir de markers manuels.
+
+    Quand l'utilisateur corrige le decoupage en deplacant/ajoutant des
+    marqueurs sur la forme d'onde, on refait l'identification des coups
+    (kick/snare/hat...) en utilisant SES positions plutot que celles
+    detectees automatiquement.
+    """
+
     analysisReady = Signal(object)
     analysisFailed = Signal(str, str)
 
@@ -326,6 +688,18 @@ class _DrumReanalysisWorker(QThread):
 
 
 class DrumAnalysisService(QObject):
+    """Facade de l'analyse de breaks pour l'interface.
+
+    Chaque methode publique suit le meme schema :
+    1. verifier les pre-requis (fichier present, analyse disponible...) ;
+    2. creer le worker adequat et connecter ses signaux aux signaux du
+       service (que l'UI ecoute) ;
+    3. garder le worker dans un set le temps qu'il tourne (sinon Python le
+       detruirait en plein travail), puis le liberer a la fin (deleteLater) ;
+    4. demarrer le worker et rendre la main immediatement (renvoie True si
+       le travail a bien ete lance).
+    """
+
     analysisStarted = Signal(str)
     analysisFinished = Signal(object)
     analysisFailed = Signal(str, str)
@@ -335,6 +709,12 @@ class DrumAnalysisService(QObject):
     quantizeStarted = Signal(str)
     quantizeFinished = Signal(object)
     quantizeFailed = Signal(str, str)
+    patternGenerationStarted = Signal(str)
+    patternGenerated = Signal(object)
+    patternGenerationFailed = Signal(str, str)
+    patternRenderStarted = Signal(str)
+    patternRendered = Signal(object)
+    patternRenderFailed = Signal(str, str)
     statusChanged = Signal(str)
 
     def __init__(self, app_context) -> None:
@@ -343,8 +723,12 @@ class DrumAnalysisService(QObject):
         self._analysis_workers: set[QThread] = set()
         self._reanalysis_workers: set[QThread] = set()
         self._quantize_workers: set[QThread] = set()
+        self._pattern_generation_workers: set[QThread] = set()
+        self._pattern_render_workers: set[QThread] = set()
+        self._analysis_cache_memory: dict[str, tuple[int | None, DrumAnalysisResult]] = {}
 
     def analyze_file(self, path: str, *, split_density: float = DEFAULT_SPLIT_DENSITY) -> bool:
+        """Lance l'analyse d'un fichier en arriere-plan (tempo + slices)."""
         normalized = normalize_audio_path(path)
         if not normalized or not os.path.isfile(normalized):
             self.analysisFailed.emit(normalized, "Fichier introuvable")
@@ -372,6 +756,7 @@ class DrumAnalysisService(QObject):
         grid_division: int = DEFAULT_QUANTIZE_GRID_DIVISION,
         quantize_strength: float = DEFAULT_QUANTIZE_STRENGTH,
     ) -> bool:
+        """Lance la fabrication d'un apercu audio quantize en arriere-plan."""
         if result is None:
             self.quantizeFailed.emit("", "Aucune analyse disponible")
             return False
@@ -406,6 +791,7 @@ class DrumAnalysisService(QObject):
         grid_division: int = DEFAULT_QUANTIZE_GRID_DIVISION,
         quantize_strength: float = DEFAULT_QUANTIZE_STRENGTH,
     ) -> tuple[DrumSlice, ...]:
+        """Positions des slices apres quantization (calcul immediat, pour l'UI)."""
         if result is None:
             return ()
         try:
@@ -418,6 +804,81 @@ class DrumAnalysisService(QObject):
         except Exception as exc:
             logger.info("[DrumAnalysisService] projection quantizee impossible: %s", exc)
             return result.slices
+
+    def create_break_pattern(
+        self,
+        result: DrumAnalysisResult | None,
+        params_payload: dict[str, Any] | None,
+        *,
+        target_bpm: float = DEFAULT_GENERATOR_TARGET_BPM,
+        use_hybrid: bool = False,
+        anchors: dict[int, str] | None = None,
+    ) -> bool:
+        """Lance la generation d'un nouveau pattern de break en arriere-plan."""
+        if result is None:
+            self.patternGenerationFailed.emit("", "Aucune analyse disponible")
+            return False
+        if not result.source_path or not os.path.isfile(result.source_path):
+            self.patternGenerationFailed.emit(result.source_path, "Fichier source introuvable")
+            return False
+
+        worker = _DrumPatternGenerationWorker(
+            result,
+            params_payload or {},
+            target_bpm=float(target_bpm),
+            use_hybrid=bool(use_hybrid),
+            anchors=anchors,
+            parent=self,
+        )
+        self._pattern_generation_workers.add(worker)
+        worker.patternReady.connect(self.patternGenerated.emit)
+        worker.patternFailed.connect(self.patternGenerationFailed.emit)
+        worker.finished.connect(lambda: self._pattern_generation_workers.discard(worker))
+        worker.finished.connect(worker.deleteLater)
+        self.patternGenerationStarted.emit(result.source_path)
+        self.statusChanged.emit(f"Generation du break: {Path(result.source_path).name}")
+        worker.start()
+        return True
+
+    def render_break_pattern(
+        self,
+        result: DrumAnalysisResult | None,
+        pattern: Any,
+        *,
+        target_bpm: float,
+        gate: float = 1.0,
+        mono_choke: bool = False,
+        tail_mode: str = DEFAULT_PATTERN_TAIL_MODE,
+    ) -> bool:
+        """Lance le rendu audio d'un pattern genere en arriere-plan."""
+        if result is None:
+            self.patternRenderFailed.emit("", "Aucune analyse disponible")
+            return False
+        if pattern is None:
+            self.patternRenderFailed.emit(result.source_path, "Aucun pattern genere")
+            return False
+        if not result.source_path or not os.path.isfile(result.source_path):
+            self.patternRenderFailed.emit(result.source_path, "Fichier source introuvable")
+            return False
+
+        worker = _DrumPatternRenderWorker(
+            result,
+            pattern,
+            target_bpm=float(target_bpm),
+            gate=float(gate),
+            mono_choke=bool(mono_choke),
+            tail_mode=str(tail_mode or DEFAULT_PATTERN_TAIL_MODE),
+            parent=self,
+        )
+        self._pattern_render_workers.add(worker)
+        worker.renderReady.connect(self.patternRendered.emit)
+        worker.renderFailed.connect(self.patternRenderFailed.emit)
+        worker.finished.connect(lambda: self._pattern_render_workers.discard(worker))
+        worker.finished.connect(worker.deleteLater)
+        self.patternRenderStarted.emit(result.source_path)
+        self.statusChanged.emit(f"Rendu du break genere: {Path(result.source_path).name}")
+        worker.start()
+        return True
 
     def reanalyze_from_markers(
         self,
@@ -444,11 +905,295 @@ class DrumAnalysisService(QObject):
         worker.start()
         return True
 
+    # ---------------------------------------------------------------------- #
+    # Cache disque / memoire
+    # L'analyse d'un break prend plusieurs secondes : on garde donc les
+    # resultats a deux niveaux :
+    # - en MEMOIRE (dictionnaire) pour la session en cours ;
+    # - sur DISQUE (fichiers JSON dans ~/.samplerod/break_cache) pour les
+    #   sessions suivantes.
+    # Chaque entree memorise la date de modification (mtime) du fichier
+    # source : si le fichier a change depuis, le cache est jete.
+    # ---------------------------------------------------------------------- #
+    @property
+    def _cache_dir(self) -> Path:
+        """Dossier du cache disque (dans le profil utilisateur)."""
+        return Path.home() / ".samplerod" / "break_cache"
+
+    def _cache_path(self, source_path: str) -> Path:
+        """Fichier JSON de cache d'un fichier source donne.
+
+        Le nom est un condense (hash SHA-256 tronque) du chemin : valable
+        quel que soit le nom du fichier, sans caracteres interdits.
+        """
+        key = hashlib.sha256(_normalized_cache_key(source_path).encode()).hexdigest()[:20]
+        return self._cache_dir / f"{key}.json"
+
+    def _source_mtime(self, source_path: str) -> int | None:
+        """Date de derniere modification du fichier source (None si illisible)."""
+        try:
+            return int(os.path.getmtime(source_path))
+        except Exception:
+            return None
+
+    def _memory_cache_get(self, source_path: str) -> DrumAnalysisResult | None:
+        """Cherche un resultat en cache memoire, en verifiant sa fraicheur."""
+        key = _normalized_cache_key(source_path)
+        cached = self._analysis_cache_memory.get(key)
+        if cached is None:
+            return None
+        cached_mtime, cached_result = cached
+        current_mtime = self._source_mtime(source_path)
+        # Si le fichier a ete modifie depuis l'analyse, le cache est perime.
+        if cached_mtime is not None and current_mtime is not None and cached_mtime != current_mtime:
+            self._analysis_cache_memory.pop(key, None)
+            return None
+        return cached_result
+
+    def _memory_cache_put(self, result: DrumAnalysisResult) -> None:
+        """Range un resultat dans le cache memoire (avec la date du fichier)."""
+        source_path = normalize_audio_path(result.source_path)
+        if not source_path:
+            return
+        key = _normalized_cache_key(source_path)
+        self._analysis_cache_memory[key] = (self._source_mtime(source_path), result)
+
+    def _memory_cache_delete(self, source_path: str) -> None:
+        """Retire un fichier du cache memoire."""
+        self._analysis_cache_memory.pop(_normalized_cache_key(source_path), None)
+
+    def _result_to_dict(self, result: DrumAnalysisResult) -> dict:
+        """Prepare un resultat pour l'ecriture JSON (cache disque).
+
+        Le resultat brut du prototype n'est pas serialisable tel quel : on
+        le convertit via sa methode to_dict() et on le range sous la cle
+        "_prototype" pour pouvoir le reconstruire au rechargement.
+        """
+        d = dataclasses.asdict(result)
+        d.pop("prototype_result", None)
+        raw_result = getattr(result, "prototype_result", None)
+        if raw_result is not None and hasattr(raw_result, "to_dict"):
+            try:
+                d["_prototype"] = raw_result.to_dict()
+            except Exception:
+                logger.info("[DrumAnalysisService] export prototype_result impossible")
+        return d
+
+    def _raw_result_from_dict(self, payload: dict[str, Any]) -> Any:
+        """Reconstruit le resultat brut du prototype depuis le JSON du cache.
+
+        Operation inverse de _result_to_dict : recree un a un les objets
+        internes du prototype (TransientHit, DrumCandidate, HitSequence...)
+        avec des valeurs par defaut sures pour chaque champ manquant.
+        """
+        analyzer = _load_analyzer_module()
+        transient_hits = tuple(
+            analyzer.TransientHit(
+                index=int(hit["index"]),
+                start_s=float(hit["start_s"]),
+                end_s=float(hit["end_s"]),
+                label=str(hit.get("label", "other") or "other"),
+                confidence=float(hit.get("confidence", 0.0) or 0.0),
+                peak_db=float(hit.get("peak_db", 0.0) or 0.0),
+                low_ratio=float(hit.get("low_ratio", 0.0) or 0.0),
+                mid_ratio=float(hit.get("mid_ratio", 0.0) or 0.0),
+                high_ratio=float(hit.get("high_ratio", 0.0) or 0.0),
+                secondary_labels=tuple(hit.get("secondary_labels", ()) or ()),
+                layer_score=float(hit.get("layer_score", 0.0) or 0.0),
+                role=str(hit.get("role", "other") or "other"),
+                rhythmic_position=str(hit.get("rhythmic_position", "subdivision") or "subdivision"),
+                generator_enabled=bool(hit.get("generator_enabled", True)),
+            )
+            for hit in payload.get("transient_hits", ()) or ()
+        )
+        candidates = tuple(
+            analyzer.DrumCandidate(
+                label=str(candidate.get("label", "") or ""),
+                score=float(candidate.get("score", 0.0) or 0.0),
+                details=str(candidate.get("details", "") or ""),
+            )
+            for candidate in payload.get("candidates", ()) or ()
+        )
+        sequences = tuple(
+            analyzer.HitSequence(
+                index=int(sequence.get("index", 0) or 0),
+                role=str(sequence.get("role", "groove") or "groove"),
+                hit_count=int(sequence.get("hit_count", 0) or 0),
+                total_steps=int(sequence.get("total_steps", 0) or 0),
+                source_start_s=float(sequence.get("source_start_s", 0.0) or 0.0),
+                source_end_s=float(sequence.get("source_end_s", 0.0) or 0.0),
+                start_step_hint=int(sequence.get("start_step_hint", 1) or 1),
+                end_step_hint=int(sequence.get("end_step_hint", 1) or 1),
+                labels=tuple(sequence.get("labels", ()) or ()),
+                events=tuple(
+                    analyzer.HitSequenceEvent(
+                        order=int(event.get("order", 0) or 0),
+                        hit_index=int(event.get("hit_index", 0) or 0),
+                        label=str(event.get("label", "other") or "other"),
+                        role=str(event.get("role", "other") or "other"),
+                        start_offset_steps=int(event.get("start_offset_steps", 0) or 0),
+                        interval_steps=int(event.get("interval_steps", 0) or 0),
+                        velocity_ratio=float(event.get("velocity_ratio", 0.0) or 0.0),
+                        source_start_s=float(event.get("source_start_s", 0.0) or 0.0),
+                        source_end_s=float(event.get("source_end_s", 0.0) or 0.0),
+                        secondary_labels=tuple(event.get("secondary_labels", ()) or ()),
+                        layer_score=float(event.get("layer_score", 0.0) or 0.0),
+                        rhythmic_position=str(
+                            event.get("rhythmic_position", "subdivision") or "subdivision"
+                        ),
+                    )
+                    for event in sequence.get("events", ()) or ()
+                ),
+            )
+            for sequence in payload.get("hit_sequences", ()) or ()
+        )
+        return analyzer.DrumDetectionResult(
+            source_path=payload.get("source_path"),
+            label=str(payload.get("label", "") or ""),
+            form=str(payload.get("form", "") or ""),
+            family=str(payload.get("family", "") or ""),
+            confidence=float(payload.get("confidence", 0.0) or 0.0),
+            loop_score=float(payload.get("loop_score", 0.0) or 0.0),
+            drum_score=float(payload.get("drum_score", 0.0) or 0.0),
+            break_score=float(payload.get("break_score", 0.0) or 0.0),
+            duration_s=float(payload.get("duration_s", 0.0) or 0.0),
+            sample_rate=int(payload.get("sample_rate", 0) or 0),
+            tempo_bpm=float(payload.get("tempo_bpm", 0.0) or 0.0),
+            pulse_score=float(payload.get("pulse_score", 0.0) or 0.0),
+            regularity=float(payload.get("regularity", 0.0) or 0.0),
+            onset_count=int(payload.get("onset_count", len(transient_hits)) or len(transient_hits)),
+            onset_density=float(payload.get("onset_density", 0.0) or 0.0),
+            percussive_ratio=float(payload.get("percussive_ratio", 0.0) or 0.0),
+            harmonic_ratio=float(payload.get("harmonic_ratio", 0.0) or 0.0),
+            decay_s=float(payload.get("decay_s", 0.0) or 0.0),
+            spectral_centroid_hz=float(payload.get("spectral_centroid_hz", 0.0) or 0.0),
+            spectral_flatness=float(payload.get("spectral_flatness", 0.0) or 0.0),
+            band_energies=dict(payload.get("band_energies", {}) or {}),
+            transient_hits=transient_hits,
+            candidates=candidates,
+            hit_sequences=sequences,
+        )
+
+    def _result_from_dict(self, d: dict) -> DrumAnalysisResult:
+        """Reconstruit un DrumAnalysisResult complet depuis le JSON du cache."""
+        slices = tuple(
+            DrumSlice(
+                index=int(s["index"]),
+                start_s=float(s["start_s"]),
+                end_s=float(s["end_s"]),
+                label=str(s.get("label", "other")),
+                confidence=float(s.get("confidence", 0.0)),
+                role=str(s.get("role", "other")),
+                rhythmic_position=str(s.get("rhythmic_position", "subdivision")),
+                secondary_labels=tuple(s.get("secondary_labels", [])),
+                layer_score=float(s.get("layer_score", 0.0)),
+                step_index=s.get("step_index"),
+                preview_start_s=s.get("preview_start_s"),
+                preview_end_s=s.get("preview_end_s"),
+            )
+            for s in d.get("slices", [])
+        )
+        return DrumAnalysisResult(
+            source_path=d["source_path"],
+            label=d.get("label", ""),
+            family=d.get("family", ""),
+            form=d.get("form", ""),
+            confidence=d.get("confidence", 0.0),
+            duration_s=d.get("duration_s", 0.0),
+            sample_rate=d.get("sample_rate", 44100),
+            tempo_bpm=d.get("tempo_bpm", 0.0),
+            pulse_score=d.get("pulse_score", 0.0),
+            regularity=d.get("regularity", 0.0),
+            onset_count=d.get("onset_count", len(slices)),
+            split_density=d.get("split_density", DEFAULT_SPLIT_DENSITY),
+            candidates=tuple(d.get("candidates", [])),
+            slices=slices,
+            prototype_result=(
+                self._raw_result_from_dict(d["_prototype"])
+                if isinstance(d.get("_prototype"), dict)
+                else None
+            ),
+        )
+
+    def load_cached(self, source_path: str) -> DrumAnalysisResult | None:
+        """Charge le resultat en cache pour ce fichier, ou None.
+
+        Ordre de recherche : cache memoire (instantane), puis cache disque.
+        Le cache disque est ignore et supprime si sa version est ancienne ou
+        si le fichier source a ete modifie depuis (comparaison de mtime).
+        """
+        memory_hit = self._memory_cache_get(source_path)
+        if memory_hit is not None:
+            return memory_hit
+        try:
+            cache_file = self._cache_path(source_path)
+            if not cache_file.exists():
+                return None
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            if data.get("_version") != _CACHE_VERSION:
+                return None
+            stored_mtime = data.get("_mtime")
+            if stored_mtime is not None:
+                try:
+                    actual_mtime = int(os.path.getmtime(source_path))
+                    if actual_mtime != int(stored_mtime):
+                        logger.info("Break cache invalide (mtime change): %s", source_path)
+                        cache_file.unlink(missing_ok=True)
+                        self._memory_cache_delete(source_path)
+                        return None
+                except Exception:
+                    pass
+            result = self._result_from_dict(data)
+            self._memory_cache_put(result)
+            return result
+        except Exception:
+            logger.warning("Break cache lecture impossible: %s", source_path, exc_info=True)
+            return None
+
+    def cache_result(self, result: DrumAnalysisResult) -> None:
+        """Persiste le résultat d'analyse sur disque (écrase si déjà présent)."""
+        try:
+            self._memory_cache_put(result)
+            self._cache_dir.mkdir(parents=True, exist_ok=True)
+            d = self._result_to_dict(result)
+            d["_version"] = _CACHE_VERSION
+            mtime = self._source_mtime(result.source_path)
+            if mtime is not None:
+                d["_mtime"] = mtime
+            self._cache_path(result.source_path).write_text(
+                json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            logger.warning("Break cache ecriture impossible", exc_info=True)
+
+    def delete_cached(self, source_path: str) -> None:
+        """Supprime l'entrée de cache pour ce fichier."""
+        try:
+            self._memory_cache_delete(source_path)
+            self._cache_path(source_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
     def shutdown(self) -> None:
-        workers = list(self._analysis_workers) + list(self._reanalysis_workers) + list(self._quantize_workers)
+        """Arrete tous les workers encore actifs (appele a la fermeture).
+
+        On demande poliment l'interruption puis on attend chaque worker au
+        maximum 2 secondes : l'application ne doit pas rester bloquee par
+        une analyse en cours.
+        """
+        workers = (
+            list(self._analysis_workers)
+            + list(self._reanalysis_workers)
+            + list(self._quantize_workers)
+            + list(self._pattern_generation_workers)
+            + list(self._pattern_render_workers)
+        )
         self._analysis_workers.clear()
         self._reanalysis_workers.clear()
         self._quantize_workers.clear()
+        self._pattern_generation_workers.clear()
+        self._pattern_render_workers.clear()
+        self._analysis_cache_memory.clear()
         for worker in workers:
             try:
                 worker.requestInterruption()

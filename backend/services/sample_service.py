@@ -1,7 +1,65 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Service de gestion des samples (CRUD + cache memoire).
-# - Pont entre la base (SQLAlchemy), le systeme de fichiers et l'UI (Qt).
+# - LE service central des samples : c'est lui que toute l'application appelle
+#   pour ajouter, supprimer, renommer, deplacer ou retrouver un sample.
+# - Il maintient un CACHE memoire (self._samples) : la liste complete des
+#   samples, chargee une fois depuis la base. L'interface lit ce cache
+#   (rapide) plutot que la base ; chaque modification met a jour le cache,
+#   la base ET emet un signal Qt pour que tous les ecrans se rafraichissent.
+# - Il orchestre aussi les traitements automatiques autour d'un sample :
+#   * verification d'integrite au demarrage (IntegrityCheckWorker) ;
+#   * normalisation automatique du volume (NormalizeWorker) ;
+#   * analyse musicale de la gamme en arriere-plan (ScaleAnalysisService) ;
+#   * proposition de CONCATENATION : quand deux prises d'enregistrement
+#     s'enchainent sans interruption, l'application propose de les coller
+#     en un seul fichier (logique des "_concat_candidates" ci-dessous).
+#
+# LA LOGIQUE DE CONCATENATION EN BREF
+# - Quand une prise demarre alors que le buffer retro n'a pas eu le temps de
+#   se re-remplir depuis la prise precedente, les deux prises se suivent
+#   probablement dans la realite -> la nouvelle est notee "candidate a la
+#   concatenation" avec la precedente (_concat_candidates[nouvelle] = precedente).
+# - Tant que la question n'est pas tranchee, la normalisation des deux
+#   fichiers est BLOQUEE (_normalization_locked_ids) : il ne faut pas
+#   modifier le volume de fichiers qu'on va peut-etre fusionner.
+# - L'utilisateur choisit : concat_with_previous() colle les deux fichiers,
+#   dismiss_concat() les laisse separes ; dans les deux cas on debloque et
+#   on lance la normalisation.
+#
+# FONCTIONS (sommaire)
+# - SampleService (QObject)
+#   - signaux : sampleAdded, samplesChanged, sampleDeleted, sampleRenamed,
+#     sampleMoved, sampleDurationChanged, sampleStarted/Finished/Failed-
+#     Normalization, sampleRemovedFromHistory, sampleConcatCandidateChanged,
+#     sampleNormalizationLockChanged, sampleScaleAnalyzed.
+#   - _initialize_cache()/load_all() : (re)charge le cache depuis la base.
+#   - get_cached()          : copie de la liste des samples (pour l'UI).
+#   - add()                 : enregistre un nouveau fichier comme sample.
+#   - delete()/delete_by_path()/bulkDelete() : suppressions (fichier + base).
+#   - delete_record_by_path(): supprime la fiche en base SANS toucher au fichier.
+#   - rename()/rename_by_path() : renommage (avec arret de la lecture si besoin).
+#   - move()                : deplacement vers un autre dossier.
+#   - updateDurationFromFile(): re-mesure la duree apres modification du fichier.
+#   - mark_missing()        : marque un sample comme disparu/retrouve.
+#   - removeFromHistory()   : retire de l'application sans supprimer le fichier.
+#   - is_normalization_locked()/get_concat_previous_id() : etats pour l'UI.
+#   - on_retro_refill_complete() : debloque la normalisation apres re-remplissage.
+#   - concat_with_previous()/dismiss_concat() : decision de concatenation.
+#   - _register_recorded_sample()/_lock_normalization()/_unlock_and_maybe_
+#     normalize()/_is_concat_linked()/_cleanup_concat_state_for_deleted() :
+#     mecanique interne de la concatenation.
+#   - _start_auto_normalization() : lance un NormalizeWorker si l'option est active.
+#   - _on_scale_analysis_complete()/_on_scale_analysis_failed() : retours d'analyse.
+#   - batch_analyze_missing()/batch_analyze_folder()/_batch_analyze_candidates():
+#     analyse de gamme en masse.
+#   - shutdown()            : arrete les services de fond.
+#   - _append_wav_files()   : colle physiquement deux WAV en un troisieme.
+#
+# LIENS CLES
+# - backend/models/sample.py : les operations fichier/base unitaires.
+# - backend/models/normalize_worker.py / integrity_worker.py : les workers.
+# - backend/services/scale_analysis_service.py : analyse musicale.
+# - frontend/sample_gui/ : les ecrans qui ecoutent les signaux de ce service.
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -39,29 +97,38 @@ class SampleService(QObject):
     sampleRemovedFromHistory = Signal(int)
     sampleConcatCandidateChanged = Signal(int, bool, object)
     sampleNormalizationLockChanged = Signal(int, bool)
+    sampleScaleAnalyzed = Signal(int)  # emet l'ID apres analyse de gamme terminee
 
     def __init__(self, app_context):
         super().__init__()
         logger.info("[SampleService] Initialisation du service")
+        # Le cache memoire : la liste de tous les samples connus.
         self._samples = []
+        # Workers de normalisation en cours, ranges par id de sample.
         self._normalize_threads = {}
+        # Concatenation : {id du nouveau sample -> id de la prise precedente}.
         self._concat_candidates: dict[int, int] = {}
+        # Samples dont la normalisation est temporairement interdite.
         self._normalization_locked_ids: set[int] = set()
+        # Dernier sample issu de l'enregistreur (pour chainer les prises).
         self._last_recorded_sample_id: int | None = None
         self.app_context = app_context
 
         self._initialize_cache()
 
+        # Verification d'integrite au demarrage (fichiers disparus, durees).
         self._integrity_worker = IntegrityCheckWorker(self.app_context)
         self._integrity_worker.fileMissing.connect(self._onMissingStateChanged)
         self._integrity_worker.durationMismatch.connect(self._onDurationMismatch)
         self._integrity_worker.start()
 
+        # Analyse musicale (gamme/note) en file d'attente d'arriere-plan.
         self._scale_analysis = ScaleAnalysisService(self)
         self._scale_analysis.scaleAnalysisComplete.connect(self._on_scale_analysis_complete)
         self._scale_analysis.scaleAnalysisFailed.connect(self._on_scale_analysis_failed)
 
     def _initialize_cache(self):
+        """Charge tous les samples de la base dans le cache memoire."""
         try:
             with SessionLocal() as session:
                 self._samples = session.query(Sample).order_by(Sample.id).all()
@@ -69,12 +136,15 @@ class SampleService(QObject):
             logger.info("[SampleService] init load error: %s", exc)
             self._samples = []
         finally:
+            # Quoi qu'il arrive, on previent l'UI de l'etat du cache.
             self.samplesChanged.emit(list(self._samples))
 
     def load_all(self):
+        """Recharge le cache depuis la base (apres une indexation par ex.)."""
         self._initialize_cache()
 
     def get_cached(self):
+        """Copie de la liste des samples en cache (sans toucher la base)."""
         return list(self._samples)
 
     def add(
@@ -84,6 +154,17 @@ class SampleService(QObject):
         from_recorder: bool = False,
         sequential_with_previous: bool = False,
     ):
+        """Enregistre un fichier audio comme nouveau sample.
+
+        Etapes : creation de la fiche en base (avec lecture des metadonnees),
+        notification, ajout au cache, puis traitements automatiques :
+        - sample venant de l'ENREGISTREUR (from_recorder=True) : on bloque
+          d'abord la normalisation, le temps de savoir s'il doit etre
+          concatene avec la prise precedente (sequential_with_previous) ;
+        - sample venant d'un IMPORT : normalisation automatique immediate.
+        Dans tous les cas, l'analyse de gamme est mise en file d'attente.
+        Renvoie le sample cree, ou None en cas d'erreur.
+        """
         path = normalize_audio_path(path)
         new_sample = None
         try:
@@ -120,6 +201,7 @@ class SampleService(QObject):
             self.samplesChanged.emit(list(self._samples))
 
     def delete(self, sample_id: int):
+        """Supprime un sample : son fichier, sa fiche en base, le cache."""
         samp = self._get(sample_id)
         if not samp:
             return
@@ -144,6 +226,12 @@ class SampleService(QObject):
             self.samplesChanged.emit(list(self._samples))
 
     def delete_by_path(self, file_path: str):
+        """Supprime par chemin de fichier (utilise par le navigateur de dossiers).
+
+        Si le fichier correspond a un sample connu, suppression complete via
+        delete(). Sinon, on efface juste le fichier du disque. Renvoie
+        (succes, message d'erreur eventuel).
+        """
         file_path = normalize_audio_path(file_path)
         samp = next((sample for sample in self._samples if sample.path == file_path), None)
         if samp:
@@ -170,6 +258,11 @@ class SampleService(QObject):
             return False, str(exc)
 
     def delete_record_by_path(self, path: str) -> bool:
+        """Supprime la fiche en base SANS toucher au fichier sur le disque.
+
+        Utile pour "des-indexer" un fichier : il reste sur le disque mais
+        l'application l'oublie.
+        """
         path = normalize_audio_path(path)
         session = SessionLocal()
         try:
@@ -191,6 +284,12 @@ class SampleService(QObject):
             session.close()
 
     def rename_by_path(self, file_path: str, new_name: str):
+        """Renomme par chemin : sample connu (fiche + fichier) ou simple fichier.
+
+        Deux cas : si le chemin correspond a un sample en base, on renomme
+        fiche + fichier ensemble ; sinon on renomme juste le fichier sur le
+        disque (en conservant son extension). Renvoie (succes, erreur).
+        """
         file_path = normalize_audio_path(file_path)
         samp = next((sample for sample in self._samples if sample.path == file_path), None)
         if samp:
@@ -242,6 +341,12 @@ class SampleService(QObject):
             return False, str(exc)
 
     def rename(self, sample_id: int, new_name: str):
+        """Renomme un sample par son id (fichier + fiche en base).
+
+        Si le sample est en cours de lecture, on doit d'abord arreter le
+        lecteur : sous Windows, un fichier en lecture est verrouille et ne
+        peut pas etre renomme.
+        """
         samp = next((sample for sample in self._samples if sample.id == sample_id), None)
         if not samp:
             return
@@ -254,6 +359,7 @@ class SampleService(QObject):
                 import pygame
                 import time
 
+                # On attend (2 s max) que pygame libere vraiment le fichier.
                 player.stop_playback()
                 start = time.time()
                 while pygame.mixer.music.get_busy():
@@ -290,6 +396,7 @@ class SampleService(QObject):
             self.samplesChanged.emit(list(self._samples))
 
     def move(self, sample_id: int, target_folder: str):
+        """Deplace le fichier d'un sample vers un autre dossier (drag and drop)."""
         samp = next((sample for sample in self._samples if sample.id == sample_id), None)
         if not samp:
             return
@@ -319,6 +426,11 @@ class SampleService(QObject):
             self.samplesChanged.emit(list(self._samples))
 
     def updateDurationFromFile(self, file_path: str):
+        """Re-mesure la duree d'un fichier modifie et met a jour base + cache.
+
+        Appele apres une edition du fichier (decoupe dans l'editeur de forme
+        d'onde, concatenation...) pour que la duree affichee reste juste.
+        """
         file_path = normalize_audio_path(file_path)
         samp = next((sample for sample in self._samples if sample.path == file_path), None)
         if not samp:
@@ -344,24 +456,29 @@ class SampleService(QObject):
             session.close()
 
     def _get(self, sample_id: int):
+        """Retrouve un sample du cache par son id (None si inconnu)."""
         return next((sample for sample in self._samples if sample.id == sample_id), None)
 
     def _onNormalizationFailed(self, sample_id: int, message: str):
+        """Relaie l'echec d'une normalisation vers l'UI."""
         self.sampleNormalizationFailed.emit(sample_id, message)
 
     def _onDurationMismatch(self, sample_id: int, new_duration: float):
+        """Le verificateur d'integrite a corrige une duree : maj du cache."""
         samp = self._get(sample_id)
         if samp:
             samp.duration = new_duration
             self.sampleDurationChanged.emit(sample_id, new_duration)
 
     def _onMissingStateChanged(self, sample_id: int, missing: bool):
+        """Le verificateur d'integrite a change l'etat manquant/present."""
         samp = self._get(sample_id)
         if samp:
             samp.missing = bool(missing)
             self.samplesChanged.emit(list(self._samples))
 
     def mark_missing(self, sample_id: int, missing: bool = True):
+        """Marque manuellement un sample comme disparu (ou retrouve)."""
         samp = self._get(sample_id)
         if not samp:
             return False
@@ -383,6 +500,11 @@ class SampleService(QObject):
             self.samplesChanged.emit(list(self._samples))
 
     def removeFromHistory(self, sample_id: int):
+        """Retire un sample de l'application SANS supprimer son fichier.
+
+        La fiche disparait de la base et du cache, mais le fichier audio
+        reste intact sur le disque.
+        """
         samp = self._get(sample_id)
         if not samp:
             return
@@ -412,6 +534,12 @@ class SampleService(QObject):
             self.samplesChanged.emit(list(self._samples))
 
     def bulkDelete(self, sample_ids: list[int]):
+        """Supprime plusieurs samples d'un coup (selection multiple).
+
+        Plus efficace que delete() en boucle : une seule session de base
+        pour toutes les fiches. Si l'un des samples est en lecture, on
+        arrete d'abord le lecteur (verrou de fichier Windows).
+        """
         current = self.app_context.audio_player.current_sample_id
         if current in sample_ids:
             try:
@@ -445,18 +573,36 @@ class SampleService(QObject):
             self.samplesChanged.emit(list(self._samples))
 
     def is_normalization_locked(self, sample_id: int) -> bool:
+        """Vrai si la normalisation de ce sample est en attente de decision."""
         return sample_id in self._normalization_locked_ids
 
     def get_concat_previous_id(self, sample_id: int):
+        """Id de la prise precedente proposee a la concatenation (ou None)."""
         return self._concat_candidates.get(sample_id)
 
     def on_retro_refill_complete(self):
+        """Le buffer retro est re-rempli : plus d'enchainement possible.
+
+        La derniere prise enregistree ne sera donc pas suivie d'une prise
+        "collable" -> on peut debloquer et normaliser.
+        """
         sid = self._last_recorded_sample_id
         if sid is None:
             return
         self._unlock_and_maybe_normalize(sid)
 
     def concat_with_previous(self, sample_id: int):
+        """Colle ce sample a la fin de la prise precedente (choix utilisateur).
+
+        Deroulement :
+        1. assembler les deux WAV dans un fichier temporaire, puis remplacer
+           le fichier de la prise PRECEDENTE par le resultat ;
+        2. supprimer le sample courant (fichier + fiche + cache) ;
+        3. re-cabler les candidatures : si une prise suivante pointait vers
+           le sample supprime, elle pointe maintenant vers la prise fusionnee ;
+        4. debloquer la normalisation de la prise fusionnee.
+        Renvoie True si la fusion a reussi.
+        """
         prev_id = self._concat_candidates.get(sample_id)
         if not prev_id:
             return False
@@ -466,6 +612,7 @@ class SampleService(QObject):
             self.dismiss_concat(sample_id)
             return False
 
+        # Aucun des deux fichiers ne doit etre en lecture (verrou Windows).
         player = self.app_context.audio_player
         if getattr(player, "current_sample_id", -1) in (sample_id, prev_id):
             try:
@@ -473,12 +620,15 @@ class SampleService(QObject):
             except Exception:
                 pass
 
+        # Assemblage via un fichier temporaire : si quelque chose echoue,
+        # le fichier original de la prise precedente reste intact.
         tmp_path = prev.path + ".concat_tmp.wav"
         try:
             self._append_wav_files(prev.path, cur.path, tmp_path)
             os.replace(tmp_path, prev.path)
             self.updateDurationFromFile(prev.path)
 
+            # Le sample courant disparait (il vit desormais dans prev).
             if os.path.isfile(cur.path):
                 os.remove(cur.path)
             with SessionLocal() as session:
@@ -490,6 +640,7 @@ class SampleService(QObject):
             self._samples = [sample for sample in self._samples if sample.id != sample_id]
             self.sampleDeleted.emit(sample_id)
 
+            # Re-cablage des candidatures qui visaient le sample supprime.
             self._concat_candidates.pop(sample_id, None)
             self.sampleConcatCandidateChanged.emit(sample_id, False, None)
             for child_id, parent_id in list(self._concat_candidates.items()):
@@ -528,6 +679,11 @@ class SampleService(QObject):
             return False
 
     def dismiss_concat(self, sample_id: int):
+        """L'utilisateur refuse la concatenation : les prises restent separees.
+
+        On retire la candidature et on debloque la normalisation des deux
+        samples concernes.
+        """
         prev_id = self._concat_candidates.pop(sample_id, None)
         self.sampleConcatCandidateChanged.emit(sample_id, False, None)
 
@@ -542,6 +698,13 @@ class SampleService(QObject):
         )
 
     def _register_recorded_sample(self, sample_id: int, sequential_with_previous: bool):
+        """Enregistre une nouvelle prise venant de l'enregistreur.
+
+        La normalisation est toujours bloquee dans un premier temps. Si la
+        prise suit la precedente (le buffer retro n'avait pas fini de se
+        re-remplir), on cree la candidature a la concatenation et on bloque
+        aussi la prise precedente.
+        """
         self._lock_normalization(sample_id)
 
         prev_id = self._last_recorded_sample_id
@@ -553,11 +716,18 @@ class SampleService(QObject):
         self._last_recorded_sample_id = sample_id
 
     def _lock_normalization(self, sample_id: int):
+        """Interdit (temporairement) la normalisation de ce sample."""
         if sample_id not in self._normalization_locked_ids:
             self._normalization_locked_ids.add(sample_id)
             self.sampleNormalizationLockChanged.emit(sample_id, True)
 
     def _unlock_and_maybe_normalize(self, sample_id: int):
+        """Leve le blocage et lance la normalisation, sauf concat en attente.
+
+        Si le sample est encore implique dans une candidature de
+        concatenation (d'un cote ou de l'autre), on ne touche a rien :
+        la decision de l'utilisateur prime.
+        """
         if self._is_concat_linked(sample_id):
             return
         if sample_id in self._normalization_locked_ids:
@@ -566,11 +736,19 @@ class SampleService(QObject):
         self._start_auto_normalization(sample_id)
 
     def _is_concat_linked(self, sample_id: int) -> bool:
+        """Vrai si ce sample participe a une candidature de concatenation."""
         if sample_id in self._concat_candidates:
             return True
         return sample_id in self._concat_candidates.values()
 
     def _cleanup_concat_state_for_deleted(self, sample_id: int):
+        """Nettoie tous les etats de concat quand un sample est supprime.
+
+        Trois choses a defaire : sa propre candidature (en tant que nouvel
+        enregistrement), les candidatures d'autres samples qui pointaient
+        vers lui, et son eventuel blocage de normalisation. Les samples
+        liberes sont alors normalises.
+        """
         if sample_id in self._concat_candidates:
             parent_id = self._concat_candidates.pop(sample_id, None)
             self.sampleConcatCandidateChanged.emit(sample_id, False, None)
@@ -591,6 +769,13 @@ class SampleService(QObject):
             self._last_recorded_sample_id = None
 
     def _start_auto_normalization(self, sample_id: int):
+        """Lance la normalisation automatique d'un sample (si activee).
+
+        Cree un NormalizeWorker (thread) en mode LUFS avec le niveau cible
+        des parametres, et le garde dans _normalize_threads le temps qu'il
+        travaille. Ne fait rien si l'option est desactivee ou si une
+        normalisation de ce sample tourne deja.
+        """
         if not self.app_context.settings.isAutoNormalizeEnabled():
             return
         samp = self._get(sample_id)
@@ -621,7 +806,12 @@ class SampleService(QObject):
         self._normalize_threads[sample_id] = worker
 
     def _on_scale_analysis_complete(self, sample_id: int) -> None:
-        """Rafraichit le sample en cache apres analyse des gammes."""
+        """Rafraichit le sample en cache apres analyse des gammes.
+
+        L'analyse a ecrit ses resultats directement en base (depuis son
+        worker) : on recharge donc la fiche fraiche et on remplace
+        l'ancienne dans le cache, puis on previent l'UI.
+        """
         session = SessionLocal()
         try:
             inst = session.get(Sample, sample_id)
@@ -636,8 +826,64 @@ class SampleService(QObject):
             logger.info("[SampleService] _on_scale_analysis_complete DB error: %s", exc)
         finally:
             session.close()
+        self.sampleScaleAnalyzed.emit(sample_id)
+
+    def batch_analyze_missing(self) -> int:
+        """Lance l'analyse de gamme pour tous les samples non analyses ou a backfill.
+
+        Retourne le nombre de samples identifies (l'enfilage reel est asynchrone).
+        Le os.path.isfile() est evite ici pour ne pas bloquer le thread principal —
+        le worker scale_analysis_service ignore les fichiers introuvables de son cote.
+        """
+        return self._batch_analyze_candidates(self._samples)
+
+    def batch_analyze_folder(self, folder: str) -> int:
+        """Lance l'analyse de gamme uniquement pour les samples du dossier donne.
+
+        Filtre sur os.path.dirname(path) == folder (comparaison normalisee).
+        Utile quand l'utilisateur est sur l'onglet Dossiers et ne veut pas
+        relancer toute la base de donnees.
+        """
+        if not folder:
+            return self.batch_analyze_missing()
+        folder_norm = os.path.normpath(folder)
+        subset = [
+            samp for samp in self._samples
+            if os.path.normpath(os.path.dirname(getattr(samp, "path", "") or "")) == folder_norm
+        ]
+        return self._batch_analyze_candidates(subset)
+
+    def _batch_analyze_candidates(self, samples) -> int:
+        """Filtre les samples sans gamme et les enqueue en arriere-plan.
+
+        Un sample est candidat s'il n'a jamais ete analyse OU si l'analyse
+        date d'une version qui ne remplissait pas encore la gamme principale
+        (backfill). La mise en file se fait dans un thread pour ne pas
+        bloquer l'interface quand il y a des milliers de samples.
+        """
+        candidates = []
+        for samp in samples:
+            needs_analysis = getattr(samp, "analyzed_at", None) is None
+            missing_primary_scale = not str(getattr(samp, "detected_scale_kind", "") or "").strip()
+            if not needs_analysis and not missing_primary_scale:
+                continue
+            path = getattr(samp, "path", None) or ""
+            if path:
+                candidates.append((samp.id, path))
+
+        count = len(candidates)
+        logger.info("[SampleService] _batch_analyze_candidates: %d samples a enqueuer", count)
+
+        import threading
+        def _enqueue_all():
+            for sid, p in candidates:
+                self._scale_analysis.enqueue(sid, p)
+        threading.Thread(target=_enqueue_all, daemon=True, name="scale-batch-enqueue").start()
+
+        return count
 
     def _on_scale_analysis_failed(self, sample_id: int, reason: str) -> None:
+        """Trace l'echec d'une analyse de gamme (sans bloquer le reste)."""
         logger.info("[SampleService] Scale analysis failed id=%s: %s", sample_id, reason)
 
     def shutdown(self) -> None:
@@ -649,6 +895,13 @@ class SampleService(QObject):
 
     @staticmethod
     def _append_wav_files(first_path: str, second_path: str, out_path: str):
+        """Colle physiquement deux WAV : out = first puis second, a la suite.
+
+        Les deux fichiers doivent avoir la meme frequence et le meme nombre
+        de canaux (sinon le resultat serait inaudible). La copie se fait par
+        blocs de 8192 echantillons pour garder une memoire constante meme
+        sur de tres longs enregistrements.
+        """
         with sf.SoundFile(first_path, mode="r") as first, sf.SoundFile(second_path, mode="r") as second:
             if first.samplerate != second.samplerate:
                 raise RuntimeError("Sample rate different entre les deux fichiers.")

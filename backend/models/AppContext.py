@@ -1,13 +1,26 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Contexte global qui instancie et expose les services principaux.
-# - Point d'entree pour le cycle de vie backend (start/stop).
-# - Fournit un lecteur audio simple (pygame) partage dans l'app.
+# - Le "sac a dos" de l'application : AppContext cree, au demarrage, tous les
+#   services (parametres, enregistrement, samples, captures, analyse...) et
+#   les garde accessibles au meme endroit.
+# - Toute l'interface recoit cet objet en parametre : quand un widget a besoin
+#   d'une donnee ou d'une action, il passe par app_context.<service>.
+# - Fournit aussi AudioPlayer, le petit lecteur audio partage (pygame) qui
+#   sert a ecouter les samples dans toute l'application.
 #
-# CE QUI EST DEJA EN PLACE
-# - Instanciation: SettingsService, RecorderService, SampleService, Notifications.
-# - AudioPlayer base sur pygame.mixer.music.
-# - RemoteControlService (serveur HTTP local) demarre au lancement si active.
+# CLASSES ET FONCTIONS (sommaire)
+# - AppContext
+#   - __init__()  : cree et connecte tous les services, dans l'ordre.
+#   - shutdown()  : arrete proprement chaque service a la fermeture.
+# - AudioPlayer (lecteur audio simple, base sur pygame.mixer.music)
+#   - toggle_play()       : lit un sample / met en pause / reprend.
+#   - seek_position()     : saute a une position precise dans le son.
+#   - set_up_audio()      : charge un fichier audio en memoire.
+#   - clear_audio()       : stoppe tout et libere le fichier (lock Windows).
+#   - set_position()      : memorise la position de depart demandee.
+#   - get_position()      : renvoie la position de lecture courante (ms).
+#   - is_playing_sample() : dit si tel sample est en cours de lecture.
+#   - stop_playback()     : arret complet (raccourci vers clear_audio).
 #
 # CE QUI RESTE A IMPLEMENTER (IDEES)
 # - Centraliser plus d'initialisation (db, cache, jobs).
@@ -15,7 +28,13 @@
 # - Telemetrie et health check global.
 #
 # NOTES
-# - AppContext.shutdown() doit etre appele a la fermeture de l'app.
+# - AppContext.shutdown() doit etre appele a la fermeture de l'app
+#   (c'est MainWindow.closeEvent qui s'en charge).
+#
+# LIENS CLES
+# - app.py                  : cree AppContext au demarrage (etape 6).
+# - backend/services/*      : les services instancies ici.
+# - frontend/main_window.py : recoit AppContext et le distribue aux widgets.
 # -----------------------------------------------------------------------------
 # backend/models/AppContext.py
 
@@ -87,7 +106,11 @@ class AppContext:
         self.stem_separator = StemSeparatorService(self)
         self.drum_analysis = DrumAnalysisService(self)
 
-        # Service de controle a distance (serveur HTTP local)
+        # Service de controle a distance : un petit serveur web local qui
+        # permet de piloter SampleRod depuis un telephone ou un navigateur
+        # (demarrer/arreter l'enregistrement, voir les samples...).
+        # Il n'est cree et demarre que si l'option est activee dans les
+        # parametres.
         self.remote_control = None
         enabled = self.settings.isRemoteControlEnabled()
         if enabled:
@@ -105,7 +128,11 @@ class AppContext:
             )
             try:
                 self.remote_control.start()
-                # Pousse les changements d'etat du recorder via SSE
+                # Abonnements : chaque fois qu'un evenement important se
+                # produit (enregistrement demarre, sample ajoute/supprime/
+                # renomme, capture d'ecran...), le serveur web en est informe
+                # et le retransmet en direct aux navigateurs connectes (SSE).
+                # Le drapeau _signals_hooked evite de s'abonner deux fois.
                 try:
                     if not getattr(self.remote_control, "_signals_hooked", False):
                         self.recorder.recordingStateChanged.connect(
@@ -139,7 +166,13 @@ class AppContext:
                 logger.exception("[AppContext] RemoteControlService: demarrage impossible")
 
     def shutdown(self):
-        """Nettoie les ressources principales (serveur, recorder, audio)."""
+        """Arrete proprement tous les services a la fermeture de l'application.
+
+        Chaque arret est isole dans son propre try/except : si un service
+        refuse de s'arreter, on le note dans les logs mais on continue
+        d'arreter les autres (sinon l'application pourrait rester bloquee).
+        Ordre : serveur web -> enregistreur -> traitements -> lecteur audio.
+        """
         logger.info("[AppContext] Shutdown...")
         # 1) Arreter le serveur remote si actif
         if self.remote_control and self.remote_control.is_running:
@@ -180,8 +213,17 @@ class AppContext:
 
 
 
-# Lecteur audio minimaliste base sur pygame.mixer.music
+# =============================================================================
+# AudioPlayer — lecteur audio minimaliste partage par toute l'application.
+#
+# Il repose sur pygame.mixer.music, qui ne sait lire qu'UN fichier a la fois :
+# c'est voulu, cliquer sur un sample arrete automatiquement le precedent.
+# Particularite de pygame : get_pos() donne le temps ecoule depuis le dernier
+# play(), pas la position absolue dans le fichier. Le lecteur memorise donc
+# la position de depart (last_set_pos) pour recalculer la vraie position.
+# =============================================================================
 class AudioPlayer:
+    """Lecteur audio simple : un seul son a la fois, play/pause/seek."""
 
     def __init__(self):
         # Initialise le mixer pygame avant toute lecture
@@ -203,9 +245,15 @@ class AudioPlayer:
         self.is_paused = False
 
     def toggle_play(self, sample_id, file_path, sample_duration):
-        # Si on reclique le meme sample, on toggle pause/reprise.
-        """ Joue un nouveau sample, en arrêtant le précédent si nécessaire """
+        """Joue, met en pause ou reprend un sample selon la situation.
 
+        - Si on clique sur le sample DEJA charge : bascule pause/reprise.
+        - Si on clique sur un AUTRE sample : on arrete tout, on charge le
+          nouveau fichier et on le lit depuis le debut.
+        Renvoie True si le son joue apres l'appel, False s'il est en pause
+        (l'interface s'en sert pour afficher l'icone play ou pause).
+        """
+        # Cas 1 : meme sample -> on bascule entre pause et reprise.
         if self.current_sample_id == sample_id:
             if self.is_playing and self.is_paused:
                 # Reprendre la lecture
@@ -217,7 +265,7 @@ class AudioPlayer:
                 self.is_paused = True
                 pygame.mixer.music.pause()
                 return False
-        # Si c'est un nouveau sample, on nettoie et on recharge.
+        # Cas 2 : nouveau sample -> on nettoie l'ancien et on recharge.
         self.clear_audio()
         self.set_up_audio(sample_id, file_path, sample_duration)
         # Lecture depuis le debut
@@ -225,9 +273,16 @@ class AudioPlayer:
         self.is_paused = False
         self.is_playing = True
         return True
-    
+
     def seek_position(self, sample_id, file_path, sample_duration, position):
-        # Si le sample est different, on recharge puis on seek.
+        """Saute a une position donnee (en ms) dans un sample.
+
+        Utilise quand l'utilisateur clique sur la forme d'onde pour ecouter
+        a partir d'un endroit precis. Trois cas geres : sample different
+        (recharger puis sauter), sample en pause (sauter mais rester en
+        pause), sample en lecture (sauter et continuer a jouer).
+        """
+        # Cas 1 : le sample demande n'est pas celui charge -> recharger.
         if self.current_sample_id != sample_id:
             self.clear_audio()
             self.set_up_audio(sample_id, file_path, sample_duration)
@@ -236,7 +291,8 @@ class AudioPlayer:
             self.is_playing = True
             self.is_paused = False
             return True
-        # Si le sample est en pause, on repositionne puis on repause.
+        # Cas 2 : sample en pause -> on repositionne puis on remet en pause
+        # (pygame n'a pas de "seek en pause", on triche : stop/play/pause).
         elif self.is_paused:
             self.set_position(position)
             pygame.mixer.music.stop()
@@ -245,7 +301,7 @@ class AudioPlayer:
             self.is_paused = True
             self.is_playing = True
             return False
-        # En lecture active, on repositionne et on relance.
+        # Cas 3 : lecture en cours -> on repositionne et on relance.
         else :
             pygame.mixer.music.stop()
             self.set_position(position)
@@ -255,6 +311,7 @@ class AudioPlayer:
             return True 
 
     def set_up_audio(self, sample_id, file_path, sample_duration):
+        """Charge un fichier audio dans le lecteur et memorise ses infos."""
         # Memorise les metadonnees du sample
         self.current_sample_id = sample_id
         self.current_sample_duration = sample_duration
@@ -289,13 +346,23 @@ class AudioPlayer:
         return 0
     
     def set_position(self, position_seconds):
-        """ Change la position de lecture """
+        """Memorise la position de depart demandee (recue en ms).
+
+        Ne deplace pas la lecture par elle-meme : c'est l'appelant qui
+        relance play() a partir de cette position (voir seek_position).
+        """
         # L'entree est en ms, pygame attend des secondes
         position_seconds = round(position_seconds / 1000)
         self.last_set_pos = position_seconds
 
     def get_position(self):
-        """ Obtient la position actuelle en secondes """
+        """Renvoie la position de lecture courante en millisecondes.
+
+        pygame ne connait que le temps ecoule depuis le dernier play() :
+        on y ajoute la position de depart memorisee (last_set_pos) pour
+        obtenir la position reelle dans le fichier. Renvoie -1 quand la
+        lecture est terminee (et nettoie alors le lecteur).
+        """
         # get_pos retourne le temps ecoule depuis le dernier play()
         pos = (pygame.mixer.music.get_pos())
         if pos == -1:

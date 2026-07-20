@@ -1,14 +1,29 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Worker Qt dedie a la normalisation audio en arriere-plan.
-# - Evite de bloquer l'UI pendant les traitements LUFS/peak.
+# - Worker de NORMALISATION audio : ramener le volume d'un fichier a un niveau
+#   cible, sans deformer le son. Trois methodes disponibles :
+#   * "peak" : on regarde le point le plus fort du son et on ajuste tout le
+#     reste pour que ce pic atteigne la cible (rapide, basique) ;
+#   * "rms"  : on ajuste le volume MOYEN du son (plus proche du ressenti) ;
+#   * "lufs" : la mesure "broadcast" du volume percu (la plus fidele a
+#     l'oreille humaine, utilisee par Spotify/YouTube), via pyloudnorm.
+# - Tourne dans un fil separe (QThread) pour que l'interface reste fluide
+#   pendant le calcul, et previent l'UI par signaux (debut / fin / echec).
+#
+# FONCTIONS ET CLASSE (sommaire)
+# - _get_pyloudnorm()          : charge pyloudnorm une seule fois (optionnel).
+# - _is_empty_audio()          : detecte un fichier audio vide.
+# - _safe_peak_abs()           : pic maximal du signal, sans surprise (NaN...).
+# - _apply_rms_normalization() : applique la normalisation par volume moyen.
+# - NormalizeWorker (QThread)
+#   - signaux : startedNormalization, finishedNormalization, normalizationFailed
+#   - run() : lit le fichier, normalise selon le mode, reecrit le fichier
+#             de facon sure (fichier temporaire + remplacement avec retries).
 #
 # LIENS CLES
-# - backend/services/sample_service.py
-# - frontend/sample_gui/sample/sample_list_normalize.py
+# - backend/services/sample_service.py : cree et lance ce worker.
+# - frontend/sample_gui/sample/sample_list_normalize.py : action cote UI.
 # -----------------------------------------------------------------------------
-# backend/models/normalize_worker.py
-
 # backend/models/normalize_worker.py
 
 import os
@@ -21,11 +36,19 @@ logger = logging.getLogger("normalize_worker")
 
 from PySide6.QtCore import QThread, Signal
 
+# pyloudnorm (mesure LUFS) est une dependance optionnelle : on ne tente de la
+# charger qu'une seule fois, et on memorise le resultat dans ces deux variables.
 _PYLOUDNORM = None
 _PYLOUDNORM_IMPORT_ATTEMPTED = False
 
 
 def _get_pyloudnorm():
+    """Charge la bibliotheque pyloudnorm (mesure LUFS) si elle est installee.
+
+    Renvoie le module, ou None si indisponible — dans ce cas le worker se
+    rabattra automatiquement sur la normalisation RMS. Le resultat est mis
+    en cache : on ne paie le cout de l'import qu'une fois.
+    """
     global _PYLOUDNORM
     global _PYLOUDNORM_IMPORT_ATTEMPTED
 
@@ -44,18 +67,59 @@ def _get_pyloudnorm():
     return _PYLOUDNORM
 
 
+def _is_empty_audio(data: np.ndarray) -> bool:
+    """Vrai si le tableau audio ne contient aucun echantillon (fichier vide)."""
+    array = np.asarray(data)
+    return array.size == 0 or (array.ndim >= 1 and array.shape[0] == 0)
+
+
+def _safe_peak_abs(data: np.ndarray) -> float:
+    """Renvoie le pic maximal du signal (valeur absolue), de facon robuste.
+
+    "Pic" = l'echantillon le plus fort du son, en valeur absolue (le signal
+    audio oscille entre -1 et +1). Renvoie 0.0 pour un signal vide ou
+    corrompu (valeurs infinies / NaN), plutot que de faire planter le calcul.
+    """
+    if _is_empty_audio(data):
+        return 0.0
+    peak = np.max(np.abs(data))
+    if not np.isfinite(peak):
+        return 0.0
+    return float(peak)
+
+
 def _apply_rms_normalization(data: np.ndarray, target_db: float) -> np.ndarray:
-    rms_lin = np.sqrt(np.mean(np.square(data), axis=0))
-    rms_lin_max = np.max(rms_lin)
-    if rms_lin_max <= 0:
+    """Ajuste le volume MOYEN (RMS) du signal pour atteindre target_db.
+
+    Principe : on mesure le volume moyen actuel, on calcule l'ecart avec la
+    cible, et on multiplie tout le signal par le gain correspondant.
+    Garde-fous :
+    - signal vide, silencieux ou corrompu -> renvoye tel quel ;
+    - si le resultat depasse le maximum representable (1.0, ce qui ferait
+      "craquer" le son), on le redescend juste sous la limite (0.999).
+    """
+    if _is_empty_audio(data):
         return data
 
+    # Volume moyen par canal (racine de la moyenne des carres = RMS).
+    rms_lin = np.sqrt(np.mean(np.square(data), axis=0))
+    if np.size(rms_lin) == 0 or not np.all(np.isfinite(rms_lin)):
+        return data
+
+    # On se cale sur le canal le plus fort.
+    rms_lin_max = float(np.max(rms_lin))
+    if not np.isfinite(rms_lin_max) or rms_lin_max <= 0:
+        return data
+
+    # Conversion en decibels, calcul de l'ecart a la cible, puis application
+    # du gain correspondant a tout le signal.
     current_rms_db = 20.0 * np.log10(rms_lin_max)
     gain_db = target_db - current_rms_db
     gain_lin = 10 ** (gain_db / 20.0)
     normalized = data * gain_lin
 
-    pic_after = np.max(np.abs(normalized))
+    # Anti-saturation : jamais au-dela de 0.999.
+    pic_after = _safe_peak_abs(normalized)
     if pic_after > 0.999:
         normalized = normalized * (0.999 / pic_after)
     return normalized
@@ -115,12 +179,19 @@ class NormalizeWorker(QThread):
         # Si mono (1D), on force en 2D pour un traitement uniforme
         if data.ndim == 1:
             data = data[:, np.newaxis]  # (n_samples, 1)
+        data = np.nan_to_num(data, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+
+        if _is_empty_audio(data):
+            message = "Fichier audio vide: normalisation ignoree."
+            logger.warning("[NormalizeWorker] %s (%s)", message, self.file_path)
+            self.normalizationFailed.emit(self.sample_id, message)
+            return
 
         # 3) Application de la normalisation
         if self.mode == "peak":
             # Normalisation par pic (peak) : on amène le max absolu à target_db dBFS
             # target_db en dBFS : ex. -1 dB → lin_target = 10^(−1/20) ≈ 0.891
-            pic = np.max(np.abs(data))
+            pic = _safe_peak_abs(data)
             if pic > 0:
                 lin_target = 10 ** (self.target_db / 20.0)
                 gain = lin_target / pic
@@ -151,7 +222,7 @@ class NormalizeWorker(QThread):
                     data = normalized * headroom_factor
 
                     # 4) si malgré le headroom on dépasse 1.0, on recalcule au plus juste
-                    max_after = np.max(np.abs(data))
+                    max_after = _safe_peak_abs(data)
                     if max_after >= 1.0:
                         data = data * (0.999 / max_after)
 
