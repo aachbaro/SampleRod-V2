@@ -1,27 +1,27 @@
-"""
-------------------------------------------------------------------------------
-Directory History (QSettings)
-------------------------------------------------------------------------------
-Role
-----
-Centralise la gestion de l'historique des dossiers pour le Directory tool.
-
-Stockage (QSettings)
---------------------
-On utilise les memes cles que l'implementation initiale, avec une extension:
-- last_directory       : dernier dossier consulte
-- last_root_directory  : dernier dossier choisi comme point d'entree
-- expanded_directories : noeuds d'arborescence ouverts
-- recent_directories   : liste (max 10) des dossiers recents
-
-Pourquoi l'extraire ?
----------------------
-La logique QSettings est transversale et bruyante dans les widgets.
-En l'isolant, on:
-- garde DirectoryWidget plus lisible (orchestration + UI)
-- peut reutiliser l'historique dans d'autres endroits (ex: MainWindow restore)
-------------------------------------------------------------------------------
-"""
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Encapsule toutes les operations QSettings liees a l'historique des dossiers.
+# - Utilise par DirectoryWidget et DirectoryToolWidget pour restaurer l'etat
+#   de la session precedente (dernier dossier, nœuds ouverts, recents).
+#
+# Cles QSettings gerees :
+#   last_directory        : dernier dossier consulte
+#   last_root_directory   : derniere racine de navigation
+#   expanded_directories  : nœuds d'arbre ouverts (max 200)
+#   recent_directories    : liste des dossiers recents (max 10, LIFO)
+#
+# FONCTIONS (sommaire)
+# - DirectoryHistory            : classe principale
+# - get/set_last_directory()    : dernier dossier actif
+# - get/set_last_root_directory() : derniere racine
+# - get/add/remove_expanded_directory() : etat de l'arbre
+# - get/add/remove_recent_directory()   : liste des recents
+# - remove_from_history()       : methode statique (utile depuis un autre widget)
+#
+# LIENS CLES
+# - frontend/right_panel/directory/directory_widget.py  : principal utilisateur
+# - frontend/right_panel/directory/directory_tool.py    : restaure les recents
+# -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ from PySide6.QtCore import QSettings
 
 
 class DirectoryHistory:
+    """Gestionnaire de l'historique de navigation des dossiers (persistance QSettings)."""
+
     def __init__(self, settings: QSettings):
         self._qs = settings
 
@@ -60,6 +62,7 @@ class DirectoryHistory:
         self._qs.setValue("expanded_directories", list(dirs))
 
     def add_expanded_directory(self, path: str, limit: int = 200) -> None:
+        """Ajoute un nœud ouvert ; le ramene en fin de liste s'il existe deja."""
         dirs = self.get_expanded_directories()
         if path in dirs:
             dirs.remove(path)
@@ -93,6 +96,7 @@ class DirectoryHistory:
         self._qs.setValue("recent_directories", list(dirs))
 
     def add_recent_directory(self, path: str, limit: int = 10) -> None:
+        """Ajoute un dossier en tete des recents (LIFO, max 10 par defaut)."""
         dirs = self.get_recent_directories()
         if path in dirs:
             dirs.remove(path)

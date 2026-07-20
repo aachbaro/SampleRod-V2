@@ -32,8 +32,11 @@ from PySide6.QtCore import QEvent, QMimeData, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import (
     QApplication,
+    QHBoxLayout,
+    QLabel,
     QMessageBox,
     QMenu,
+    QSizePolicy,
     QWidget,
 )
 
@@ -42,6 +45,98 @@ from frontend.reserve import ReserveEntry, apply_status_badge
 from . import directory_ui
 
 logger = logging.getLogger("directory_item_widget")
+
+
+class DirectorySubfolderRowWidget(QWidget):
+    """
+    Ligne compacte représentant un sous-dossier dans la liste.
+    Un clic sélectionne la ligne, un double-clic ou → ouvre le dossier.
+    """
+
+    clicked = Signal(str)  # path
+
+    def __init__(self, folder_path: str, parent_widget, parent=None):
+        super().__init__(parent)
+        self.folder_path = folder_path
+        self.parent_widget = parent_widget
+        self.setObjectName("DirectorySubfolderRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setSpacing(8)
+
+        icon_lbl = QLabel("📁")
+        icon_lbl.setObjectName("SubfolderIcon")
+        icon_lbl.setFixedWidth(18)
+        icon_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        name = os.path.basename(folder_path) or folder_path
+        name_lbl = QLabel(name)
+        name_lbl.setObjectName("SubfolderName")
+        name_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        name_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        # File count (lazy)
+        self._count_lbl = QLabel("")
+        self._count_lbl.setObjectName("SubfolderCount")
+        self._count_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._count_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        arrow_lbl = QLabel("›")
+        arrow_lbl.setObjectName("SubfolderArrow")
+        arrow_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        layout.addWidget(icon_lbl)
+        layout.addWidget(name_lbl, 1)
+        layout.addWidget(self._count_lbl)
+        layout.addWidget(arrow_lbl)
+
+    def set_count(self, n: int) -> None:
+        self._count_lbl.setText(str(n) if n >= 0 else "")
+
+    def set_selected(self, selected: bool) -> None:
+        selected = bool(selected)
+        if self.property("focused") == selected:
+            return
+        self.setProperty("focused", selected)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.folder_path)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.parent_widget.open_directory(self.folder_path)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Right):
+            self.parent_widget.open_directory(self.folder_path)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Left:
+            self.parent_widget.go_to_parent_directory()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class DirectoryListItemWidget(QWidget):
@@ -65,6 +160,7 @@ class DirectoryListItemWidget(QWidget):
         self._drag_start_pos = None
         self._playing = False
         self._scrubbing = False
+        self._selected = False
         self._duration_ms = max(0, int(float(entry.duration or 0.0) * 1000))
         self._preview_timer = QTimer(self)
         self._preview_timer.setInterval(100)
@@ -79,6 +175,7 @@ class DirectoryListItemWidget(QWidget):
             on_start_rename=self._start_rename,
             on_submit_rename=self._submit_rename,
             on_toggle_preview=self._on_clicked,
+            on_find_compatibles=self._on_find_compatibles,
             on_delete=self._on_delete,
         )
         self.playback_slider.sliderPressed.connect(self._on_scrub_started)
@@ -93,6 +190,8 @@ class DirectoryListItemWidget(QWidget):
         for child in self.findChildren(QWidget):
             child.installEventFilter(self)
         self._refresh_display_name()
+        self._refresh_scale_badge()
+        self._refresh_duration_chip(entry)
 
     # ------------------------------------------------------------------ actions
     def _on_clicked(self):
@@ -110,6 +209,12 @@ class DirectoryListItemWidget(QWidget):
         self.rename_input.selectAll()
 
     def _submit_rename(self):
+        """Valide le renommage depuis le champ texte.
+
+        Si le nouveau nom est identique a l'ancien, on sort silencieusement.
+        Sinon, delegue au DirectoryWidget.rename_entry() puis met a jour les
+        attributs locaux (file_path, entry.path, display_name) en cas de succes.
+        """
         new_name = self.rename_input.text().strip()
         old_base = self.entry.display_name or os.path.splitext(os.path.basename(self.file_path))[0]
         if new_name and new_name != old_base:
@@ -131,6 +236,12 @@ class DirectoryListItemWidget(QWidget):
 
     # ------------------------------------------------------------------ delete
     def _on_delete(self):
+        """Supprime le fichier apres confirmation.
+
+        Si le fichier est en cours d'ecoute, il est stoppe avant la suppression.
+        Si l'entree n'est pas trackee en DB (sample_id=None), la ligne est retiree
+        immediatement sans attendre le signal sampleDeleted.
+        """
         reply = QMessageBox.question(
             self,
             "Supprimer",
@@ -157,6 +268,11 @@ class DirectoryListItemWidget(QWidget):
         if self.sample_id is None:
             self.parent_widget._remove_widget(self)
 
+    def _on_find_compatibles(self) -> None:
+        if self.sample_id is None:
+            return
+        self.parent_widget.on_find_compatibles_requested(int(self.sample_id))
+
     # ------------------------------------------------------------------ ui state
     def set_playing(self, playing: bool):
         """Met a jour l'icone play/pause de la ligne."""
@@ -176,13 +292,14 @@ class DirectoryListItemWidget(QWidget):
             self._refresh_time_label(0)
 
     def set_selected(self, selected: bool):
+        selected = bool(selected)
+        self._selected = selected
         if self.property("focused") == selected:
             return
-        self.setProperty("focused", bool(selected))
+        self.setProperty("focused", selected)
         self.style().unpolish(self)
         self.style().polish(self)
-        if selected:
-            self.setFocus(Qt.FocusReason.OtherFocusReason)
+        apply_status_badge(self.status_badge, self.entry.status)
 
     def mouseDoubleClickEvent(self, event):
         """Double-clic sur la carte → envoyer vers la waveform du labo."""
@@ -231,18 +348,24 @@ class DirectoryListItemWidget(QWidget):
 
         menu = QMenu(self)
         preview_label = "Stopper l'ecoute" if self.parent_widget.reserve_actions.is_previewing(self.entry) else "Pre-ecouter"
-        preview_action = menu.addAction(preview_label)
-        rename_action = menu.addAction("Renommer")
-        send_to_lab_action = menu.addAction("Envoyer au labo")
+        preview_action = menu.addAction(f"{preview_label}\tEspace")
+        rename_action = menu.addAction("Renommer\tF2")
+        compat_action = None
+        if self.entry.dominant_note and self.sample_id is not None:
+            compat_label = self.entry.detected_scale_label or self.entry.dominant_note
+            compat_action = menu.addAction(f"Compatibles avec {compat_label}")
+        send_to_lab_action = menu.addAction("Envoyer au labo\tEntrée")
         reveal_action = menu.addAction("Ouvrir le dossier")
         menu.addSeparator()
-        delete_action = menu.addAction("Supprimer")
+        delete_action = menu.addAction("Supprimer\tSuppr")
 
         action = menu.exec(event.globalPos())
         if action is preview_action:
             self._on_clicked()
         elif action is rename_action:
             self._start_rename()
+        elif compat_action is not None and action is compat_action:
+            self._on_find_compatibles()
         elif action is send_to_lab_action:
             self.parent_widget.send_path_to_composer(self.file_path)
         elif action is reveal_action:
@@ -258,12 +381,14 @@ class DirectoryListItemWidget(QWidget):
         self._full_display_name = entry.display_name or os.path.basename(entry.path)
         self._refresh_display_name()
         self.meta_label.setText(self._build_meta_text(entry))
-        self.meta_label.setVisible(bool(self.meta_label.text()))
+        self.meta_label.hide()
         self.rename_input.setText(entry.display_name or os.path.splitext(os.path.basename(entry.path))[0])
         self.setToolTip(entry.path)
         self.name_label.setToolTip(entry.path)
         self.meta_label.setToolTip(entry.path)
         apply_status_badge(self.status_badge, entry.status)
+        self._refresh_scale_badge()
+        self._refresh_duration_chip(entry)
         if not self._playing:
             self._refresh_time_label(0)
 
@@ -280,6 +405,11 @@ class DirectoryListItemWidget(QWidget):
         self._sync_playback_position()
 
     def _sync_playback_position(self) -> None:
+        """Met a jour le slider et le label de temps selon la position courante de l'audio_player.
+
+        Appele toutes les 100 ms par le _preview_timer. Si le sample n'est plus
+        en lecture (fin naturelle ou stop), bascule la ligne en mode "arrete".
+        """
         if self._scrubbing:
             return
         if not self.parent_widget.reserve_actions.is_previewing(self.entry):
@@ -296,6 +426,34 @@ class DirectoryListItemWidget(QWidget):
         self.playback_slider.setValue(slider_value)
         self.playback_slider.blockSignals(False)
         self._refresh_time_label(position_ms)
+
+    def _advance_preview_position(self) -> None:
+        """Avance la lecture de 10 % de la duree totale (touche →).
+
+        Permet un "scrub rapide" au clavier sans avoir a atteindre le slider.
+        Le pas minimum est 750 ms et le maximum est 8 s.
+        """
+        duration_ms = max(0, int(self._duration_ms))
+        if duration_ms <= 0:
+            return
+
+        current_position_ms = 0
+        if self.parent_widget.reserve_actions.is_previewing(self.entry):
+            current_position_ms = max(
+                0,
+                int(self.parent_widget.app_context.audio_player.get_position()),
+            )
+
+        step_ms = self._preview_seek_step_ms(duration_ms)
+        target_position_ms = max(0, min(duration_ms, current_position_ms + step_ms))
+        if self.parent_widget.seek_preview(self.entry, target_position_ms):
+            self._refresh_time_label(target_position_ms)
+
+    @staticmethod
+    def _preview_seek_step_ms(duration_ms: int) -> int:
+        if duration_ms <= 0:
+            return 0
+        return max(750, min(8000, int(duration_ms * 0.10)))
 
     def _slider_to_ms(self, slider_value: int) -> int:
         duration_ms = max(1, self._duration_ms)
@@ -323,25 +481,7 @@ class DirectoryListItemWidget(QWidget):
         super().resizeEvent(event)
         self._refresh_display_name()
 
-    def focusInEvent(self, event):
-        self.setProperty("focused", True)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        super().focusInEvent(event)
-
-    def focusOutEvent(self, event):
-        fw = QApplication.focusWidget()
-        if fw and (fw is self or self.isAncestorOf(fw)):
-            super().focusOutEvent(event)
-            return
-        self.setProperty("focused", False)
-        self.style().unpolish(self)
-        self.style().polish(self)
-        super().focusOutEvent(event)
-
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.MouseButtonPress:
-            self.setFocus(Qt.FocusReason.MouseFocusReason)
         return super().eventFilter(watched, event)
 
     @staticmethod
@@ -359,3 +499,69 @@ class DirectoryListItemWidget(QWidget):
         if entry.rms_level is not None:
             parts.append(f"RMS {float(entry.rms_level):.3f}")
         return " | ".join(parts)
+
+    def _refresh_duration_chip(self, entry) -> None:
+        chip = getattr(self, "duration_chip", None)
+        if chip is None:
+            return
+        chip.setText("")
+        chip.setVisible(False)
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key == Qt.Key.Key_Space:
+            self._on_clicked()
+            event.accept()
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.parent_widget.send_path_to_composer(self.file_path)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Right:
+            self._advance_preview_position()
+            event.accept()
+            return
+        if key == Qt.Key.Key_F2:
+            self._start_rename()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Delete:
+            self._on_delete()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Left:
+            self.parent_widget.go_to_parent_directory()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _refresh_scale_badge(self) -> None:
+        """Affiche ou masque le badge de note/gamme (key_badge).
+
+        Le badge n'est visible que si une note dominante est detectee ET que le
+        sample est indexe (sample_id != None). Un clic sur le badge declenche
+        un filtre "compatibles" dans le DirectoryWidget.
+        """
+        note = self.entry.dominant_note
+        if not note or self.sample_id is None:
+            self.key_badge.setVisible(False)
+            self.key_badge.setText("")
+            self.key_badge.setToolTip("")
+            return
+
+        self.key_badge.setText(str(note))
+        detected_scale = self.entry.detected_scale_label or note
+        label_prefix = "Gamme detectee" if self.entry.detected_scale_kind == "scale" else "Note dominante"
+        confidence = (
+            f" ({float(self.entry.scale_confidence):.0%})"
+            if self.entry.scale_confidence is not None
+            else ""
+        )
+        tooltip_lines = [f"{label_prefix} : {detected_scale}{confidence}"]
+        if self.entry.compatible_scales:
+            tooltip_lines.append(
+                "Compatibles : " + ", ".join(self.entry.compatible_scales)
+            )
+        tooltip_lines.append("Cliquer pour filtrer les fichiers compatibles")
+        self.key_badge.setToolTip("\n".join(tooltip_lines))
+        self.key_badge.setVisible(True)

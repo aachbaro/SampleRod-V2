@@ -267,6 +267,11 @@ class SampleComposerWidget(QWidget):
             self.info_label.setText(f"Drop refuse: {e}")
 
     def _on_order_changed(self, ordered_ids: list[int]) -> None:
+        """Slot: l'utilisateur a reordonne des clips par drag & drop interne.
+
+        On ignore si le widget est en train de se synchroniser avec le modele
+        (_syncing_view) pour eviter une boucle signal <-> modele.
+        """
         if self._syncing_view:
             return
         try:
@@ -275,6 +280,7 @@ class SampleComposerWidget(QWidget):
             logger.exception("[Composer] Failed to reorder clips")
 
     def _delete_selected_clip(self) -> None:
+        """Supprime le clip actuellement selectionne dans la liste."""
         item = self.clip_list.currentItem()
         if not item:
             return
@@ -301,6 +307,11 @@ class SampleComposerWidget(QWidget):
                 pass
 
     def _play_clip_by_id(self, clip_id: int) -> None:
+        """Demarre la lecture de la region correspondant au clip (bouton play de la ligne).
+
+        Selectionne visuellement la ligne dans clip_list, positionne la region
+        de selection sur la waveform globale, puis lance play_from_start.
+        """
         # Selection visuelle sur la ligne correspondante
         for i in range(self.clip_list.count()):
             item = self.clip_list.item(i)
@@ -319,6 +330,10 @@ class SampleComposerWidget(QWidget):
         self.waveform.play_from_start()
 
     def _clip_time_range(self, clip_id: int) -> tuple[float, float] | None:
+        """Calcule (start, end) en secondes d'un clip dans le buffer concatene.
+
+        Retourne None si le clip est introuvable dans le modele.
+        """
         start = 0.0
         for clip in self.model.clips:
             end = start + float(clip.duration_s)
@@ -354,6 +369,11 @@ class SampleComposerWidget(QWidget):
         )
 
     def add_file_paths(self, paths: list[str]) -> None:
+        """Charge une liste de chemins audio et ajoute chacun comme clip entier.
+
+        Normalise les chemins, ignore les fichiers inexistants, puis lance
+        un thread de chargement (_ComposerSampleLoader) par fichier.
+        """
         normalized_paths = []
         for path in paths:
             try:
@@ -380,6 +400,7 @@ class SampleComposerWidget(QWidget):
             self._queue_audio_file_load(sample_id, path, name, source)
 
     def _on_sample_loaded(self, sample_id: int, audio, sr: int, name: str, source: dict) -> None:
+        """Slot: chargement audio termine — ajoute le clip au modele."""
         try:
             self.model.add_slice(
                 audio=audio,
@@ -396,6 +417,11 @@ class SampleComposerWidget(QWidget):
         self.info_label.setText(f"Erreur chargement sample: {message}")
 
     def _queue_audio_file_load(self, sample_id: int, path: str, name: str, source: dict | None = None) -> None:
+        """Lance un thread de chargement pour un fichier audio.
+
+        Evite les doublons: si un thread existe deja pour ce sample_id, on sort.
+        Le thread emet `loaded` ou `failed` puis se supprime de _load_threads.
+        """
         if sample_id in self._load_threads:
             return
         self.info_label.setText(f"Chargement: {name}...")
@@ -408,6 +434,7 @@ class SampleComposerWidget(QWidget):
 
     # ------------------------------------------------------------------ sync UI
     def _sync_all(self) -> None:
+        """Synchronise tous les elements d'UI avec l'etat courant du modele."""
         self._sync_clip_list()
         self._sync_preview_plot()
         self._sync_info_label()
@@ -444,6 +471,11 @@ class SampleComposerWidget(QWidget):
         )
 
     def _sync_clip_list(self) -> None:
+        """Reconstruit la clip_list depuis le modele.
+
+        Conserve l'item selectionne par clip_id (pas par position) pour que
+        le focus reste coherent apres un reorder ou un ajout.
+        """
         selected_id: int | None = None
         cur = self.clip_list.currentItem()
         if cur is not None:
@@ -590,6 +622,11 @@ class SampleComposerWidget(QWidget):
             i += 1
 
     def _sync_preview_plot(self) -> None:
+        """Met a jour le WaveformWidget avec le buffer concatene courant.
+
+        Audio attendu par WaveformWidget: channel-first (n_channels, n_samples).
+        Si le modele est vide, efface la waveform et les lignes de frontiere.
+        """
         audio, sr, ch = self.model.render_preview()
 
         # Clear
@@ -661,6 +698,12 @@ class SampleComposerWidget(QWidget):
 
     # ------------------------------------------------------------------ waveform integration
     def _build_waveform(self) -> None:
+        """Cree et configure le WaveformWidget integre au Compositeur.
+
+        On reutilise le vrai editor (meme rendu que labo) mais on desactive
+        cut/export et on masque les boutons non pertinents (save, undo/redo,
+        marker_mode) ainsi que la colonne de markers.
+        """
         # Reutilise le vrai WaveformWidget (sans auto-load).
         self.waveform = WaveformWidget(None, self.app_context, auto_load=False)
         self.waveform_layout.addWidget(self.waveform)
@@ -720,6 +763,7 @@ class SampleComposerWidget(QWidget):
         self._set_waveform_region(start, end)
 
     def _set_waveform_region(self, start: float, end: float) -> None:
+        """Positionne une region de selection sur la waveform entre start et end (secondes)."""
         w = self.waveform
         if w is None:
             return

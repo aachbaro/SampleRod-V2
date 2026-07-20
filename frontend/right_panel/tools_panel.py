@@ -1,27 +1,21 @@
-"""
-------------------------------------------------------------------------------
-Right Tools Panel (Container)
-------------------------------------------------------------------------------
-Role
-----
-Ce module regroupe les "outils" qui vivent dans le panneau de droite
-de MainWindow.
-
-Pourquoi ?
-----------
-MainWindow doit rester une orchestration globale. Les outils (Directory,
-Sample Composer, etc.) ont chacun leurs sous-composants, leurs styles et leur
-cycle de vie. Les regrouper ici permet:
-- une arborescence claire (frontend/right_panel/*)
-- un endroit unique pour ajouter de nouveaux outils
-- moins de code UI dans MainWindow
-
-Contenu
--------
-- Onglet "Dossiers" : DirectoryToolWidget (multi-onglets de dossiers)
-- Onglet "Compositeur" : SampleComposerWidget (MVP: drop de slices + preview)
-------------------------------------------------------------------------------
-"""
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Conteneur du panneau droit de la fenetre principale.
+# - Regroupe dans un QTabWidget deux outils principaux :
+#   * Onglet "Dossiers" : DirectoryToolWidget (navigation multi-onglets de dossiers)
+#   * Onglet "Compositeur" : SampleComposerWidget (composition de patterns de slices)
+# - Isole la logique des outils de MainWindow pour garder cette derniere courte.
+#
+# FONCTIONS (sommaire)
+# - RightToolsPanel    : widget conteneur avec QTabWidget
+# - _build_ui()        : construit les deux onglets et applique les styles
+# - _apply_stylesheet() : QSS dynamique du panneau et de ses onglets imbriques
+#
+# LIENS CLES
+# - frontend/right_panel/directory/directory_tool.py   : onglet Dossiers
+# - frontend/right_panel/composer/composer_widget.py   : onglet Compositeur
+# - frontend/main_window.py                            : instancie ce widget
+# -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -37,6 +31,8 @@ from frontend.styles import theme
 
 
 class RightToolsPanel(QWidget):
+    """Panneau droit de la fenetre principale : regroupe Dossiers et Compositeur."""
+
     def __init__(self, *, directory_service: DirectoryService, app_context: AppContext, parent=None):
         super().__init__(parent)
         self.directory_service = directory_service
@@ -44,6 +40,7 @@ class RightToolsPanel(QWidget):
         self._build_ui()
 
     def _build_ui(self) -> None:
+        """Construit le QTabWidget avec les deux onglets et applique les styles."""
         # Root = background of the right side area (like SampleListRoot).
         self.setObjectName("RightToolsPanelRoot")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -69,6 +66,7 @@ class RightToolsPanel(QWidget):
         theme.manager.themeChanged.connect(lambda _: self._apply_stylesheet())
 
     def _apply_stylesheet(self):
+        """Applique la feuille de style QSS du panneau et des onglets imbriques."""
         p = theme.manager.p
         self.setStyleSheet(
             f"""

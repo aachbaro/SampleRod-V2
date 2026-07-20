@@ -1,15 +1,17 @@
-"""
-------------------------------------------------------------------------------
-Tab Bar Helpers (Right Panel)
-------------------------------------------------------------------------------
-Ce module contient des composants "UI infrastructure" reutilisables pour le
-panneau droit.
-
-Actuellement:
-- HoverCloseTabBar: barre d'onglets avec une croix de fermeture minimaliste
-  qui n'apparait qu'au survol de l'onglet (style "Chrome-like", mais sobre).
-------------------------------------------------------------------------------
-"""
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Composants d'infrastructure UI pour la barre d'onglets du panneau droit.
+#
+# FONCTIONS (sommaire)
+# - HoverCloseTabBar : QTabBar avec bouton de fermeture discret (style "Chrome")
+#   * croix invisible par defaut, apparait en rouge au survol de l'onglet
+#   * la place est toujours reservee pour eviter le reflow au survol
+#   * navigation a la molette entre onglets
+#   * signal closeRequested(int) : indice de l'onglet a fermer
+#
+# LIENS CLES
+# - frontend/right_panel/directory/directory_tool.py : utilisateur principal
+# -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -20,10 +22,15 @@ from PySide6.QtWidgets import QTabBar, QToolButton
 
 
 class HoverCloseTabBar(QTabBar):
-    """
-    QTabBar avec bouton de fermeture discret:
-    - invisible par defaut (ne reserve pas de place)
-    - apparait en rouge quand on survole l'onglet
+    """QTabBar avec bouton de fermeture discret (style "Chrome").
+
+    Le bouton de fermeture (croix) est toujours present dans le layout pour
+    eviter le reflow des onglets au survol, mais son icone est vide et il est
+    desactive par defaut. Il devient visible et cliquable uniquement quand la
+    souris survole l'onglet correspondant.
+
+    Signal :
+        closeRequested(int) : indice de l'onglet dont la fermeture a ete demandee.
     """
 
     closeRequested = Signal(int)
@@ -55,6 +62,7 @@ class HoverCloseTabBar(QTabBar):
 
     # ------------------------------------------------------------------ close button plumbing
     def tabInserted(self, index: int) -> None:  # noqa: N802 (Qt API)
+        """Ajoute un bouton de fermeture (invisible par defaut) a chaque nouvel onglet."""
         super().tabInserted(index)
 
         btn = QToolButton(self)
@@ -82,6 +90,7 @@ class HoverCloseTabBar(QTabBar):
         self._style_scroll_buttons()
 
     def tabRemoved(self, index: int) -> None:  # noqa: N802 (Qt API)
+        """Ajuste l'indice de survol quand un onglet est supprime."""
         super().tabRemoved(index)
         # Keep hover state consistent when tabs shift.
         if self._hover_index == index:
@@ -91,6 +100,7 @@ class HoverCloseTabBar(QTabBar):
         self._style_scroll_buttons()
 
     def _on_close_clicked(self) -> None:
+        """Retrouve l'indice de l'onglet proprietaire du bouton clique et emet closeRequested."""
         btn = self.sender()
         if btn is None:
             return
@@ -170,6 +180,7 @@ class HoverCloseTabBar(QTabBar):
                 btn.show()
 
     def _set_hover_tab(self, idx: int) -> None:
+        """Masque la croix sur l'onglet precedemment survole, l'affiche sur le nouvel indice."""
         # Hide previous
         if 0 <= self._hover_index < self.count():
             self._set_close_visible(self._hover_index, False)
@@ -181,6 +192,7 @@ class HoverCloseTabBar(QTabBar):
             self._set_close_visible(idx, True)
 
     def _set_close_visible(self, index: int, visible: bool) -> None:
+        """Active/desactive l'icone et le click du bouton de fermeture d'un onglet donne."""
         btn = self.tabButton(index, QTabBar.ButtonPosition.RightSide)
         if not isinstance(btn, QToolButton):
             return

@@ -1,3 +1,26 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Panneau de detail affiche a droite de la liste du DirectoryWidget.
+# - Montre le nom, le statut, le chemin, les metadonnees (duree, gamme...)
+#   et les actions disponibles pour le fichier selectionne.
+# - Peut embarquer un WaveformWidget en ligne (cree/detruit a la demande).
+#
+# FONCTIONS (sommaire)
+# - DirectoryDetailWidget  : widget de detail (colonne droite)
+# - set_entry()            : charge un ReserveEntry dans le panneau
+# - clear_entry()          : remet le panneau dans son etat initial vide
+# - toggle_waveform()      : affiche/masque le WaveformWidget integre
+# - _destroy_waveform()    : stoppe et supprime proprement le WaveformWidget
+# - _format_metadata()     : ligne de metadonnees (duree, RMS, gamme, source)
+# - _request_*()           : handlers des boutons (preview/rename/waveform/labo)
+# - _open_current_folder() : ouvre le dossier dans l'explorateur systeme
+#
+# LIENS CLES
+# - frontend/right_panel/directory/directory_widget.py : instancie ce widget
+# - frontend/reserve/reserve_actions.py                : actions partagees
+# - frontend/sample_gui/wave_form.py                   : WaveformWidget integre
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -11,7 +34,11 @@ from frontend.sample_gui.wave_form import WaveformWidget
 
 
 class DirectoryDetailWidget(QWidget):
-    """Detail/preview pane for the currently selected filesystem audio file."""
+    """Panneau de detail pour le fichier audio selectionne dans DirectoryWidget.
+
+    Affiche nom, statut, chemin et metadonnees. Propose les actions preview,
+    rename, labo et "ouvrir dossier". Peut embarquer un WaveformWidget inline.
+    """
 
     previewRequested = Signal(str)
     renameRequested = Signal(str)
@@ -87,6 +114,11 @@ class DirectoryDetailWidget(QWidget):
         self.clear_entry()
 
     def set_entry(self, entry: ReserveEntry) -> None:
+        """Charge un ReserveEntry dans le panneau et adapte les boutons selon sa disponibilite.
+
+        Si le chemin est identique a celui deja affiche, la waveform inline
+        n'est pas reinitilisee (evite un rechargement inutile).
+        """
         same_path = self._entry is not None and self._entry.path == entry.path
         self._entry = entry
         self.title_label.setText(entry.display_name or os.path.basename(entry.path))
@@ -109,6 +141,10 @@ class DirectoryDetailWidget(QWidget):
             self.waveform_container.setVisible(False)
 
     def clear_entry(self) -> None:
+        """Remet le panneau dans son etat initial (aucun fichier selectionne).
+
+        Detruit le WaveformWidget si present et desactive tous les boutons.
+        """
         self._entry = None
         self.title_label.setText("Aucun fichier selectionne")
         self.status_label.setText("")
@@ -133,6 +169,12 @@ class DirectoryDetailWidget(QWidget):
         self.preview_button.setText("Stopper" if active else "Pre-ecouter")
 
     def toggle_waveform(self, *, force: bool = False) -> None:
+        """Affiche ou masque le WaveformWidget inline.
+
+        Le WaveformWidget est cree a la premiere ouverture et conserve en
+        memoire tant que le meme fichier reste selectionne. `force=True` force
+        l'affichage sans toggle (utile depuis reserve_actions.open_waveform).
+        """
         if self._entry is None or not os.path.isfile(self._entry.path):
             return
 
@@ -188,6 +230,11 @@ class DirectoryDetailWidget(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _destroy_waveform(self) -> None:
+        """Stoppe proprement le WaveformWidget et le supprime du layout.
+
+        On arrete l'audio et le timer AVANT deleteLater pour eviter les
+        callbacks orphelins qui crashent si le widget est deja detruit.
+        """
         if self._waveform_widget is None:
             return
         try:
@@ -204,11 +251,33 @@ class DirectoryDetailWidget(QWidget):
 
     @staticmethod
     def _format_metadata(entry: ReserveEntry) -> str:
+        """Construit la ligne de metadonnees affichee sous le chemin.
+
+        Format: "Duree: Xs | RMS: Y | Gamme: Z (conf) | Compatibles: ... | Source: filesystem"
+        Les champs absents (None) sont omis.
+        """
         parts: list[str] = []
         if entry.duration is not None:
             parts.append(f"Duree: {float(entry.duration):.2f}s")
         if entry.rms_level is not None:
             parts.append(f"RMS: {float(entry.rms_level):.3f}")
+        if entry.detected_scale_label:
+            confidence = (
+                f" ({float(entry.scale_confidence):.0%})"
+                if entry.scale_confidence is not None
+                else ""
+            )
+            label_prefix = "Gamme" if entry.detected_scale_kind == "scale" else "Note dominante"
+            parts.append(f"{label_prefix}: {entry.detected_scale_label}{confidence}")
+        elif entry.dominant_note:
+            confidence = (
+                f" ({float(entry.scale_confidence):.0%})"
+                if entry.scale_confidence is not None
+                else ""
+            )
+            parts.append(f"Note dominante: {entry.dominant_note}{confidence}")
+        if entry.compatible_scales:
+            parts.append(f"Compatibles: {', '.join(entry.compatible_scales)}")
         created_at = entry.metadata.get("directory_entry")
         created_at = getattr(created_at, "created_at", None)
         if created_at is not None and hasattr(created_at, "strftime"):

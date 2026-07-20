@@ -1,29 +1,22 @@
-"""
-------------------------------------------------------------------------------
-Directory Tool (Tabbed Container)
-------------------------------------------------------------------------------
-Role
-----
-Ce module contient le conteneur "Directory tool" du Right Panel.
-
-Concretement, il gere:
-- un QTabWidget de dossiers (plusieurs onglets DirectoryWidget, 1 par dossier)
-- un bouton "+" (en bas a droite) pour ajouter un dossier (QFileDialog)
-- la restauration automatique des dossiers recents (QSettings / DirectoryHistory)
-
-Pourquoi ce fichier existe ?
-----------------------------
-On veut que MainWindow ne soit pas l'endroit ou toute la logique UI s'accumule.
-MainWindow orchestre l'application; les outils du panneau droit s'occupent de leur
-propre UI + cycle de vie.
-
-Position dans l'architecture
-----------------------------
-- DirectoryToolWidget (ce fichier) : conteneur multi-onglets (dossiers)
-- DirectoryWidget : UI/interaction pour un dossier donne (liste, DnD, preview, etc.)
-- DirectoryHistory : persistance de l'historique (last/recent)
-------------------------------------------------------------------------------
-"""
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Conteneur multi-onglets de l'outil "Dossiers" du panneau droit.
+# - Chaque onglet correspond a un dossier ouvert (DirectoryWidget).
+# - Gere le bouton "+" pour ajouter un dossier, la restauration des dossiers
+#   recents au demarrage, et la deduplication des onglets.
+#
+# FONCTIONS (sommaire)
+# - DirectoryToolWidget     : widget conteneur (QTabWidget + bouton "+")
+# - restore_directories()   : recharge les dossiers recents depuis l'historique
+# - add_directory_tab()     : ajoute un onglet pour un dossier (dialogue si None)
+# - _update_tab_text()      : met a jour le nom de l'onglet quand le dossier change
+# - _close_directory_tab()  : ferme et supprime un onglet
+#
+# LIENS CLES
+# - frontend/right_panel/directory/directory_widget.py   : widget de chaque onglet
+# - frontend/right_panel/directory/directory_history.py  : persistance des recents
+# - frontend/right_panel/tab_bar.py                      : barre d'onglets avec croix
+# -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -46,11 +39,10 @@ logger = logging.getLogger("directory_tool")
 
 
 class DirectoryToolWidget(QWidget):
-    """
-    Conteneur d'onglets de DirectoryWidget (1 onglet = 1 dossier).
+    """Conteneur d'onglets de DirectoryWidget (1 onglet = 1 dossier).
 
-    Note: on a volontairement retire le "Choose folder" interne a DirectoryWidget.
-    Le choix du dossier se fait uniquement ici, via le bouton "+".
+    Le choix du dossier se fait uniquement ici via le bouton "+", et non a
+    l'interieur de chaque DirectoryWidget, pour que l'UI reste coherente.
     """
 
     def __init__(self, *, directory_service: DirectoryService, app_context: AppContext, parent=None):
@@ -66,6 +58,7 @@ class DirectoryToolWidget(QWidget):
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
+        """Construit le QTabWidget avec barre d'onglets personnalisee et bouton "+"."""
         # Tool card: le style (background/border/radius) est applique via QSS
         # depuis RightToolsPanel (tools_panel.py).
         self.setObjectName("DirectoryToolCard")
@@ -127,9 +120,11 @@ class DirectoryToolWidget(QWidget):
             logger.info(f"[DirectoryTool] Dossiers introuvables: {missing}")
 
     def add_directory_tab(self, path: str | None = None) -> None:
-        """
-        Ajoute un onglet "directory" pour un dossier.
-        Si path est None, on ouvre un QFileDialog.
+        """Ajoute un onglet pour un dossier.
+
+        Si `path` est None, ouvre un dialogue de selection de dossier.
+        Si le dossier est deja ouvert dans un onglet, bascule simplement dessus
+        sans en creer un second.
         """
         if not path:
             start_dir = self.history.get_last_directory() or os.path.expanduser("~")
@@ -154,12 +149,14 @@ class DirectoryToolWidget(QWidget):
         self._update_tab_text(widget, getattr(widget, "root_dir", path) or path)
 
     def _update_tab_text(self, widget: DirectoryWidget, path: str) -> None:
+        """Met a jour le titre de l'onglet avec le nom du dossier affiche."""
         name = os.path.basename(path) or path
         idx = self.dir_tab_widget.indexOf(widget)
         if idx != -1:
             self.dir_tab_widget.setTabText(idx, name)
 
     def _close_directory_tab(self, index: int) -> None:
+        """Retire l'onglet, detruit le widget et le supprime de l'historique."""
         w = self.dir_tab_widget.widget(index)
         if w:
             if getattr(w, "current_dir", None):

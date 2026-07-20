@@ -67,12 +67,43 @@ class DirectoryListWidget(QListWidget):
         else:
             event.ignore()
 
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
+            # Move selection to prev/next selectable row
+            current = self.currentRow()
+            direction = -1 if key == Qt.Key.Key_Up else 1
+            target = current + direction
+            while 0 <= target < self.count():
+                item = self.item(target)
+                if item is not None and item.flags() & Qt.ItemFlag.ItemIsSelectable:
+                    self.setCurrentRow(target)
+                    break
+                target += direction
+            event.accept()
+            return
+        if key in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Space,
+            Qt.Key.Key_F2,
+            Qt.Key.Key_Left,
+            Qt.Key.Key_Delete,
+        ):
+            # Delegate to the currently focused item widget
+            w = self.itemWidget(self.currentItem()) if self.currentItem() else None
+            if w is not None:
+                w.keyPressEvent(event)
+                return
+        super().keyPressEvent(event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(0, self._refresh_item_widths)
 
     def _refresh_item_widths(self):
-        viewport_width = max(0, self.viewport().width() - 2)
+        viewport_width = max(0, self.viewport().width() - 14)
         for row in range(self.count()):
             item = self.item(row)
             widget = self.itemWidget(item)
