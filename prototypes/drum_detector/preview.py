@@ -32,6 +32,9 @@ PATTERN_STEM_NAMES: tuple[str, ...] = (
     "stretch",
     "other",
 )
+PATTERN_TAIL_MODE_CUT = "cut"
+PATTERN_TAIL_MODE_REVERSE = "reverse"
+PATTERN_TAIL_MODE_PING_PONG = "ping_pong"
 
 
 @lru_cache(maxsize=1)
@@ -276,6 +279,7 @@ def build_pattern_preview(
     fade_in_ms: float = 0.75,
     fade_out_ms: float = 5.0,
     mono_choke: bool | None = None,
+    tail_mode: str = PATTERN_TAIL_MODE_CUT,
 ) -> RetimedPreview:
     if sample_rate <= 0:
         raise ValueError("Sample rate must be strictly positive")
@@ -289,6 +293,8 @@ def build_pattern_preview(
     scheduled_segments: list[RetimedPreviewSegment] = []
     rendered_segments: list[_RenderedPreviewEvent] = []
     step_duration_s = (60.0 / float(target_bpm)) / 4.0
+    loop_duration_s = float(pattern.step_count) * float(step_duration_s)
+    loop_frames = int(round(max(loop_duration_s, 1.0 / float(sample_rate)) * float(sample_rate)))
     pattern_gate = getattr(getattr(pattern, "params", None), "gate", 1.0)
     raw_gate = pattern_gate if gate is None else gate
     try:
@@ -297,6 +303,7 @@ def build_pattern_preview(
         resolved_gate = 1.0
     raw_mono_choke = getattr(getattr(pattern, "params", None), "mono_choke", False)
     resolved_mono_choke = bool(raw_mono_choke) if mono_choke is None else bool(mono_choke)
+    resolved_tail_mode = _resolve_pattern_tail_mode(tail_mode)
     channel_count = normalized.shape[1]
     output_length = 0
 
@@ -386,17 +393,17 @@ def build_pattern_preview(
                 if bool(ghost_meta["active"]):
                     gain *= float(ghost_meta["vel_ratio"])
                 segment *= np.float32(gain)
-                _apply_edge_fades(
-                    segment,
-                    sample_rate=sample_rate,
-                    fade_in_ms=fade_in_ms,
-                    fade_out_ms=fade_out_ms,
-                )
                 retrigger_offset_s = (
                     float(current_offset_ticks)
                     / float(STRETCH_TICKS_PER_STEP)
                 ) * step_duration_s
                 retrigger_preview_start_s = preview_start_s + retrigger_offset_s
+                new_start = int(round(retrigger_preview_start_s * sample_rate))
+                available_frames = max(0, loop_frames - max(0, new_start))
+                if available_frames <= 0:
+                    continue
+                if segment.shape[0] > available_frames:
+                    segment = segment[:available_frames].copy()
                 retrigger_preview_end_s = retrigger_preview_start_s + (float(segment.shape[0]) / float(sample_rate))
                 stem_name = "stretch"
                 scheduled_segments.append(
@@ -413,7 +420,6 @@ def build_pattern_preview(
                         stem=stem_name,
                     )
                 )
-                new_start = int(round(retrigger_preview_start_s * sample_rate))
                 rendered_segments.append(_RenderedPreviewEvent(start_frame=new_start, segment=segment, stem=stem_name))
                 output_length = max(output_length, new_start + segment.shape[0])
             continue
@@ -455,14 +461,13 @@ def build_pattern_preview(
             if bool(ghost_meta["active"]):
                 gain *= float(ghost_meta["vel_ratio"])
             segment *= np.float32(gain)
-            _apply_edge_fades(
-                segment,
-                sample_rate=sample_rate,
-                fade_in_ms=fade_in_ms,
-                fade_out_ms=fade_out_ms,
-            )
-
             repeated_preview_start_s = preview_start_s + (float(repeat_index) * repeat_interval_s)
+            new_start = int(round(repeated_preview_start_s * sample_rate))
+            available_frames = max(0, loop_frames - max(0, new_start))
+            if available_frames <= 0:
+                continue
+            if segment.shape[0] > available_frames:
+                segment = segment[:available_frames].copy()
             repeated_preview_end_s = repeated_preview_start_s + (float(segment.shape[0]) / float(sample_rate))
             stem_name = _pattern_step_stem_name(step, stretch_active=bool(stretch_meta["active"]))
             scheduled_segments.append(
@@ -485,11 +490,24 @@ def build_pattern_preview(
                     stem=stem_name,
                 )
             )
-            new_start = int(round(repeated_preview_start_s * sample_rate))
             rendered_segments.append(_RenderedPreviewEvent(start_frame=new_start, segment=segment, stem=stem_name))
             output_length = max(output_length, new_start + segment.shape[0])
 
     if not rendered_segments or output_length <= 0:
+        raise ValueError("Need at least one generated event with a valid source slice to build a preview")
+
+    scheduled_segments, rendered_segments = _apply_pattern_tail_mode(
+        scheduled_segments,
+        rendered_segments,
+        sample_rate=sample_rate,
+        loop_frames=loop_frames,
+        tail_mode=resolved_tail_mode,
+    )
+    output_length = max(
+        (event.start_frame + int(event.segment.shape[0]) for event in rendered_segments),
+        default=0,
+    )
+    if output_length <= 0:
         raise ValueError("Need at least one generated event with a valid source slice to build a preview")
 
     if resolved_mono_choke:
@@ -504,6 +522,20 @@ def build_pattern_preview(
         )
         if output_length <= 0:
             raise ValueError("Need at least one generated event with a valid source slice to build a preview")
+
+    for index, event in enumerate(rendered_segments):
+        final_segment = event.segment.copy()
+        _apply_edge_fades(
+            final_segment,
+            sample_rate=sample_rate,
+            fade_in_ms=fade_in_ms,
+            fade_out_ms=fade_out_ms,
+        )
+        rendered_segments[index] = _RenderedPreviewEvent(
+            start_frame=event.start_frame,
+            segment=final_segment,
+            stem=event.stem,
+        )
 
     stem_buffers = {
         stem_name: np.zeros((output_length, channel_count), dtype=np.float32) for stem_name in PATTERN_STEM_NAMES
@@ -529,14 +561,20 @@ def build_pattern_preview(
         for stem_name, stem_buffer in stem_buffers.items()
     }
     duration_s = float(output.shape[0]) / float(sample_rate)
-    loop_duration_s = float(pattern.step_count) * float(step_duration_s)
-    loop_audio = _build_loop_audio(output, sample_rate=sample_rate, loop_duration_s=loop_duration_s, was_mono=was_mono)
+    loop_audio = _build_loop_audio(
+        output,
+        sample_rate=sample_rate,
+        loop_duration_s=loop_duration_s,
+        was_mono=was_mono,
+        wrap_overflow=False,
+    )
     loop_stems = {
         stem_name: _build_loop_audio(
             stem_buffers[stem_name],
             sample_rate=sample_rate,
             loop_duration_s=loop_duration_s,
             was_mono=was_mono,
+            wrap_overflow=False,
         )
         for stem_name in PATTERN_STEM_NAMES
     }
@@ -562,6 +600,100 @@ def build_pattern_preview(
         },
         mono_choke=bool(resolved_mono_choke),
     )
+
+
+def _apply_pattern_tail_mode(
+    schedule: Sequence[RetimedPreviewSegment],
+    rendered_segments: Sequence[_RenderedPreviewEvent],
+    *,
+    sample_rate: int,
+    loop_frames: int,
+    tail_mode: str,
+) -> tuple[list[RetimedPreviewSegment], list[_RenderedPreviewEvent]]:
+    updated_schedule = list(schedule)
+    updated_rendered = list(rendered_segments)
+    if not updated_schedule or not updated_rendered:
+        return updated_schedule, updated_rendered
+    if len(updated_schedule) != len(updated_rendered):
+        raise ValueError("Rendered preview events must align with scheduled segments")
+
+    resolved_tail_mode = _resolve_pattern_tail_mode(tail_mode)
+    if resolved_tail_mode == PATTERN_TAIL_MODE_CUT:
+        return updated_schedule, updated_rendered
+
+    start_frames = [int(event.start_frame) for event in updated_rendered]
+    ordered_indices = sorted(range(len(updated_rendered)), key=lambda idx: (start_frames[idx], idx))
+
+    max_end_frames = [int(loop_frames)] * len(updated_rendered)
+    for position, current_index in enumerate(ordered_indices):
+        next_start_frame = int(loop_frames)
+        if position + 1 < len(ordered_indices):
+            next_start_frame = min(int(loop_frames), start_frames[ordered_indices[position + 1]])
+        max_end_frames[current_index] = max(start_frames[current_index], next_start_frame)
+
+    for index, segment in enumerate(updated_schedule):
+        start_frame = start_frames[index]
+        current_event = updated_rendered[index]
+        target_frames = max(0, max_end_frames[index] - start_frame)
+        if target_frames <= 0:
+            updated_rendered[index] = _RenderedPreviewEvent(
+                start_frame=current_event.start_frame,
+                segment=np.zeros((0, current_event.segment.shape[1]), dtype=np.float32),
+                stem=current_event.stem,
+            )
+            updated_schedule[index] = replace(segment, preview_end_s=float(segment.preview_start_s))
+            continue
+        extended_segment = _extend_pattern_tail_segment(
+            current_event.segment,
+            target_length=target_frames,
+            tail_mode=resolved_tail_mode,
+        )
+        updated_rendered[index] = _RenderedPreviewEvent(
+            start_frame=current_event.start_frame,
+            segment=extended_segment,
+            stem=current_event.stem,
+        )
+        updated_schedule[index] = replace(
+            segment,
+            preview_end_s=float(start_frame + int(extended_segment.shape[0])) / float(sample_rate),
+        )
+    return updated_schedule, updated_rendered
+
+
+def _extend_pattern_tail_segment(
+    segment: np.ndarray,
+    *,
+    target_length: int,
+    tail_mode: str,
+) -> np.ndarray:
+    audio = np.asarray(segment, dtype=np.float32)
+    if audio.ndim != 2 or audio.shape[0] <= 0:
+        return audio.copy()
+    if target_length <= 0:
+        return np.zeros((0, audio.shape[1]), dtype=np.float32)
+    if audio.shape[0] >= target_length:
+        return audio[:target_length].copy()
+
+    resolved_tail_mode = _resolve_pattern_tail_mode(tail_mode)
+    if resolved_tail_mode == PATTERN_TAIL_MODE_CUT:
+        return audio[:target_length].copy()
+
+    forward = audio.copy()
+    reverse = np.flip(audio, axis=0).copy()
+    units = [reverse] if resolved_tail_mode == PATTERN_TAIL_MODE_REVERSE else [reverse, forward]
+
+    extended = forward.copy()
+    unit_index = 0
+    while extended.shape[0] < target_length and units:
+        unit = units[unit_index % len(units)]
+        extended = _concatenate_with_crossfade(extended, unit)
+        unit_index += 1
+
+    if extended.shape[0] < target_length:
+        pad_count = int(target_length) - int(extended.shape[0])
+        padding = np.repeat(extended[-1:, :], pad_count, axis=0)
+        extended = np.concatenate((extended, padding), axis=0)
+    return extended[:target_length].astype(np.float32, copy=False)
 
 
 def _build_segment_schedule(
@@ -1029,6 +1161,15 @@ def _resolve_preview_mode(mode: str) -> str:
     return PREVIEW_MODE_RETIME
 
 
+def _resolve_pattern_tail_mode(tail_mode: str) -> str:
+    value = str(tail_mode or "").strip().lower()
+    if value == PATTERN_TAIL_MODE_REVERSE:
+        return PATTERN_TAIL_MODE_REVERSE
+    if value in {PATTERN_TAIL_MODE_PING_PONG, "pingpong"}:
+        return PATTERN_TAIL_MODE_PING_PONG
+    return PATTERN_TAIL_MODE_CUT
+
+
 def _resolve_quantize_grid_division(grid_division: int) -> int:
     try:
         value = int(grid_division)
@@ -1094,6 +1235,7 @@ def _build_loop_audio(
     sample_rate: int,
     loop_duration_s: float,
     was_mono: bool,
+    wrap_overflow: bool = True,
 ) -> np.ndarray | None:
     if output.ndim != 2 or output.shape[0] <= 0 or sample_rate <= 0:
         return None
@@ -1105,7 +1247,7 @@ def _build_loop_audio(
     copy_frames = min(loop_frames, output.shape[0])
     loop_buffer[:copy_frames] = output[:copy_frames]
 
-    if output.shape[0] > loop_frames:
+    if wrap_overflow and output.shape[0] > loop_frames:
         tail = output[loop_frames:]
         for index in range(tail.shape[0]):
             loop_buffer[index % loop_frames] += tail[index]

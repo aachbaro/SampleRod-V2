@@ -148,6 +148,13 @@ def detect_scale_from_audio(
         raise ValueError("Audio too short for a reliable detection")
 
     trimmed = _trim_signal(signal, sample_rate)
+    # Deuxieme garde : apres decoupe du silence le signal peut tomber sous n_fft
+    # (librosa utilise n_fft=1024 en interne pour HPSS, estimate_tuning, etc.)
+    if trimmed.size < 2048:
+        raise ValueError(
+            f"Audio too short after silence trimming ({trimmed.size} samples) "
+            "— cannot compute reliable chroma"
+        )
     harmonic = _harmonic_component(trimmed)
     hop_length = 512 if harmonic.size < sample_rate * 20 else 1024
     tuning = _estimate_tuning(harmonic, sample_rate)

@@ -783,7 +783,7 @@ class DrumPreviewTests(unittest.TestCase):
         if offbeats:
             self.assertGreater(offbeats[0].preview_start_s, 0.25)
 
-    def test_pattern_loop_audio_wraps_tail_back_to_cycle_start(self) -> None:
+    def test_pattern_loop_audio_truncates_tail_at_cycle_boundary(self) -> None:
         sample_rate = 1000
         audio = np.zeros(1200, dtype=np.float32)
         audio[900:1100] = 0.75
@@ -806,7 +806,8 @@ class DrumPreviewTests(unittest.TestCase):
         self.assertAlmostEqual(preview.loop_duration_s, 2.0, places=3)
         self.assertIsNotNone(preview.loop_audio)
         self.assertEqual(preview.loop_audio.shape[0], 2000)
-        self.assertGreater(float(np.max(preview.loop_audio[:60])), 0.1)
+        self.assertLess(float(np.max(preview.loop_audio[:60])), 0.01)
+        self.assertGreater(float(np.max(preview.loop_audio[-120:])), 0.1)
 
     def test_generated_pattern_preview_gate_shortens_slice_lengths(self) -> None:
         sample_rate = 1000
@@ -927,6 +928,106 @@ class DrumPreviewTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(preview.audio[:4], np.asarray([0.2, 0.15, 0.1, 0.05], dtype=np.float32))
+
+    def test_generated_pattern_preview_reverse_tail_mode_fills_gap_until_next_hit(self) -> None:
+        sample_rate = 100
+        audio = np.zeros(80, dtype=np.float32)
+        audio[0:4] = np.asarray([0.05, 0.1, 0.15, 0.2], dtype=np.float32)
+        audio[50:54] = np.asarray([0.9, 0.8, 0.7, 0.6], dtype=np.float32)
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=1,
+                source_start_s=0.0,
+                source_end_s=0.04,
+                label="kick",
+                velocity=100,
+                source_hit_index=1,
+                tags=("downbeat",),
+            ),
+            mock.Mock(
+                step_index=5,
+                source_start_s=0.5,
+                source_end_s=0.54,
+                label="snare",
+                velocity=100,
+                source_hit_index=2,
+                tags=("backbeat",),
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(
+            audio,
+            sample_rate,
+            pattern,
+            target_bpm=120.0,
+            fade_in_ms=0.0,
+            fade_out_ms=0.0,
+            tail_mode="reverse",
+        )
+
+        self.assertAlmostEqual(preview.segments[0].preview_end_s, 0.5, places=3)
+        self.assertAlmostEqual(preview.segments[1].preview_start_s, 0.5, places=3)
+        np.testing.assert_allclose(
+            preview.audio[:12],
+            np.asarray([0.05, 0.1, 0.15, 0.2, 0.2, 0.15, 0.1, 0.05, 0.2, 0.15, 0.1, 0.05], dtype=np.float32),
+            atol=1e-6,
+        )
+        self.assertGreater(float(np.max(np.abs(preview.audio[40:50]))), 0.04)
+        self.assertGreater(float(np.max(np.abs(preview.audio[50:54]))), 0.5)
+
+    def test_generated_pattern_preview_ping_pong_tail_mode_alternates_before_next_hit(self) -> None:
+        sample_rate = 100
+        audio = np.zeros(80, dtype=np.float32)
+        audio[0:4] = np.asarray([0.05, 0.1, 0.15, 0.2], dtype=np.float32)
+        audio[50:54] = np.asarray([0.9, 0.8, 0.7, 0.6], dtype=np.float32)
+        pattern = mock.Mock()
+        pattern.steps = (
+            mock.Mock(
+                step_index=1,
+                source_start_s=0.0,
+                source_end_s=0.04,
+                label="kick",
+                velocity=100,
+                source_hit_index=1,
+                tags=("downbeat",),
+            ),
+            mock.Mock(
+                step_index=5,
+                source_start_s=0.5,
+                source_end_s=0.54,
+                label="snare",
+                velocity=100,
+                source_hit_index=2,
+                tags=("backbeat",),
+            ),
+        )
+        pattern.swing = 0.0
+        pattern.step_count = 16
+        pattern.params = BreakPatternParams(gate=1.0)
+
+        preview = build_pattern_preview(
+            audio,
+            sample_rate,
+            pattern,
+            target_bpm=120.0,
+            fade_in_ms=0.0,
+            fade_out_ms=0.0,
+            tail_mode="ping_pong",
+        )
+
+        self.assertAlmostEqual(preview.segments[0].preview_end_s, 0.5, places=3)
+        self.assertAlmostEqual(preview.segments[1].preview_start_s, 0.5, places=3)
+        np.testing.assert_allclose(
+            preview.audio[:12],
+            np.asarray([0.05, 0.1, 0.15, 0.2, 0.2, 0.15, 0.1, 0.05, 0.05, 0.1, 0.15, 0.2], dtype=np.float32),
+            atol=1e-6,
+        )
+        self.assertGreater(float(np.max(np.abs(preview.audio[40:50]))), 0.04)
+        self.assertGreater(float(np.max(np.abs(preview.audio[50:54]))), 0.5)
 
     def test_generated_pattern_preview_applies_pitch_shift_per_step(self) -> None:
         from prototypes.drum_detector import preview as drum_preview

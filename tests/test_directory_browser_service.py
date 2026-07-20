@@ -46,6 +46,11 @@ class DirectoryBrowserServiceTests(unittest.TestCase):
         with SessionLocal() as session:
             samples = session.query(Sample).order_by(Sample.path).all()
         tracked_sample = next(sample for sample in samples if sample.name == "tracked")
+        tracked_sample.dominant_note = "Dm"
+        tracked_sample.detected_scale_label = "D natural minor"
+        tracked_sample.detected_scale_kind = "scale"
+        tracked_sample.scale_confidence = 0.91
+        tracked_sample.compatible_scales = '["Dm", "F major"]'
 
         service = DirectoryService(_FakeSampleStore([tracked_sample]))
         entries = service.list_audio_entries(self.library_dir)
@@ -54,6 +59,10 @@ class DirectoryBrowserServiceTests(unittest.TestCase):
         self.assertTrue(entries_by_name["tracked"].indexed)
         self.assertEqual(entries_by_name["tracked"].sample_id, tracked_sample.id)
         self.assertEqual(entries_by_name["tracked"].status_label, "A analyser")
+        self.assertEqual(entries_by_name["tracked"].dominant_note, "Dm")
+        self.assertEqual(entries_by_name["tracked"].detected_scale_label, "D natural minor")
+        self.assertEqual(entries_by_name["tracked"].detected_scale_kind, "scale")
+        self.assertEqual(entries_by_name["tracked"].compatible_scales, ("Dm", "F major"))
         self.assertFalse(entries_by_name["fresh"].indexed)
         self.assertIsNone(entries_by_name["fresh"].sample_id)
         self.assertEqual(entries_by_name["fresh"].status_label, "Non indexe")

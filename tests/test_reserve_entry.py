@@ -35,6 +35,29 @@ class ReserveEntryTests(unittest.TestCase):
         self.assertEqual(entry.status_label, "Non indexe")
         self.assertFalse(entry.indexed)
 
+    def test_build_entry_from_directory_preserves_scale_metadata(self):
+        entry = reserve_entry_from_directory(
+            DirectoryAudioEntry(
+                path=os.path.abspath("C:/samples/chord.wav"),
+                name="chord",
+                sample_id=12,
+                indexed=True,
+                missing=False,
+                needs_analysis=False,
+                dominant_note="Am",
+                detected_scale_label="A natural minor",
+                detected_scale_kind="scale",
+                scale_confidence=0.84,
+                compatible_scales=("Am", "C major"),
+            )
+        )
+
+        self.assertEqual(entry.dominant_note, "Am")
+        self.assertEqual(entry.detected_scale_label, "A natural minor")
+        self.assertEqual(entry.detected_scale_kind, "scale")
+        self.assertEqual(entry.compatible_scales, ("Am", "C major"))
+        self.assertTrue(reserve_entry_matches_query(entry, "natural minor c major"))
+
     def test_build_entry_from_sample_marks_analysis_and_missing(self):
         pending_sample = SimpleNamespace(
             id=1,
