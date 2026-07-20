@@ -99,6 +99,7 @@ class WindowManager(QObject):
         instance_id: str | None = None,
         geometry: dict | None = None,
         visible: bool | None = None,
+        state: dict | None = None,
     ) -> str:
         mt = self._registry.get(module_type)
         if instance_id is None:
@@ -110,6 +111,7 @@ class WindowManager(QObject):
             artifact_ids=list(artifact_ids or []),
             visible=bool(show if visible is None else visible),
             geometry=geometry,
+            state=dict(state or {}),
         )
         self._instances[instance_id] = inst
         self._build_window(inst)
@@ -179,8 +181,17 @@ class WindowManager(QObject):
     def save_session(self) -> dict:
         for inst in self._instances.values():
             win = self._windows.get(inst.instance_id)
-            if win is not None and win.isVisible():
+            if win is None:
+                continue
+            if win.isVisible():
                 inst.geometry = win.current_geometry()
+            widget = win.centralWidget()
+            saver = getattr(widget, "save_state", None)
+            if callable(saver):
+                try:
+                    inst.state = dict(saver() or {})
+                except Exception:
+                    pass
         return {"instances": [inst.to_dict() for inst in self._instances.values()]}
 
     def restore_session(self, data: dict) -> None:
@@ -200,6 +211,7 @@ class WindowManager(QObject):
                 instance_id=inst.instance_id,
                 geometry=inst.geometry,
                 visible=inst.visible,
+                state=inst.state,
             )
             self._bump_counter(inst.instance_id)
 
@@ -271,7 +283,18 @@ class WindowManager(QObject):
         win.apply_geometry(inst.geometry)
         self._windows[inst.instance_id] = win
         self._connect_module_signals(inst, widget)
+        self._restore_module_state(inst, widget)
         return win
+
+    def _restore_module_state(self, inst: ModuleInstance, widget: QWidget) -> None:
+        if not inst.state:
+            return
+        restorer = getattr(widget, "restore_state", None)
+        if callable(restorer):
+            try:
+                restorer(dict(inst.state))
+            except Exception:
+                pass
 
     def _show_window(self, inst: ModuleInstance) -> None:
         win = self._windows.get(inst.instance_id)

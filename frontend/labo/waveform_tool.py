@@ -179,6 +179,16 @@ class WaveformToolWidget(QWidget):
     def current_path(self) -> str | None:
         return self._current_path
 
+    def save_state(self) -> dict:
+        """Etat persistable pour la restauration de session (atelier modulaire)."""
+        return {"path": self._current_path or ""}
+
+    def restore_state(self, state: dict) -> None:
+        """Recharge le fichier memorise lors de la restauration de session."""
+        path = str((state or {}).get("path") or "")
+        if path and os.path.isfile(path):
+            self.open_file(path)
+
     def create_selection_artifact(self) -> None:
         """Bouton "Creer une slice" : capture la selection en artefact.
 

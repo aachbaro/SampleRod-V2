@@ -71,6 +71,10 @@ Modèle conceptuel :
 - **Focus groupé** : activer une fenêtre remonte tout le groupe de fenêtres
   visibles + le Workspace au premier plan, comme si c'était une seule fenêtre
   (le modulaire sert à organiser l'espace, pas à disperser les fenêtres).
+- **Persistance de session** : instances (type, titre, visibilité, géométrie) et
+  **fichier chargé dans chaque Waveform** sauvegardés en QSettings et restaurés à
+  l'entrée en mode modulaire (avec sécurité multi-écran). Un module expose son
+  état via `save_state()` / `restore_state()`.
 
 ### Arborescence des nouveaux fichiers
 
@@ -102,10 +106,10 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 | - | ----------------------------------------------------------- | ------ |
 | 1 | Design-core (icônes Tabler, IconButton, tooltips, palette)  | ✅ (barre de titre custom différée) |
 | 2 | WindowManager + fenêtre Workspace (create/show/hide/rename) | ✅ (+ duplicate) |
-| 3 | Plusieurs Waveforms (fenêtres, état indépendant, restauration) | 🟡 module + multi-instances + routage faits ; **restauration au boot à câbler** |
+| 3 | Plusieurs Waveforms (fenêtres, état indépendant, restauration) | ✅ module + multi-instances + routage + restauration de session |
 | 4 | Modèle central d'artefact (id, chemin, métadonnées, lignée) | ⬜ (LabArtifact existe → à formaliser en ArtifactStore) |
 | 5 | Drag-and-drop d'artefacts (MIME `application/x-samplerod-artifact`) | ⬜ |
-| 6 | Sauvegarde/restauration de session + workspaces nommés      | ⬜ (save/restore en mémoire existe, pas encore persisté QSettings) |
+| 6 | Sauvegarde/restauration de session + workspaces nommés      | 🟡 persistée en QSettings + restaurée à l'entrée modulaire ; **workspaces nommés multiples à faire** |
 | 7 | Onglets / regroupement d'instances (détachables)            | ⬜ |
 
 ### Modules à intégrer
@@ -139,9 +143,11 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 
 ## 6. Limites connues / différé
 
-- **Restauration de session au démarrage** : le `WindowManager` sait
-  `save_session()` / `restore_session()` (en mémoire) mais ce n'est pas encore
-  persisté en QSettings ni rappelé au lancement (étape 6).
+- **Restauration de session** : faite à l'entrée en mode modulaire (QSettings,
+  clé `modular_session_v1`). Reste à faire : **workspaces nommés multiples** et
+  option « démarrer directement en mode modulaire » au lancement de l'app.
+  Les modules autres que Waveform ne persistent pas encore d'état interne
+  (protocole `save_state`/`restore_state` à implémenter au cas par cas).
 - **Barre de titre custom** frameless cohérente : non faite (cadre natif pour l'instant).
 - **Artefacts** : le modèle actuel (`frontend/labo/lab_artifact.py`) n'est pas
   encore centralisé en `ArtifactStore` avec lignée (`parent_ids`, `operation`).
@@ -164,6 +170,8 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
    default_title).
 4. Câbler ses signaux inter-modules dans `WindowManager._connect_module_signals`
    (dispatch par `inst.module_type`).
+5. (Optionnel) Pour restaurer son contenu en session, exposer `save_state() -> dict`
+   et `restore_state(dict)` sur le widget (ex : Waveform mémorise son fichier).
 
 ---
 

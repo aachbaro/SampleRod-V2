@@ -32,6 +32,7 @@ class ModuleInstance:
     artifact_ids: list[str] = field(default_factory=list)
     visible: bool = True
     geometry: dict | None = None  # {"x","y","width","height"}
+    state: dict = field(default_factory=dict)  # etat specifique au module
 
     def to_dict(self) -> dict:
         return {
@@ -41,6 +42,7 @@ class ModuleInstance:
             "artifact_ids": list(self.artifact_ids),
             "visible": bool(self.visible),
             "geometry": dict(self.geometry) if self.geometry else None,
+            "state": dict(self.state) if self.state else {},
         }
 
     @classmethod
@@ -58,6 +60,8 @@ class ModuleInstance:
                 geom = None
         else:
             geom = None
+        raw_state = data.get("state")
+        state = dict(raw_state) if isinstance(raw_state, dict) else {}
         return cls(
             instance_id=str(data["instance_id"]),
             module_type=str(data["module_type"]),
@@ -65,4 +69,5 @@ class ModuleInstance:
             artifact_ids=[str(a) for a in (data.get("artifact_ids") or [])],
             visible=bool(data.get("visible", True)),
             geometry=geom,
+            state=state,
         )
