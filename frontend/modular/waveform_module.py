@@ -41,6 +41,7 @@ class WaveformModule(QWidget):
         self.app_context = app_context
         self._editor_factory = editor_factory or self._default_editor
         self.setObjectName("WaveformModule")
+        self.setAcceptDrops(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -86,6 +87,48 @@ class WaveformModule(QWidget):
         editor = self._tabs.currentWidget()
         getter = getattr(editor, "current_path", None) if editor is not None else None
         return getter() if callable(getter) else None
+
+    # -- Glisser-deposer (Reserve / fichiers externes) ----------------------
+    def dragEnterEvent(self, event):  # noqa: N802
+        if self._paths_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):  # noqa: N802
+        if self._paths_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):  # noqa: N802
+        paths = self._paths_from_mime(event.mimeData())
+        if not paths:
+            event.ignore()
+            return
+        opened = False
+        for path in paths:
+            opened = self.open_file(path) or opened
+        if opened:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def _paths_from_mime(self, mime) -> list[str]:
+        from frontend.labo.audio_drop import resolve_audio_drop_paths
+
+        return resolve_audio_drop_paths(mime, sample_path_lookup=self._path_for_sample_id)
+
+    def _path_for_sample_id(self, sample_id: int) -> str | None:
+        store = getattr(self.app_context, "sample_store", None)
+        if store is None:
+            return None
+        samples = store.get_cached()
+        sample = next(
+            (s for s in samples if int(getattr(s, "id", -1)) == int(sample_id)), None
+        )
+        path = getattr(sample, "path", "") if sample is not None else ""
+        return str(path or "") or None
 
     def _index_for_path(self, normalized: str) -> int | None:
         for i in range(self._tabs.count()):

@@ -62,11 +62,12 @@ Modèle conceptuel :
   multi-écran), fenêtre **Workspace** listant les instances par catégorie.
 - **Modules branchés** : **Réserve** et **Waveform** (réutilisent les widgets
   existants tels quels).
-- **Routage Réserve → Waveform** : « envoyer au labo » ouvre chaque fichier dans
-  un **onglet** du module Waveform (réutilise une fenêtre existante).
-- **Fenêtres immersives** : modules **sans cadre OS** (ni croix ni réduction) ;
-  bordure qui **s'éclaire au focus** ; déplacement par la barre de titre fine,
-  redimensionnement par les bords.
+- **Réserve → Waveform** : « envoyer au labo » **ou glisser-déposer** (depuis la
+  Réserve ou un fichier externe) ouvre chaque fichier dans un **onglet** du module
+  Waveform (réutilise une fenêtre existante ; le module est cible de drop, même vide).
+- **Fenêtres immersives** : modules **sans cadre OS** (ni croix ni réduction),
+  **coins arrondis** ; bordure qui **s'éclaire au focus** ; déplacement par la
+  barre de titre fine, redimensionnement par les bords.
 - **Onglets par fichier** : le module Waveform a un onglet par fichier (bouton
   `+` pour ouvrir, onglets fermables et déplaçables).
 - **Workspace** : les actions de chaque ligne n'apparaissent qu'**au survol**.

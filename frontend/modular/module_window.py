@@ -84,25 +84,31 @@ class ModuleWindow(QWidget):
         self.setObjectName("ModuleWindow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        # Fond translucide : permet des coins reellement arrondis (le hors-cadre
+        # devient transparent au lieu de laisser des coins carres).
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
 
         outer = QVBoxLayout(self)
-        # Marge = gouttiere de redimensionnement autour du contenu.
+        # Marge = gouttiere de redimensionnement (transparente) autour du cadre.
         outer.setContentsMargins(
             _RESIZE_MARGIN, _RESIZE_MARGIN, _RESIZE_MARGIN, _RESIZE_MARGIN
         )
         outer.setSpacing(0)
 
-        self._header = _ModuleHeader(title, self)
-        body = QWidget()
-        body.setObjectName("ModuleBody")
-        body_l = QVBoxLayout(body)
-        body_l.setContentsMargins(0, 0, 0, 0)
-        body_l.setSpacing(0)
-        body_l.addWidget(self._header, 0)
-        body_l.addWidget(content, 1)
+        # Le cadre visible : fond + bordure arrondie qui s'eclaire au focus.
+        self._frame = QWidget()
+        self._frame.setObjectName("ModuleFrame")
+        self._frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        frame_l = QVBoxLayout(self._frame)
+        frame_l.setContentsMargins(0, 0, 0, 0)
+        frame_l.setSpacing(0)
 
-        outer.addWidget(body)
+        self._header = _ModuleHeader(title, self._frame)
+        frame_l.addWidget(self._header, 0)
+        frame_l.addWidget(content, 1)
+
+        outer.addWidget(self._frame)
         self.resize(900, 560)
         self._apply_frame_style()
         theme.manager.themeChanged.connect(lambda *_a: self._apply_frame_style())
@@ -198,24 +204,27 @@ class ModuleWindow(QWidget):
         return Qt.CursorShape.ArrowCursor
 
     def _refresh_active_state(self) -> None:
-        self.setProperty("active", bool(self.isActiveWindow()))
-        self.style().unpolish(self)
-        self.style().polish(self)
+        self._frame.setProperty("active", bool(self.isActiveWindow()))
+        self._frame.style().unpolish(self._frame)
+        self._frame.style().polish(self._frame)
 
     def _apply_frame_style(self) -> None:
         p = theme.manager.p
         self.setStyleSheet(
             f"""
-            QWidget#ModuleWindow {{
+            QWidget#ModuleWindow {{ background: transparent; }}
+            QWidget#ModuleFrame {{
                 background: {p.BG_DARK};
                 border: 1px solid {p.BORDER};
+                border-radius: 10px;
             }}
-            QWidget#ModuleWindow[active="true"] {{
+            QWidget#ModuleFrame[active="true"] {{
                 border: 2px solid {p.ACCENT};
             }}
-            QWidget#ModuleBody {{ background: {p.BG_DARK}; }}
             QWidget#ModuleHeader {{
                 background: {p.BG_MEDIUM};
+                border-top-left-radius: 9px;
+                border-top-right-radius: 9px;
                 border-bottom: 1px solid {p.BORDER};
             }}
             QLabel#ModuleHeaderTitle {{
