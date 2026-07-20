@@ -1,17 +1,29 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Gestionnaire UI de la liste de markers/slices pour la waveform.
-# - Gere selection, reorder et drag-and-drop des segments audio.
+# - Gestionnaire UI de la liste de markers/slices affichee dans le WaveformWidget.
+# - Chaque item represente une "coupe" dans la waveform (segment audio).
+# - Gere selection, reorder interne et drag-and-drop vers le Compositeur.
+#
+# CLASSES PRINCIPALES
+# - MarkerListWidget       : QListWidget specialise (drag source vers Compositeur)
+# - MarkerItemWidget       : row custom (label + bouton delete, hover-reveal)
+#
+# FONCTIONS CLES
+# - add_marker(label, start, end, audio, sr)  : ajoute un segment
+# - remove_marker(idx)                        : retire un segment
+# - clear_markers()                           : vide la liste
+# - get_markers()                             : retourne la liste ordonnee
+# - _start_drag()                             : MIME "application/x-sample-slice-data"
 #
 # LIENS CLES
-# - frontend/sample_gui/wave_form.py
-# - frontend/right_panel/composer/composer_widget.py
+# - frontend/sample_gui/wave_form.py                      : WaveformWidget (parent)
+# - frontend/right_panel/composer/composer_widget.py       : recepteur des drags
+# - frontend/right_panel/composer/composer_dnd.py          : decode MIME_SAMPLE_SLICE
 # -----------------------------------------------------------------------------
-# frontend/sample_gui/marker_manager.py
 
-from PySide6.QtCore import Qt, QMimeData, QVariantAnimation, QEasingCurve, QEvent, QRectF
+from PySide6.QtCore import Qt, QMimeData, QEvent
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QMenu
-from PySide6.QtGui import QDrag, QPainter, QPen, QColor
+from PySide6.QtGui import QDrag
 import pyqtgraph as pg
 import numpy as np
 import bisect
@@ -33,39 +45,6 @@ class MarkerListWidget(QListWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu_requested)
 
-        # UI: animation douce du contour (utilise pour indiquer que "Marker mode" est actif).
-        self._active_border_t = 0.0  # 0..1
-        self._active_border_anim = QVariantAnimation(self)
-        self._active_border_anim.setDuration(160)
-        self._active_border_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        self._active_border_anim.valueChanged.connect(self._on_active_border_anim_value)
-
-    def set_active_border(self, active: bool):
-        """
-        Active/desactive un "highlight" de contour (blanc) avec transition.
-        On l'utilise pour donner un feedback visuel quand le mode marker est ON.
-        """
-        target = 1.0 if active else 0.0
-        if abs(self._active_border_t - target) < 1e-6:
-            return
-
-        self._active_border_anim.stop()
-        self._active_border_anim.setStartValue(float(self._active_border_t))
-        self._active_border_anim.setEndValue(float(target))
-        self._active_border_anim.start()
-
-    def _on_active_border_anim_value(self, value):
-        try:
-            self._active_border_t = float(value)
-        except Exception:
-            self._active_border_t = 0.0
-        # Le rendu des items d'un QListWidget se fait sur le viewport() (QAbstractScrollArea).
-        # Pour etre sur que notre overlay se repaint, on force l'update du viewport.
-        try:
-            self.viewport().update()
-        except Exception:
-            self.update()
-
     def _on_context_menu_requested(self, pos):
         item = self.itemAt(pos)
         if item is None:
@@ -80,58 +59,8 @@ class MarkerListWidget(QListWidget):
                     self.editor.send_selection_to_stem_separator()
 
     def wheelEvent(self, event):
-        """
-        Important UX:
-        - La liste de markers vit souvent dans un parent scrollable (SampleList).
-        - Quand on arrive en haut/bas, Qt peut relayer le wheelEvent au parent,
-          ce qui fait "scroller la liste de samples" alors qu'on est sur les markers.
-
-        Ici on laisse QListWidget gerer le scroll interne, mais on accepte toujours
-        l'event pour bloquer la propagation au parent.
-        """
         super().wheelEvent(event)
         event.accept()
-
-    def viewportEvent(self, event):
-        """
-        Pour un QAbstractScrollArea (QListWidget), le contenu est peint sur le viewport().
-        Si on dessine dans paintEvent() du widget parent, le viewport peut recouvrir
-        notre dessin (d'où "ça ne marche pas").
-
-        Ici on laisse Qt peindre normalement, puis on dessine notre contour "actif"
-        par-dessus, directement sur le viewport.
-        """
-        res = super().viewportEvent(event)
-
-        if event.type() == QEvent.Type.Paint:
-            painter = QPainter(self.viewport())
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-            # Bordure base (gris) -> bordure active (blanc) avec interpolation.
-            t = max(0.0, min(1.0, float(self._active_border_t)))
-            base = QColor(0x2A, 0x2A, 0x2A)
-            active = QColor(255, 255, 255)
-            color = QColor(
-                int(base.red() + (active.red() - base.red()) * t),
-                int(base.green() + (active.green() - base.green()) * t),
-                int(base.blue() + (active.blue() - base.blue()) * t),
-            )
-
-            pen_w = 2.0
-            pen = QPen(color, pen_w)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-
-            # Inset pour eviter le clipping du stroke (surtout en 2px + antialiasing).
-            rect = QRectF(self.viewport().rect())
-            inset = pen_w / 2.0
-            rect.adjust(inset, inset, -inset, -inset)
-            r = rect.width() / 2.0  # "pill" radius
-            painter.drawRoundedRect(rect, r, r)
-
-        return res
 
     def startDrag(self, supportedActions):
         item = self.currentItem()
@@ -228,7 +157,6 @@ class MarkerManager:
     def refresh_marker_list(self):
         self.marker_list.clear()
 
-        # Ligne de selection (premiere si une region est active)
         sel_item = self._build_selection_item()
         if sel_item is not None:
             self.marker_list.addItem(sel_item)
@@ -256,6 +184,8 @@ class MarkerManager:
             item.setData(_ROLE_TYPE, "marker")
             self.marker_list.addItem(item)
 
+        self.marker_list.setVisible(self.marker_list.count() > 0)
+
     def refresh_selection_row(self):
         """
         Met a jour uniquement la ligne de selection sans reconstruire les markers.
@@ -274,6 +204,8 @@ class MarkerManager:
         sel_item = self._build_selection_item()
         if sel_item is not None:
             ml.insertItem(0, sel_item)
+
+        ml.setVisible(ml.count() > 0)
 
     def add_marker(self, t):
         t = float(np.clip(t, 0.0, self.widget.duration))

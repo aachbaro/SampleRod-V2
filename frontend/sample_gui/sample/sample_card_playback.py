@@ -3,6 +3,20 @@
 # - Encapsule la logique de lecture audio d'une SampleCard.
 # - Gere le bouton play/pause, le slider de position et le label de temps.
 # - Centralise les appels a app_context.audio_player pour garder SampleCard simple.
+#
+# FONCTIONS (sommaire)
+# - SampleCardPlayback   : controleur de lecture
+# - bind()               : connecte play_button.clicked et playback_slider.sliderMoved
+# - toggle_play()        : toggle play/pause via audio_player + met a jour l'icone
+# - seek_audio()         : deplace la position de lecture via le slider
+# - update_slider()      : boucle 100 ms pour mettre a jour slider + temps
+# - _apply_state()       : bascule l'icone play/pause selon l'etat
+# - set_paused_icon()    : force l'icone pause (ap externe, ex: waveform ouvert)
+# - format_time()        : ms -> "MM:SS"
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card.py       : carte parente
+# - backend/models/AppContext.py                    : audio_player partage
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -12,6 +26,11 @@ import qtawesome as qta
 
 
 class SampleCardPlayback:
+    """Controleur de lecture audio pour une SampleCard.
+
+    Le flag `_alive` evite les callbacks Qt apres la destruction du widget.
+    """
+
     def __init__(self, card):
         self.card = card
         self._alive = True
@@ -25,11 +44,13 @@ class SampleCardPlayback:
         self._alive = False
 
     def bind(self):
+        """Connecte les signaux UI -> actions playback."""
         c = self.card
         c.play_button.clicked.connect(self.toggle_play)
         c.playback_slider.sliderMoved.connect(self.seek_audio)
 
     def toggle_play(self):
+        """Toggle play/pause: emet playSample et lance update_slider si en lecture."""
         if not self._alive:
             return
         c = self.card
@@ -86,6 +107,7 @@ class SampleCardPlayback:
             QTimer.singleShot(100, self.update_slider)
 
     def _apply_state(self, is_playing: bool):
+        """Bascule l'icone du bouton entre play et pause selon l'etat courant."""
         if not self._alive:
             return
         icon_name = "fa5s.pause" if is_playing else "fa5s.play"

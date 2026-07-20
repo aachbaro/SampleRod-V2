@@ -1,7 +1,15 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Gère l'état de sélection (checkbox) d'une SampleCard.
-# - Met à jour le style visuel et émet le signal vers le parent.
+# - Gere l'etat de selection (checkbox) d'une SampleCard.
+# - Met a jour la propriete QSS "checked" et emet selectionChanged.
+#
+# FONCTIONS (sommaire)
+# - SampleCardSelection          : controleur de selection
+# - on_checkbox_toggled(checked) : met a jour isChecked + emet selectionChanged
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card.py        : selectionChanged signal
+# - frontend/sample_gui/sample/sample_list_selection.py : recepteur du signal
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -12,6 +20,8 @@ logger = logging.getLogger("sample_card")
 
 
 class SampleCardSelection:
+    """Controleur de la checkbox de selection sur une SampleCard."""
+
     def __init__(self, card):
         self.card = card
 

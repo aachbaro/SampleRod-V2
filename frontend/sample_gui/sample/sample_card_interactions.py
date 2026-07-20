@@ -1,8 +1,20 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
 # - Gere les interactions "carte": focus visuel + drag & drop.
-# - Encapsule la logique de drag (QDrag/QMimeData).
-# - Centralise le comportement de focus (click -> focus, outline).
+# - Encapsule la logique de drag (QDrag/QMimeData avec pickle payload).
+# - Centralise le comportement de focus (click -> focus, flash animation).
+#
+# FONCTIONS (sommaire)
+# - SampleCardInteractions  : controleur d'interactions
+# - mouse_press / mouse_move : detection du drag (seuil manhattanLength)
+# - _start_drag              : cree un QDrag avec MIME "application/x-sample-card"
+# - focus_in / focus_out     : met a jour la propriete QSS "focused"
+# - _flash_focus             : animation opacity 0.55 -> 1.0 au focus (150 ms)
+# - event_filter             : donne le focus sur MouseButtonPress enfant
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card.py           : carte parente
+# - frontend/right_panel/composer/composer_dnd.py       : cote recepteur
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -19,17 +31,21 @@ logger = logging.getLogger("sample_card_dnd")
 
 
 class SampleCardInteractions:
+    """Controleur de focus et de drag & drop pour une SampleCard."""
+
     def __init__(self, card):
         self.card = card
         self._drag_start_pos = None
 
     # ---- Mouse / Drag
     def mouse_press(self, event):
+        """Enregistre la position de depart du drag et donne le focus a la carte."""
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_start_pos = event.position().toPoint()
         self.card.setFocus()
 
     def mouse_move(self, event) -> bool:
+        """Demarre un QDrag si le deplacement depasse QApplication.startDragDistance()."""
         if (
             event.buttons() & Qt.MouseButton.LeftButton
             and self._drag_start_pos is not None
@@ -43,6 +59,7 @@ class SampleCardInteractions:
         return False
 
     def _start_drag(self):
+        """Cree et execute un QDrag avec payload pickle {"sample_id": id}."""
         sample_id = getattr(self.card.sample, "id", None)
         logger.info("[SampleCard] drag start (sample_id=%s)", sample_id)
         drag = QDrag(self.card)
@@ -58,6 +75,7 @@ class SampleCardInteractions:
 
     # ---- Focus
     def focus_in(self, event):
+        """Active la propriete QSS "focused" et lance le flash d'animation."""
         self.card.setProperty("focused", True)
         self.card.style().unpolish(self.card)
         self.card.style().polish(self.card)
@@ -77,6 +95,7 @@ class SampleCardInteractions:
         anim.start()
 
     def focus_out(self, event):
+        """Desactive la propriete "focused" sauf si le focus reste dans la carte."""
         fw = QApplication.focusWidget()
         if fw and (fw is self.card or self.card.isAncestorOf(fw)):
             return

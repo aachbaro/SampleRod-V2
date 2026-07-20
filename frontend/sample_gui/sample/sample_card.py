@@ -1,30 +1,33 @@
-"""
-SampleCard
-==========
-Composant UI qui represente un sample dans la liste. Le fichier sert de
-"facade" legere et delegue la logique a des controleurs specialises.
-
-Role dans l'architecture
-------------------------
-- Affiche une carte de sample (metadonnees, actions, playback, waveform).
-- Centralise les signaux Qt consommes par SampleList/SampleService.
-- Delegue la logique aux sous-modules pour garder le fichier simple.
-
-Controleurs utilises
---------------------
-- SampleCardUIBuilder     : construction des widgets + styles.
-- SampleCardHeaderActions : rename / delete / archive / normalize.
-- SampleCardPlayback      : play/pause + slider + temps.
-- SampleCardWaveform      : bascule et cycle de vie du waveform editor.
-- SampleCardMove          : deplacement vers une librairie/dossier.
-- SampleCardInteractions  : focus + drag & drop.
-- SampleCardSelection     : checkbox + etat visuel.
-- SampleCardStatus        : updates simples (nom/duree).
-"""
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Carte UI d'un sample : metadonnees, actions, playback, waveform inline.
+# - Fichier "facade" : centralise les signaux Qt et delegue tout aux controleurs.
+#
+# CONTROLEURS UTILISES
+# - SampleCardUIBuilder     : construction des widgets + styles
+# - SampleCardHeaderActions : rename / delete / archive / normalize
+# - SampleCardPlayback      : play/pause + slider + label de temps
+# - SampleCardWaveform      : bascule et cycle de vie du waveform editor
+# - SampleCardMove          : deplacement vers une librairie/dossier
+# - SampleCardInteractions  : focus + drag & drop
+# - SampleCardSelection     : checkbox + etat visuel
+# - SampleCardStatus        : updates simples (nom / duree / badge)
+#
+# SIGNAUX EMIS
+# - deleteSample(id) / renameSample(id, name) / playSample(sample)
+# - sampleMoved(id, folder) / newSampleSaved(path)
+# - normalizeClicked(id) / selectionChanged(id, bool)
+# - removeFromHistory(id) / concatWithPrevious(id) / dismissConcat(id)
+# - activated(id) / concatPreviewHoverChanged(...)
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card_*.py  : controleurs par domaine
+# - frontend/sample_gui/sample/sample_list.py    : conteneur parent
+# -----------------------------------------------------------------------------
 
 from PySide6.QtCore import Signal, Qt, QEvent
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QWidget, QAbstractButton, QLineEdit, QComboBox, QSlider
+from PySide6.QtWidgets import QWidget, QAbstractButton, QLineEdit, QComboBox, QSlider, QMenu
 import logging
 import os
 
@@ -60,6 +63,8 @@ class SampleCard(QWidget):
     concatPreviewHoverChanged = Signal(
         int, bool, object
     )  # (sample_id, hover_active, prev_id|None)
+    findCompatiblesRequested = Signal(int)  # emet l'ID du sample de reference
+    openInFoldersRequested  = Signal(str)  # emet le dossier parent pour naviguer
 
     def __init__(self, sample: Sample, app_context: AppContext, parent=None):
         """
@@ -96,11 +101,14 @@ class SampleCard(QWidget):
         self.selection = SampleCardSelection(self)
         self.status = SampleCardStatus(self)
         self._build_shortcuts()
+        self.update_scale_badge()
 
     def init_ui(self):
         """Construit l'UI (widgets + layout) via SampleCardUIBuilder."""
         self.ui_builder = SampleCardUIBuilder(self)
         self.ui_builder.build()
+        # Connexion unique du badge — pas de reconnexion dans update_scale_badge()
+        self.key_badge.clicked.connect(self._on_key_badge_clicked)
 
     def _on_theme_changed(self, _name: str):
         SampleCardUIBuilder.restyle(self)
@@ -172,6 +180,26 @@ class SampleCard(QWidget):
         if self.isRenaming and event.key() == Qt.Key.Key_Escape:
             self.cancelRename()
             return
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        # Ouvrir l'emplacement dans l'onglet Dossiers
+        folder = os.path.dirname(getattr(self.sample, "path", "") or "")
+        if folder:
+            open_action = menu.addAction("📂  Ouvrir l'emplacement")
+            open_action.triggered.connect(
+                lambda: self.openInFoldersRequested.emit(folder)
+            )
+        # Trouver les compatibles (si gamme detectee)
+        if getattr(self.sample, "dominant_note", None):
+            scale_label = str(getattr(self.sample, "detected_scale_label", "") or "").strip()
+            note = scale_label or self.sample.dominant_note
+            compat_action = menu.addAction(f"🎵  Compatibles avec {note}")
+            compat_action.triggered.connect(
+                lambda: self.findCompatiblesRequested.emit(int(self.sample.id))
+            )
+        if not menu.isEmpty():
+            menu.exec(event.globalPos())
 
     # ---- Utils
     def get_sample_name(self):
@@ -263,6 +291,38 @@ class SampleCard(QWidget):
     def refresh_display(self):
         self.status.refresh_display()
 
+    def update_scale_badge(self) -> None:
+        """Met a jour le badge gamme (KeyBadge) a partir du sample courant."""
+        badge = getattr(self, "key_badge", None)
+        if badge is None:
+            return
+        note = str(getattr(self.sample, "dominant_note", "") or "").strip()
+        detected_scale = str(getattr(self.sample, "detected_scale_label", "") or "").strip()
+        detected_kind = str(getattr(self.sample, "detected_scale_kind", "") or "").strip()
+        confidence = getattr(self.sample, "scale_confidence", None)
+        if note:
+            badge.setText(note)
+            tooltip_prefix = "Gamme detectee" if detected_kind == "scale" else "Note dominante"
+            tooltip_label = detected_scale or note
+            confidence_suffix = (
+                f" ({float(confidence):.0%})"
+                if confidence is not None
+                else ""
+            )
+            badge.setToolTip(
+                f"{tooltip_prefix} : {tooltip_label}{confidence_suffix}\n"
+                "Cliquer pour trouver les samples compatibles"
+            )
+            badge.setVisible(True)
+        else:
+            badge.setText("")
+            badge.setToolTip("")
+            badge.setVisible(False)
+
+    def _on_key_badge_clicked(self) -> None:
+        """Emet findCompatiblesRequested quand on clique le badge de gamme."""
+        self.findCompatiblesRequested.emit(int(self.sample.id))
+
     # ---- Move / combobox
     def move_sample(self, index: int):
         self.mover.move_sample(index)
@@ -317,4 +377,3 @@ class SampleCard(QWidget):
     # ---- Libraries
     def updateLibraryCombo(self, libs: list):
         self.mover.update_library_combo(libs)
-

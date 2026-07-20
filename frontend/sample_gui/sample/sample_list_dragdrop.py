@@ -1,7 +1,17 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Gère le drag & drop de fichiers audio depuis l'explorateur.
-# - Centralise la logique d'acceptation et d'import de fichiers.
+# - Gere le drag & drop de fichiers audio depuis l'explorateur systeme.
+# - Accepte uniquement les URLs locales de fichiers .wav.
+# - Cree les samples via SampleStore et coche les cartes correspondantes.
+#
+# FONCTIONS (sommaire)
+# - SampleListDragDrop   : controleur DnD de la liste
+# - drag_enter / drag_move : accepte si URLs presentes
+# - drop()               : filtre les .wav, ajoute les samples, coche les cartes
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_list.py : SampleListWidget (widget parent)
+# - backend/models/SampleLibrary.py           : sample_store.add()
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -11,6 +21,8 @@ from PySide6.QtWidgets import QMessageBox
 
 
 class SampleListDragDrop:
+    """Controleur de drag & drop pour l'import de fichiers .wav dans SampleListWidget."""
+
     def __init__(self, widget):
         self.widget = widget
 

@@ -27,6 +27,8 @@ from PySide6.QtCore import Qt
 
 
 class WaveformNavigationController:
+    """Configure le ViewBox et gere le zoom/pan horizontal de la waveform."""
+
     def __init__(self, widget):
         self.widget = widget
 
@@ -48,6 +50,7 @@ class WaveformNavigationController:
         )
 
     def zoom_or_pan(self, ev, **_):
+        """Shift+molette = pan horizontal; molette seule = zoom (delegue a pyqtgraph)."""
         w = self.widget
         vb = w.plot.getViewBox()
         if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:

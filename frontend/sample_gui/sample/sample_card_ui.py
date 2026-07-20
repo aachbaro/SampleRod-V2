@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QWidget,
+    QPushButton,
 )
 
 from frontend.custom_widgets import CustomSlider
@@ -198,6 +199,14 @@ class SampleCardUIBuilder:
         c.id_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         c.id_label.setFixedHeight(22)
 
+        # Badge gamme (key detection)
+        c.key_badge = QPushButton("")
+        c.key_badge.setObjectName("KeyBadge")
+        c.key_badge.setFixedHeight(22)
+        c.key_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        c.key_badge.setToolTip("Gamme détectée — cliquer pour trouver les samples compatibles")
+        c.key_badge.setVisible(False)
+
         # Statut normalisation
         c.status_label = QLabel("")
         c.status_label.setObjectName("StatusLabel")
@@ -296,6 +305,8 @@ class SampleCardUIBuilder:
         right_box.setObjectName("InfoRight")
         right_layout = QHBoxLayout(right_box)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(c.key_badge, alignment=Qt.AlignmentFlag.AlignRight)
+        right_layout.addSpacing(4)
         right_layout.addWidget(c.status_label, alignment=Qt.AlignmentFlag.AlignRight)
         right_layout.addSpacing(6)
         right_layout.addWidget(c.id_label, alignment=Qt.AlignmentFlag.AlignRight)
@@ -496,6 +507,19 @@ class SampleCardUIBuilder:
             color: {p.TEXT_MUTED};
             border-radius: 10px;
             padding: 2px 10px;
+        }}
+        QPushButton#KeyBadge {{
+            background-color: {p.INFO};
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            padding: 2px 10px;
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        QPushButton#KeyBadge:hover {{
+            background-color: {p.INFO};
+            opacity: 0.85;
         }}
         QLineEdit#RenameInput {{
             background-color: {p.BG_CARD};

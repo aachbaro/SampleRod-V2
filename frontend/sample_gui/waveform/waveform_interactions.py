@@ -43,6 +43,8 @@ logger = logging.getLogger("waveform_interactions")
 
 
 class WaveformInteractionsController:
+    """Interprete tous les gestes souris/clavier et les traduit en actions sur le widget."""
+
     def __init__(self, widget, region_cls):
         self.widget = widget
         self.region_cls = region_cls

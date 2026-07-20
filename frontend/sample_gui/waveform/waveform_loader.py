@@ -33,6 +33,7 @@ class WaveformLoaderThread(QThread):
         self.finished.connect(self.deleteLater)
 
     def run(self):
+        """Charge le fichier audio et emet waveformReady(y, sr, dur)."""
         try:
             # soundfile retourne (frames, channels) ou (frames,) en mono
             y, sr = sf.read(self.path, dtype="float32", always_2d=True)

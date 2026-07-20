@@ -50,11 +50,14 @@ logger = logging.getLogger("waveform_region")
 
 
 class WaveformRegionController:
+    """Gere la selection, le cut, l'export et le curseur de depart de la waveform."""
+
     def __init__(self, widget, region_cls):
         self.widget = widget
         self.region_cls = region_cls
 
     def _stop_playback_for_edit(self):
+        """Stoppe la lecture et remet is_playing/start_sample a zero avant une edition."""
         w = self.widget
         if hasattr(w, "stop_audio"):
             try:
@@ -66,6 +69,7 @@ class WaveformRegionController:
             w.start_sample = 0
 
     def on_region_changed(self):
+        """Clamp et synchronise play_start/play_end quand l'utilisateur deplace la region."""
         w = self.widget
         if not w.region:
             return

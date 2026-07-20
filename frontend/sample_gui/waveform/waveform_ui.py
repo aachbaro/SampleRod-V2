@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QToolButton,
     QFrame,
+    QSizePolicy,
     QWidget,
 )
 import pyqtgraph as pg
@@ -195,26 +196,34 @@ class WaveformUIBuilder:
         self.viewbox_cls = viewbox_cls
 
     def build(self):
+        """Construit l'ensemble de l'UI (toolbar, plot, controles, liste markers).
+
+        Attache sur le widget: plot, curve, curve_left, curve_right, read_head,
+        timer, save_button, undo_button, redo_button, play_button, pause_button,
+        stop_button, loop_button, marker_mode_button, marker_list.
+        """
         w = self.widget
 
         w.setObjectName("WaveformWidget")
+        w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         w.layout = QVBoxLayout(w)
-        w.layout.setContentsMargins(6, 6, 6, 6)
+        w.layout.setContentsMargins(0, 0, 0, 0)
         w.layout.setSpacing(0)
 
         # ----- Conteneur principal (tout l'editor est dans ce bloc)
         editor = QFrame()
         editor.setObjectName("WaveformEditor")
+        editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         editor_layout = QVBoxLayout(editor)
-        editor_layout.setContentsMargins(10, 10, 10, 10)
-        editor_layout.setSpacing(6)
-        w.layout.addWidget(editor)
+        editor_layout.setContentsMargins(6, 2, 6, 2)
+        editor_layout.setSpacing(2)
+        w.layout.addWidget(editor, 0, Qt.AlignmentFlag.AlignTop)
 
         # ----- Barre d'outils (en haut)
         # — Toolbar (compact)
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setContentsMargins(0, 0, 0, 0)
-        toolbar_layout.setSpacing(8)
+        toolbar_layout.setSpacing(6)
 
         toolbar_layout.addStretch()
 
@@ -256,11 +265,9 @@ class WaveformUIBuilder:
 
         editor_layout.addLayout(toolbar_layout)
 
-        # ----- Waveform plot (zone centrale) + colonne markers (droite)
-        # — Waveform plot
-        plot_height = 158
+        # ----- Waveform plot (zone centrale)
         w.plot = pg.PlotWidget(viewBox=self.viewbox_cls())
-        w.plot.setFixedHeight(plot_height)
+        w.plot.setFixedHeight(150)
         w.plot.showGrid(x=True, y=True, alpha=0.15)
         w.plot.setBackground("#1B1B1B")
         w.plot.hideAxis("left")
@@ -280,21 +287,13 @@ class WaveformUIBuilder:
         vb = w.plot.getViewBox()
         vb.sigXRangeChanged.connect(w._on_view_range_changed)
 
-        # Layout horizontal: waveform pleine largeur (markers deplacés en dessous des controls).
-        plot_row = QWidget()
-        plot_row.setObjectName("WaveformPlotRow")
-        plot_row_layout = QHBoxLayout(plot_row)
-        plot_row_layout.setContentsMargins(0, 0, 0, 0)
-        plot_row_layout.setSpacing(0)
-        plot_row_layout.addWidget(w.plot, 1)
-
-        editor_layout.addWidget(plot_row)
+        editor_layout.addWidget(w.plot)
 
         # ----- Barre de controles (play/pause/stop/loop + toggles)
         # — Contrôles
         controls_layout = QHBoxLayout()
         controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(8)
+        controls_layout.setSpacing(6)
 
         play_layout = QHBoxLayout()
         play_layout.setSpacing(6)
@@ -385,6 +384,7 @@ class WaveformUIBuilder:
         w.marker_list.itemDoubleClicked.connect(w.on_marker_list_double_clicked)
         w.marker_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         w.marker_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        w.marker_list.setVisible(False)
         editor_layout.addWidget(w.marker_list)
 
         # ----- Read head + timer (logic audio)

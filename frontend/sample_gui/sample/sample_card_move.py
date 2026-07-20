@@ -1,8 +1,18 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Gere le deplacement d'un sample (combo + dialog "Autre...").
-# - Met a jour l'UI quand les bibliotheques changent.
-# - Centralise la logique d'update apres deplacement.
+# - Gere le deplacement d'un sample vers une autre librairie.
+# - La combobox propose les librairies configurees + "Autre..." (QFileDialog).
+# - Met a jour le sample.path et la combobox apres un deplacement reussi.
+#
+# FONCTIONS (sommaire)
+# - SampleCardMove      : controleur de deplacement
+# - move_sample(index)  : index 0 = inaction, 1..N = librairies, dernier = "Autre..."
+# - on_move_success()   : met a jour sample.path + combobox
+# - update_library_combo() : reconstruit les items sans declencher de signal
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card.py : carte parente
+# - backend/services/settings_service.py      : settings.libraries
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -16,6 +26,8 @@ logger = logging.getLogger("sample_card")
 
 
 class SampleCardMove:
+    """Controleur de deplacement de sample vers une librairie ou un dossier "Autre..."."""
+
     def __init__(self, card):
         self.card = card
 
@@ -59,6 +71,7 @@ class SampleCardMove:
         c.change_dir_combobox.setCurrentIndex(0)
 
     def on_move_success(self, sample_id, new_dir: str):
+        """Slot: met a jour le chemin du sample et reconstruit la combobox."""
         c = self.card
         if c.sample.id == sample_id:
             c.sample.path = os.path.join(new_dir, os.path.basename(c.sample.path))

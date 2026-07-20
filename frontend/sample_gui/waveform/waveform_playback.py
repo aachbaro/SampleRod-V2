@@ -42,6 +42,8 @@ logger = logging.getLogger("waveform_playback")
 
 
 class WaveformPlaybackController:
+    """Pilote le stream sounddevice: play/pause/stop, boucle et tete de lecture."""
+
     def __init__(self, widget):
         self.widget = widget
 

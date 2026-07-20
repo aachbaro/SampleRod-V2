@@ -22,6 +22,8 @@ from __future__ import annotations
 
 
 class WaveformShortcutsController:
+    """Regroupe les actions declenchees par raccourcis (cut, export, ajout de markers)."""
+
     def __init__(self, widget):
         self.widget = widget
 

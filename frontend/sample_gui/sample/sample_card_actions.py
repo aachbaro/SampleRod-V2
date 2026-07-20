@@ -3,6 +3,18 @@
 # - Regroupe les actions "header" d'une SampleCard (rename / delete / archive /
 #   normalize) pour separer l'UI de la logique.
 # - Centralise les etats visuels associes (champs de renommage, statut).
+#
+# FONCTIONS (sommaire)
+# - start_rename / cancel_rename / submit_rename : cycle de renommage inline
+# - on_rename_success / on_rename_error          : callbacks du SampleStore
+# - confirm_delete                               : stoppe audio + emet deleteSample
+# - archive                                      : stoppe audio + emet removeFromHistory
+# - normalize_clicked                            : declenche la normalisation manuelle
+# - indicate_normalization_*                     : feedback visuel (started/finished/error)
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card.py   : SampleCard (carte parente)
+# - backend/models/SampleLibrary.py             : sampleRenamed/Deleted signaux
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -14,11 +26,14 @@ from PySide6.QtWidgets import QMessageBox
 
 
 class SampleCardHeaderActions:
+    """Controleur des actions destructives/modifiantes d'une SampleCard."""
+
     def __init__(self, card):
         self.card = card
 
     # ---- Rename
     def start_rename(self):
+        """Passe la carte en mode renommage : affiche le champ texte, cache le label."""
         c = self.card
         c.isRenaming = True
         c.rename_input.setText(c.get_sample_name())
@@ -32,6 +47,7 @@ class SampleCardHeaderActions:
         c.rename_input.setFocus()
 
     def cancel_rename(self):
+        """Annule le renommage sans modifier le sample."""
         c = self.card
         c.isRenaming = False
 
@@ -42,6 +58,7 @@ class SampleCardHeaderActions:
         c.name_label.setVisible(True)
 
     def submit_rename(self):
+        """Valide le nouveau nom et emet renameSample si le nom a change."""
         c = self.card
         new_name = c.rename_input.text().strip()
         if new_name and new_name != c.get_sample_name():
@@ -55,6 +72,7 @@ class SampleCardHeaderActions:
         c.name_label.setVisible(True)
 
     def on_rename_success(self, sample_id, old_path, new_path):
+        """Slot: met a jour le sample.name/path et repasse en affichage normal."""
         c = self.card
         if c.sample.id == sample_id:
             new_name = os.path.splitext(os.path.basename(new_path))[0]
@@ -64,6 +82,7 @@ class SampleCardHeaderActions:
             self.cancel_rename()
 
     def on_rename_error(self, sample_id, error_msg):
+        """Slot: affiche un QMessageBox d'erreur si le rename a echoue."""
         if self.card.sample.id == sample_id:
             QMessageBox.critical(
                 self.card,
@@ -116,6 +135,7 @@ class SampleCardHeaderActions:
 
     # ---- Normalize
     def normalize_clicked(self):
+        """Demarre la normalisation: stoppe l'audio, met l'UI en attente, emet normalizeClicked."""
         c = self.card
         current_id = c.app_context.audio_player.current_sample_id
         if current_id == c.sample.id:

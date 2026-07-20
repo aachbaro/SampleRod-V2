@@ -5,7 +5,7 @@
 #
 # CE QUI EST COUVERT
 # - Push de commandes dans HistoryStack.
-# - Undo / redo pour les actions: add/remove/move marker, cut region.
+# - Undo / redo pour les actions: add/remove/move marker, cut region, fill_markers.
 # - Logs de debug pour visualiser l'historique.
 #
 # RESPONSABILITES TECHNIQUES
@@ -29,6 +29,8 @@ logger = logging.getLogger("waveform_history")
 
 
 class WaveformHistoryController:
+    """Deleguant undo/redo : pousse les commandes dans HistoryStack et les rejoue."""
+
     def __init__(self, widget):
         self.widget = widget
 
@@ -41,6 +43,7 @@ class WaveformHistoryController:
         self._debug_history()
 
     def undo(self):
+        """Rejoue le dernier undo: gele l'enregistrement pendant l'application."""
         w = self.widget
         cmd = w.history.undo()
         if cmd is None:
@@ -61,10 +64,18 @@ class WaveformHistoryController:
             line.setValue(cmd["old"])
             w.on_marker_moved(line)
 
+        elif cmd["action"] == "fill_markers":
+            # Defaire : supprimer les markers ajoutes, restaurer ceux supprimes
+            for t in cmd.get("added", []):
+                w.remove_marker(t)
+            for t in cmd.get("removed", []):
+                w.add_marker(t)
+
         w._record_history = True
         self._debug_history()
 
     def redo(self):
+        """Rejoue la derniere action annulee: gele l'enregistrement pendant l'application."""
         w = self.widget
         cmd = w.history.redo()
         if cmd is None:
@@ -85,6 +96,13 @@ class WaveformHistoryController:
             line = w.marker_lines[cmd["old"]]
             line.setValue(cmd["new"])
             w.on_marker_moved(line)
+
+        elif cmd["action"] == "fill_markers":
+            # Refaire : supprimer ceux qui avaient ete retires, ajouter ceux places
+            for t in cmd.get("removed", []):
+                w.remove_marker(t)
+            for t in cmd.get("added", []):
+                w.add_marker(t)
 
         w._record_history = True
         self._debug_history()

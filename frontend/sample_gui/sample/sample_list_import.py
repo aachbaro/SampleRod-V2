@@ -1,7 +1,16 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Gere l'import manuel via QFileDialog (ajout de fichiers audio).
-# - Centralise la logique d'evitement des doublons et de reimport.
+# - Gere l'import manuel de fichiers audio via QFileDialog.
+# - Detecte les doublons et propose le reimport (suppression + re-ajout).
+# - Memorise le dernier dossier selectionne (QSettings "lastSampleDir").
+#
+# FONCTIONS (sommaire)
+# - SampleListImport : controleur d'import manuel
+# - add_files()      : ouvre QFileDialog, filtre .wav, gere doublons, ajoute via SampleStore
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_list.py : SampleListWidget (widget parent)
+# - backend/models/SampleLibrary.py           : sample_store.add() / delete_record_by_path()
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -11,6 +20,8 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 
 class SampleListImport:
+    """Controleur d'import manuel de fichiers audio dans SampleListWidget."""
+
     def __init__(self, widget):
         self.widget = widget
 

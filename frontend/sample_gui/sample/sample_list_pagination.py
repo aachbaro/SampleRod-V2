@@ -1,17 +1,31 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
 # - Gere la pagination de SampleListWidget (page courante, boutons, label).
-# - Centralise la logique de navigation et d'arret de lecture hors page.
+# - Centralise la navigation entre pages et l'arret de lecture hors page.
+#
+# FONCTIONS (sommaire)
+# - SampleListPagination            : controleur de pagination
+# - update_label(start, end, total) : met a jour le label "N-M / total"
+# - on_samples_per_page_changed(n)  : change la taille de page + reset page 1
+# - set_current_page(page)          : navigue directement a une page
+# - change_page(page)               : arrete les waveforms hors page, puis saute
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_list.py   : SampleListWidget (widget parent)
+# - frontend/sample_gui/sample/sample_list_ui.py : prev/next buttons
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
 
 class SampleListPagination:
+    """Controleur de pagination pour SampleListWidget."""
+
     def __init__(self, widget):
         self.widget = widget
 
     def update_label(self, start_idx: int, end_idx: int, total_samples: int):
+        """Met a jour le label de pagination "start - end / total"."""
         self.widget.pagination_label.setText(f"{start_idx} - {end_idx} / {total_samples}")
 
     def on_samples_per_page_changed(self, count: int):
@@ -25,6 +39,7 @@ class SampleListPagination:
         self.widget.refreshList()
 
     def change_page(self, page: int):
+        """Saute a la page donnee apres avoir stoppe les waveforms hors de cette page."""
         # Calcul des IDs de la nouvelle page
         ordered = list(getattr(self.widget, "filtered_samples", None) or self.widget.get_filtered_samples())
         start = (page - 1) * self.widget.samples_per_page

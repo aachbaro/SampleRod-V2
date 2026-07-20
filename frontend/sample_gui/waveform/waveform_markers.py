@@ -40,6 +40,8 @@ logger = logging.getLogger("waveform_markers")
 
 
 class WaveformMarkersController:
+    """Ajoute/supprime les markers et synchronise la liste, le plot et le MarkerManager."""
+
     def __init__(self, widget, region_cls):
         self.widget = widget
         self.region_cls = region_cls
@@ -51,13 +53,6 @@ class WaveformMarkersController:
         # Synchronise l'etat visuel du bouton (utile pour les raccourcis clavier)
         if w.marker_mode_button.isChecked() != checked:
             w.marker_mode_button.setChecked(checked)
-        # Feedback visuel: "allume" la colonne de markers
-        marker_list = getattr(w, "marker_list", None)
-        if marker_list is not None and hasattr(marker_list, "set_active_border"):
-            try:
-                marker_list.set_active_border(checked)
-            except Exception:
-                pass
 
     def add_marker(self, t: float):
         """Ajoute un marqueur et met a jour la liste."""
@@ -82,6 +77,7 @@ class WaveformMarkersController:
         self._refresh_marker_list()
 
     def on_marker_list_clicked(self, item: QListWidgetItem):
+        """Cree une region entre le marker clique et le suivant, place la tete de lecture."""
         w = self.widget
         payload = item.data(Qt.ItemDataRole.UserRole)
         t = payload.get("time") if isinstance(payload, dict) else payload

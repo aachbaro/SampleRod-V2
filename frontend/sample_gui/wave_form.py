@@ -75,6 +75,8 @@ from .waveform.waveform_plot_helpers import ContextMenuLinearRegionItem, NoLeftD
 logger = logging.getLogger("waveform_widget")
 
 class WaveformWidget(QWidget):
+    """Mini-DAW d'edition audio: orchestre les controllers UI/lecture/edition/markers."""
+
     stop_timer_signal = Signal()
     waveformSaved     = Signal(str)
     positionUpdated   = Signal(float)
@@ -196,6 +198,10 @@ class WaveformWidget(QWidget):
 
     # -- Données + limites (waveform_navigation.py)
     def set_waveform_data(self, y, sr, dur):
+        """Recu par WaveformLoaderThread via signal: charge les donnees et redessine.
+
+        y: (n_samples,) mono ou (n_channels, n_samples) stereo — transposee en (n_samples, 2).
+        """
         # y.shape == (n_samples,) en mono ou (n_channels, n_samples) en stéréo
         if y.ndim == 2:
             # Transposer pour obtenir (n_samples, 2)
@@ -346,9 +352,63 @@ class WaveformWidget(QWidget):
     def add_markers_to_region(self):
         self.shortcuts_controller.add_markers_to_region()
 
+    def fill_markers_from_region(self) -> None:
+        """Propage l'intervalle de la region courante (play_start→play_end)
+        jusqu'a la fin du sample, en respectant le setting fill_markers_replace.
+        Pousse une seule commande undo 'fill_markers'.
+        """
+        import os as _os
+        start    = getattr(self, "play_start", None)
+        end      = getattr(self, "play_end",   None)
+        duration = getattr(self, "duration",   None)
+        if start is None or end is None or duration is None:
+            return
+        interval = end - start
+        if interval <= 0.01:
+            return
+
+        # Lire le setting (via QSettings directement — pas de dep sur app_context)
+        from PySide6.QtCore import QSettings as _QS
+        replace = _QS("SampleRod", "Main").value(
+            "waveform/fill_markers_replace", False, type=bool
+        )
+
+        tol = 1e-4
+        existing = sorted(getattr(self, "markers", []) or [])
+
+        targets = []
+        t = end
+        while t < duration - tol:
+            targets.append(t)
+            t += interval
+
+        removed = []
+        if replace:
+            removed = [m for m in existing
+                       if end - tol < m < duration - tol
+                       and not any(abs(m - tgt) < tol for tgt in targets)]
+
+        added = [tgt for tgt in targets
+                 if not any(abs(m - tgt) < tol for m in existing)]
+
+        if not added and not removed:
+            return
+
+        self._record_history = False
+        try:
+            for t in removed:
+                self.remove_marker(t)
+            for t in added:
+                self.add_marker(t)
+        finally:
+            self._record_history = True
+
+        self._push_history({"action": "fill_markers", "added": added, "removed": removed})
+
     # -- Keyboard (raccourcis clavier wires ici)
 
     def keyPressEvent(self, event):
+        """Raccourcis clavier: space/ctrl-space/alt-space, ctrl-z/s/x/e/l/g."""
         key = event.key()
         mods = event.modifiers()
         Ctrl  = Qt.KeyboardModifier.ControlModifier
@@ -406,10 +466,7 @@ class WaveformWidget(QWidget):
     # -- Stem separation depuis la selection
 
     def send_selection_to_stem_separator(self):
-        """
-        Extrait la selection courante vers un fichier temp et emet separationRequested.
-        Appelable depuis la liste de markers (clic droit → stem) ou depuis un autre controller.
-        """
+        """Extrait la selection courante vers un fichier temp et emet separationRequested."""
         import numpy as np
         try:
             import soundfile as sf
@@ -451,4 +508,53 @@ class WaveformWidget(QWidget):
 
         self.separationRequested.emit(temp_path)
 
+    def fill_markers_from_region(self) -> None:
+        """Propage l'intervalle de la region courante (play_start->play_end)
+        jusqu'a la fin du sample, en respectant le setting fill_markers_replace.
+        Pousse une seule commande undo 'fill_markers'.
+        """
+        start = getattr(self, "play_start", None)
+        end   = getattr(self, "play_end",   None)
+        duration = getattr(self, "duration", None)
+        if start is None or end is None or duration is None:
+            return
+        interval = end - start
+        if interval <= 0.01:
+            return
 
+        from PySide6.QtCore import QSettings as _QS
+        replace = _QS("SampleRod", "Main").value(
+            "waveform/fill_markers_replace", False, type=bool
+        )
+
+        tol = 1e-4
+        existing = sorted(getattr(self, "markers", []) or [])
+
+        targets = []
+        t = end
+        while t < duration - tol:
+            targets.append(t)
+            t += interval
+
+        removed = []
+        if replace:
+            removed = [m for m in existing
+                       if end - tol < m < duration - tol
+                       and not any(abs(m - tgt) < tol for tgt in targets)]
+
+        added = [tgt for tgt in targets
+                 if not any(abs(m - tgt) < tol for m in existing)]
+
+        if not added and not removed:
+            return
+
+        self._record_history = False
+        try:
+            for t in removed:
+                self.remove_marker(t)
+            for t in added:
+                self.add_marker(t)
+        finally:
+            self._record_history = True
+
+        self._push_history({"action": "fill_markers", "added": added, "removed": removed})

@@ -1,7 +1,19 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Gere la selection (checkbox) et les actions bulk de SampleListWidget.
-# - Centralise l'activation des boutons selon la selection.
+# - Gere la selection par checkbox et les actions bulk (delete/move/normalize/archive).
+# - Active/desactive les boutons d'action selon l'etat de la selection.
+#
+# FONCTIONS (sommaire)
+# - SampleListSelection             : controleur de selection + actions bulk
+# - on_selection_changed(id, chk)   : ajoute/retire l'id de selected_ids
+# - update_select_actions()         : active/desactive Tout/Aucun selon l'etat
+# - select_all / deselect_all       : cocher/decocher toutes les cartes visibles
+# - bulk_delete / bulk_move         : actions sur tous les ids selectionnes
+# - bulk_normalize / bulk_archive   : normalisation et archivage en masse
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_list.py      : SampleListWidget (widget parent)
+# - frontend/sample_gui/sample/sample_card.py      : selectionChanged signal
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -17,11 +29,14 @@ logger = logging.getLogger("sample_list")
 
 
 class SampleListSelection:
+    """Controleur de selection par checkbox et actions bulk."""
+
     def __init__(self, widget):
         self.widget = widget
 
     # ---- Selection
     def on_selection_changed(self, sample_id: int, checked: bool):
+        """Slot de SampleCard.selectionChanged: met a jour selected_ids + boutons bulk."""
         logger.info("onSelectionChanged: sample_id=%s, checked=%s", sample_id, checked)
         if checked:
             self.widget.selected_ids.add(sample_id)

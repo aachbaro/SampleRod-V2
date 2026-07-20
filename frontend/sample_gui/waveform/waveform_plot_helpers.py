@@ -40,6 +40,8 @@ def add_plot_item_once(plot, item) -> None:
 
 
 class ContextMenuLinearRegionItem(pg.LinearRegionItem):
+    """Region de selection avec menu contextuel (Cut, Export, Markers, Stems)."""
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setAcceptedMouseButtons(
@@ -48,12 +50,16 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
 
     def contextMenuEvent(self, ev):
         start, end = self.getRegion()
+        interval = end - start
 
         menu = QMenu()
 
         cut = menu.addAction("Cut                      Ctrl + X")
         export = menu.addAction("Export Selection         Ctrl + E")
         add_markers_action = menu.addAction("Add markers at edges     Ctrl + Shift + G")
+        menu.addSeparator()
+        fill_action = menu.addAction("Propager l'intervalle jusqu'a la fin  ↦")
+        fill_action.setEnabled(interval > 0.01)
         menu.addSeparator()
         stem_action = menu.addAction("Envoyer au separateur de stems")
 
@@ -70,6 +76,9 @@ class ContextMenuLinearRegionItem(pg.LinearRegionItem):
                 self._parent.add_marker(end)
             else:
                 self._parent.add_marker(start)
+        elif action is fill_action:
+            if hasattr(self._parent, "fill_markers_from_region"):
+                self._parent.fill_markers_from_region()
         elif action is stem_action:
             if hasattr(self._parent, "send_selection_to_stem_separator"):
                 self._parent.send_selection_to_stem_separator()

@@ -2,7 +2,25 @@
 # ROLE DANS L'ARCHITECTURE
 # - Gere le cycle de vie des SampleCard (creation, suppression, refresh).
 # - Centralise la reconstruction de la liste (pagination + layout).
-# - Met a jour les cartes suite aux evenements du service.
+# - Met a jour les cartes suite aux evenements du SampleStore (signaux).
+#
+# FONCTIONS (sommaire)
+# - SampleListCards                     : controleur du cycle de vie
+# - on_samples_changed(samples)         : recharge toute la liste (+ defer si anim)
+# - on_sample_added(sample_id)          : insere en tete avec animation slide-in
+# - on_sample_removed_from_history(id)  : anime la sortie + supprime la carte
+# - on_sample_deleted(id)               : meme flow que removed_from_history
+# - on_sample_renamed(id, old, new)     : met a jour label + chemin
+# - on_sample_moved(id, folder)         : met a jour chemin + combobox
+# - on_sample_duration_changed(id, s)   : met a jour la duree affichee
+# - refresh_list()                      : reconstruit les cartes visibles selon la page
+# - _build_card(sample)                 : cree et cable une SampleCard
+# - _animate_card_in(card)              : slide-in (opacity + height, 250 ms)
+# - _animate_remove_card(id)            : slide-out puis suppression physique
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card.py   : SampleCard creees ici
+# - frontend/sample_gui/sample/sample_list.py   : SampleListWidget (widget parent)
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -15,6 +33,8 @@ from frontend.sample_gui.sample.sample_card import SampleCard
 
 
 class SampleListCards:
+    """Controleur du cycle de vie des SampleCard dans une SampleListWidget."""
+
     def __init__(self, widget):
         self.widget = widget
         self._preview_pair_ids: set[int] = set()
@@ -24,6 +44,11 @@ class SampleListCards:
 
     # ---- Service slots
     def on_samples_changed(self, samples: list):
+        """Slot du SampleStore: remplace toute la liste et reconstruit les cartes.
+
+        Si une animation de sortie est en cours (_exit_animations non vide),
+        on differe le refresh pour ne pas interrompre l'animation.
+        """
         self.widget.samples = samples
         # Si une animation de suppression est en cours, on differe le refresh
         # pour eviter de retirer la card instantanement.
@@ -34,6 +59,7 @@ class SampleListCards:
         self.widget.updateSelectActions()
 
     def on_sample_added(self, sample_id: int):
+        """Slot: cree et insere une nouvelle carte en tete de liste avec animation."""
         new_sample = next(
             (s for s in self.widget.sample_store.get_cached() if s.id == sample_id),
             None,
@@ -49,6 +75,7 @@ class SampleListCards:
         self.widget.updateSelectActions()
 
     def on_sample_removed_from_history(self, sample_id: int):
+        """Slot: anime la sortie de la carte puis la supprime du layout."""
         self._clear_concat_preview()
         self._animate_remove_card(sample_id)
 
@@ -185,7 +212,23 @@ class SampleListCards:
 
         self.widget.sample_store.sampleRenamed.connect(card.onRenameSuccess)
         self.widget.sample_store.sampleMoved.connect(card.onMoveSuccess)
+        card.findCompatiblesRequested.connect(self.widget.onFindCompatiblesRequested)
+        card.openInFoldersRequested.connect(self.widget.onOpenInFoldersRequested)
         return card
+
+    def on_sample_scale_analyzed(self, sample_id: int) -> None:
+        """Met a jour le badge de gamme de la carte concernee."""
+        card = self.widget._card_widgets.get(sample_id)
+        if card is None:
+            return
+        # Synchronise l'objet sample depuis le cache du service
+        updated = next(
+            (s for s in self.widget.sample_store.get_cached() if s.id == sample_id),
+            None,
+        )
+        if updated is not None:
+            card.sample = updated
+        card.update_scale_badge()
 
     def _animate_remove_card(self, sample_id: int):
         card = self.widget._card_widgets.get(sample_id)

@@ -2,6 +2,15 @@
 # ROLE DANS L'ARCHITECTURE
 # - Construit l'UI de SampleListWidget (toolbar, scroll area, pagination).
 # - Regroupe styles, widgets et layouts pour alleger sample_list.py.
+#
+# FONCTIONS (sommaire)
+# - SampleListUIBuilder   : constructeur d'UI
+# - build()               : cree toolbar, scroll area + content_layout, pagination
+# - _apply_stylesheet(w)  : QSS du fond, scroll bar et toolbar
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_list.py    : SampleListWidget (widget parent)
+# - frontend/sample_gui/waveform/waveform_ui.py  : HoverIconButton pour la toolbar
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -25,10 +34,17 @@ from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from frontend.styles import theme
 
 class SampleListUIBuilder:
+    """Constructeur d'UI pour SampleListWidget (toolbar + scroll + pagination)."""
+
     def __init__(self, widget):
         self.widget = widget
 
     def build(self):
+        """Construit toolbar, scroll area, content_layout et pagination.
+
+        Attache sur le widget: content_layout, scroll_area, pagination_label,
+        prev_page_btn, next_page_btn, et les boutons d'action bulk.
+        """
         w = self.widget
         # Global container for the list area + header.
         w.setObjectName("SampleListRoot")

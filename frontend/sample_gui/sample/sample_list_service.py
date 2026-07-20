@@ -1,12 +1,27 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Wrap des commandes simples vers SampleService (delete/rename/move).
+# - Wrapper mince autour du SampleStore pour les actions CRUD basiques.
+# - Isole SampleListWidget des appels directs au store (facade).
+#
+# FONCTIONS (sommaire)
+# - SampleListServiceActions  : controleur d'actions CRUD
+# - delete_sample(id)         : supprime le sample (FS + DB)
+# - rename_sample(id, name)   : renomme le fichier + met a jour la DB
+# - move_sample(id, folder)   : deplace le fichier vers un autre dossier
+# - concat_with_previous(id)  : concatene ce sample avec le precedent
+# - dismiss_concat(id)        : annule une proposition de concatenation
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_list.py   : SampleListWidget (widget parent)
+# - backend/models/SampleLibrary.py             : SampleStore (sample_store)
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
 
 class SampleListServiceActions:
+    """Controleur facade pour les actions CRUD de SampleListWidget."""
+
     def __init__(self, widget):
         self.widget = widget
 

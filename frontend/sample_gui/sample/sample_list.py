@@ -1,21 +1,29 @@
-"""
-SampleList
-==========
-Widget principal qui affiche la liste des samples avec toolbar, pagination
-et actions bulk. Le fichier sert de facade et delegue aux sous-modules.
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Widget principal de la liste des samples (toolbar, scroll, pagination).
+# - Fichier "facade" : delegue toute la logique aux sous-modules.
+#
+# SOUS-MODULES
+# - SampleListUIBuilder      : creation UI (toolbar / scroll / pagination)
+# - SampleListPagination     : logique de pagination + navigation
+# - SampleListSelection      : selection + actions bulk
+# - SampleListDragDrop       : import par glisser-deposer (.wav)
+# - SampleListImport         : import manuel via QFileDialog
+# - SampleListNormalize      : normalisation + workers
+# - SampleListServiceActions : delete/rename/move via SampleStore
+# - SampleListCards          : cycle de vie des SampleCard (creation/animation)
+#
+# SIGNAUX EMIS
+# - reserveEntrySelected(ReserveEntry)  : carte selectionnee -> panneau detail
+# - compatFilterChanged(int)            : filtre gamme compatible (0=efface)
+# - openInFoldersRequested(str)         : ouvrir le dossier dans l'onglet Dossiers
+#
+# LIENS CLES
+# - frontend/sample_gui/sample/sample_card.py   : SampleCard utilisees dans la liste
+# - frontend/reserve/reserve_pane.py            : ReservePane (parent en mode reserve)
+# -----------------------------------------------------------------------------
 
-Sous-modules utilises
----------------------
-- SampleListUIBuilder     : creation UI (toolbar / scroll / pagination).
-- SampleListPagination    : logique de pagination + navigation.
-- SampleListSelection     : selection + actions bulk.
-- SampleListDragDrop      : import par glisser-deposer.
-- SampleListImport        : import manuel via QFileDialog.
-- SampleListNormalize     : normalisation + workers.
-- SampleListServiceActions: delete/rename/move via SampleService.
-- SampleListCards         : gestion du cycle de vie des SampleCard.
-"""
-
+import json
 import os
 
 from PySide6.QtWidgets import QWidget, QSizePolicy
@@ -42,7 +50,15 @@ from frontend.sample_gui.sample.sample_list_cards import SampleListCards
 
 
 class SampleListWidget(QWidget):
+    """Liste scrollable de SampleCard avec toolbar, pagination et actions bulk.
+
+    Utilise comme onglet "Indexe" dans ReservePane ou en mode standalone.
+    La logique est repartie dans 8 sous-modules (voir header du fichier).
+    """
+
     reserveEntrySelected = Signal(object)
+    compatFilterChanged = Signal(int)   # emet l'ID de reference (0 = filtre efface)
+    openInFoldersRequested = Signal(str)  # emet le dossier a ouvrir dans l'onglet Dossiers
 
     def __init__(
         self,
@@ -63,6 +79,8 @@ class SampleListWidget(QWidget):
         self.selected_ids  = set()        # ensemble des IDs coches
         self._reserve_query_text = ""
         self._reserve_status_filter = "all"
+        self._compat_filter_sample_id: int | None = None  # ID reference pour filtre gamme
+        self._compat_filter_scales: set[str] = set()       # gammes compatibles du sample ref
         self._current_sample_id: int | None = None
         self._qs = QSettings("SampleRod", "Main")
         self.samples_per_page = self.settings.getSamplesPerPage()
@@ -86,6 +104,7 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleNormalizationLockChanged.connect(
             self.onSampleNormalizationLockChanged
         )
+        self.sample_store.sampleScaleAnalyzed.connect(self.onSampleScaleAnalyzed)
         # 2) stockage des cartes existantes
         self._card_widgets = {}
         self.pagination = SampleListPagination(self)
@@ -218,12 +237,66 @@ class SampleListWidget(QWidget):
 
     def get_filtered_samples(self) -> list:
         ordered_samples = sorted(self.samples, key=lambda s: s.id, reverse=True)
-        return [
-            sample
-            for sample in ordered_samples
-            if reserve_entry_matches_query(self._entry_from_sample(sample), self._reserve_query_text)
-            and reserve_entry_matches_status(self._entry_from_sample(sample), self._reserve_status_filter)
-        ]
+        result = []
+        for sample in ordered_samples:
+            entry = self._entry_from_sample(sample)
+            if not reserve_entry_matches_query(entry, self._reserve_query_text):
+                continue
+            if not reserve_entry_matches_status(entry, self._reserve_status_filter):
+                continue
+            if self._compat_filter_scales:
+                # Garde uniquement les samples dont les gammes compatibles se recoupent
+                raw = getattr(sample, "compatible_scales", None) or ""
+                try:
+                    samp_scales = set(json.loads(raw)) if raw else set()
+                except (ValueError, TypeError):
+                    samp_scales = set()
+                if not (samp_scales & self._compat_filter_scales):
+                    continue
+            result.append(sample)
+        return result
+
+    def set_compatible_scales_filter(self, sample_id: int | None) -> None:
+        """Active ou efface le filtre de gammes compatibles."""
+        if sample_id is None:
+            if self._compat_filter_sample_id is None and not self._compat_filter_scales:
+                return
+            self._compat_filter_sample_id = None
+            self._compat_filter_scales = set()
+            self.compatFilterChanged.emit(0)
+            self.setCurrentPage(1)
+            return
+        ref = next((s for s in self.samples if s.id == sample_id), None)
+        if ref is None:
+            return
+        raw = getattr(ref, "compatible_scales", None) or ""
+        try:
+            scales = set(json.loads(raw)) if raw else set()
+        except (ValueError, TypeError):
+            scales = set()
+        if not scales:
+            return
+        if self._compat_filter_sample_id == sample_id and self._compat_filter_scales == scales:
+            return
+        self._compat_filter_sample_id = sample_id
+        self._compat_filter_scales = scales
+        self.compatFilterChanged.emit(sample_id)
+        self.setCurrentPage(1)
+
+    @Slot(int)
+    def onFindCompatiblesRequested(self, sample_id: int) -> None:
+        """Slot appele quand on clique le badge de gamme d'une carte."""
+        self.set_compatible_scales_filter(sample_id)
+
+    @Slot(int)
+    def onSampleScaleAnalyzed(self, sample_id: int) -> None:
+        """Slot appele apres analyse de gamme d'un sample."""
+        self.cards.on_sample_scale_analyzed(sample_id)
+
+    @Slot(str)
+    def onOpenInFoldersRequested(self, folder: str) -> None:
+        """Remonte la demande d'ouverture du dossier au ReservePane."""
+        self.openInFoldersRequested.emit(folder)
 
     def set_current_reserve_sample(self, sample_id: int | None) -> None:
         sample_id = int(sample_id) if sample_id is not None else None
@@ -346,4 +419,3 @@ class SampleListWidget(QWidget):
 
     def _next_page(self):
         self.pagination.next_page()
-

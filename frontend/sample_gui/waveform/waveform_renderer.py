@@ -66,6 +66,8 @@ def compute_envelope(
 
 
 class WaveformRenderer:
+    """Calcule et affiche l'enveloppe min/max sur la portion visible du ViewBox."""
+
     def __init__(self, widget):
         self.widget = widget
 
@@ -122,6 +124,7 @@ class WaveformRenderer:
         w.read_head.setPos(w.current_time)
 
     def redraw_all(self):
+        """Redessine la waveform et repose les lignes de markers sur le plot."""
         w = self.widget
         self.draw_waveform()
         for line in w.marker_lines.values():

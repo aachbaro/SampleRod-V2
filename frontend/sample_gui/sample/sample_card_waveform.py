@@ -1,9 +1,23 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
 # - Gere l'affichage du waveform editor a l'interieur d'une SampleCard.
-# - S'occupe du cycle de vie (creation, ajout au layout, nettoyage).
-# - Centralise la logique de bascule UI (playback <-> waveform).
-# - Ajoute une animation d'expansion/reduction pour une transition plus douce.
+# - Cycle de vie: creation a la demande, destruction a la fermeture.
+# - Bascule UI: playback_container <-> waveform_container via QStackedLayout.
+# - Animations: expansion OutCubic (220 ms) + fade-in/out (140/120 ms).
+#
+# FONCTIONS (sommaire)
+# - SampleCardWaveform    : controleur de waveform inline
+# - toggle()              : bascule affichage waveform / playback
+# - _open_waveform()      : cree le WaveformWidget + anime l'expansion
+# - _close_waveform()     : stoppe audio + anime la reduction
+# - _cleanup_waveform()   : stoppe audio/timer + deleteLater
+# - _on_expand_finished() : libere maximumHeight + desactive QGraphicsOpacityEffect
+# - _on_collapse_finished(): rebascule sur playback_container
+# - _ensure_waveform_opacity_effect() : cree/recupere l'effet d'opacite
+#
+# LIENS CLES
+# - frontend/sample_gui/wave_form.py           : WaveformWidget cree inline
+# - frontend/sample_gui/sample/sample_card.py  : showWaveform / waveform_container
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -15,12 +29,15 @@ from frontend.sample_gui.wave_form import WaveformWidget
 
 
 class SampleCardWaveform:
+    """Controleur du waveform editor inline dans une SampleCard."""
+
     def __init__(self, card):
         self.card = card
         self._anim: QPropertyAnimation | None = None
         self._fade: QPropertyAnimation | None = None
 
     def toggle(self):
+        """Bascule entre la vue playback et la vue waveform editor."""
         c = self.card
         c.showWaveform = not c.showWaveform
 
@@ -30,6 +47,7 @@ class SampleCardWaveform:
             self._close_waveform()
 
     def _open_waveform(self):
+        """Cree le WaveformWidget (si besoin), puis anime l'expansion de l'editor_container."""
         c = self.card
 
         # Stoppe toute animation en cours pour repartir proprement.
@@ -116,6 +134,7 @@ class SampleCardWaveform:
             wave_fx.setEnabled(False)
 
     def _close_waveform(self):
+        """Stoppe le waveform et anime la reduction de l'editor_container vers playback_height."""
         c = self.card
 
         for anim in (self._anim, self._fade):
@@ -358,6 +377,7 @@ class SampleCardWaveform:
         c.time_label.setVisible(True)
 
     def _cleanup_waveform(self):
+        """Stoppe audio/timer et detruit le WaveformWidget (deleteLater)."""
         c = self.card
         if not c.wave_edition_widget:
             return

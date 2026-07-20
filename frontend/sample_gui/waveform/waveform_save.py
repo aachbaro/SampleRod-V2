@@ -30,6 +30,8 @@ from backend.services.notification_service import NotificationType
 
 
 class WaveformSaveController:
+    """Gere la sauvegarde (overwrite ou copie) et l'export rapide du fichier audio."""
+
     def __init__(self, widget):
         self.widget = widget
 
