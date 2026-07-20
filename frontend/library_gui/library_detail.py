@@ -1,3 +1,26 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Panneau de detail affiché à droite du tableau de la Bibliothèque.
+# - Quand l'utilisateur clique sur un sample dans le tableau, ce widget
+#   affiche : nom, statut, chemin, metadonnees, et une SampleCard complete
+#   (avec lecture, waveform, renommage).
+#
+# FONCTIONS (sommaire)
+# - LibraryDetailWidget        : widget principal
+# - set_sample()               : affiche les infos du sample selectionne
+# - clear_sample()             : remet le panneau a vide
+# - open_current_folder()      : ouvre le dossier du sample dans l'explorateur
+# - send_current_to_lab()      : envoie le sample vers le Labo
+# - toggle_waveform()          : ouvre la waveform dans le Labo
+# - clear_current_card()       : detruit proprement la SampleCard precedente
+# - _format_scale_text()       : formate le texte de gamme detectee
+#
+# LIENS CLES
+# - frontend/library_gui/library_widget.py  : appelant principal
+# - frontend/reserve/reserve_entry.py       : type ReserveEntry
+# - frontend/sample_gui/sample/sample_card.py : widget de carte integre
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -11,7 +34,12 @@ from frontend.sample_gui.sample.sample_card import SampleCard
 
 
 class LibraryDetailWidget(QWidget):
-    """Panneau de detail pour un sample indexe."""
+    """Panneau de detail pour un sample indexe.
+
+    Affiche : titre, badge de statut, chemin, metadonnees (racine, dossier,
+    duree, RMS, gamme detectee), et une SampleCard interactive intégree.
+    Se remet a vide quand aucun sample n'est selectionne (clear_sample()).
+    """
 
     def __init__(self, app_context, reserve_actions: ReserveActions | None = None, parent=None):
         super().__init__(parent)
@@ -24,6 +52,7 @@ class LibraryDetailWidget(QWidget):
         self._build_ui()
 
     def _build_ui(self):
+        """Construit les elements de l'interface : labels, boutons, conteneur de carte."""
         self.setObjectName("LibraryDetailPanel")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -71,12 +100,20 @@ class LibraryDetailWidget(QWidget):
         self.clear_sample()
 
     def set_sample(self, sample, entry: ReserveEntry, library_service):
+        """Affiche les informations du sample selectionne.
+
+        Detruit la carte precedente, recrée une SampleCard pour le nouveau
+        sample, masque les boutons non pertinents ici (archive, delete,
+        normaliser, concat) et adapte l'interactivite selon si le fichier
+        est manquant.
+        """
         self.clear_current_card()
         self._current_sample_id = int(sample.id)
         self._current_entry = entry
         self.title_label.setText(entry.display_name)
         apply_status_badge(self.status_badge, entry.status)
         self.path_label.setText(entry.path)
+        scale_text = self._format_scale_text(entry)
         self.meta_label.setText(
             " | ".join(
                 part
@@ -85,6 +122,7 @@ class LibraryDetailWidget(QWidget):
                     f"Dossier: {library_service.get_folder_label(sample)}",
                     f"Duree: {library_service.format_duration(sample)}",
                     f"RMS: {library_service.format_rms(sample)}" if getattr(sample, "rms_level", None) is not None else "",
+                    scale_text,
                     f"Source: {entry.source_label}",
                 ]
                 if part
@@ -131,6 +169,7 @@ class LibraryDetailWidget(QWidget):
         self._current_card = card
 
     def clear_sample(self):
+        """Remet le panneau a son etat vide (aucun sample selectionne)."""
         self._current_sample_id = None
         self._current_entry = None
         self.title_label.setText("Aucun sample selectionne")
@@ -144,6 +183,11 @@ class LibraryDetailWidget(QWidget):
         self.clear_current_card()
 
     def open_current_folder(self):
+        """Ouvre le dossier du sample dans l'explorateur du systeme.
+
+        Si des reserve_actions sont disponibles, délègue à reveal_in_folder().
+        Sinon utilise QDesktopServices pour un accès direct sans dependance.
+        """
         if self._current_entry is None:
             return
         if self.reserve_actions is not None:
@@ -154,12 +198,14 @@ class LibraryDetailWidget(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def send_current_to_lab(self):
+        """Envoie le sample vers le Labo via les reserve_actions."""
         if self._current_entry is None:
             return
         if self.reserve_actions is not None:
             self.reserve_actions.send_to_lab(self._current_entry)
 
     def toggle_waveform(self):
+        """Ouvre la waveform du sample courant dans le Labo (via open_waveform)."""
         if self._current_entry is not None and self.reserve_actions is not None:
             self.reserve_actions.open_waveform(self._current_entry)
 
@@ -170,6 +216,11 @@ class LibraryDetailWidget(QWidget):
         return self._current_entry
 
     def clear_current_card(self):
+        """Detruit proprement la SampleCard en cours (arrete l'audio, supprime le widget).
+
+        Appele avant chaque changement de sample pour eviter les fuites memoire
+        et les timers orphelins de l'ancien widget.
+        """
         if self._current_card is None:
             return
         try:
@@ -181,3 +232,22 @@ class LibraryDetailWidget(QWidget):
         self.card_layout.removeWidget(self._current_card)
         self._current_card.deleteLater()
         self._current_card = None
+
+    @staticmethod
+    def _format_scale_text(entry: ReserveEntry) -> str:
+        """Retourne une chaine lisible pour la gamme detectee du sample.
+
+        Exemples : "Gamme: D Minor (82%)", "Note dominante: A", ou "" si inconnu.
+        """
+        label = str(entry.detected_scale_label or "").strip()
+        confidence = (
+            f" ({float(entry.scale_confidence):.0%})"
+            if entry.scale_confidence is not None
+            else ""
+        )
+        if label:
+            prefix = "Gamme" if entry.detected_scale_kind == "scale" else "Note dominante"
+            return f"{prefix}: {label}{confidence}"
+        if entry.dominant_note:
+            return f"Note dominante: {entry.dominant_note}{confidence}"
+        return ""

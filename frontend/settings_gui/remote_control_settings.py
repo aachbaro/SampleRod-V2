@@ -3,6 +3,17 @@
 # - Section Parametres du controle distant (serveur HTTP local).
 # - Affiche etat, URL/QR code et actions de rafraichissement.
 #
+# FONCTIONS (sommaire)
+# - RemoteControlSettingsWidget : widget de config du serveur HTTP local
+# - _build_ui()                 : toggle + formulaire + QR code
+# - _load_state()               : charge l'etat depuis settings + demarre si actif
+# - _on_toggle()                : active/desactive le serveur + labels
+# - _ensure_running()           : demarre RemoteControlService si besoin (lazy init)
+# - _stop_server()              : arrete le service si en cours
+# - _update_status_labels()     : met a jour statut, URLs et QR code
+# - _get_lan_ip()               : detecte l'IP LAN via socket UDP
+# - _update_qr_code()           : genere un QR code avec qrcode/PIL
+#
 # LIENS CLES
 # - backend/services/remote_control_service.py
 # - backend/services/settings_service.py
@@ -22,6 +33,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from pathlib import Path
 from io import BytesIO
+import json
 import socket
 import os
 import logging
@@ -109,8 +121,8 @@ class RemoteControlSettingsWidget(QWidget):
 
         # Petit hint
         self.hint_label = QLabel(
-            "Depuis le telephone, ouvre l'URL LAN ci-dessus "
-            "(meme reseau Wi-Fi)."
+            "Depuis l'app SampleRod Mobile, scanne ce QR code pour te connecter "
+            "et transferer tes enregistrements (meme reseau Wi-Fi)."
         )
         self.hint_label.setWordWrap(True)
         self.hint_label.setStyleSheet("color: #6b6b6b;")
@@ -119,6 +131,7 @@ class RemoteControlSettingsWidget(QWidget):
 
     # ------------------------------------------------------------------ State
     def _load_state(self):
+        """Charge l'etat saved et demarre le serveur si l'option etait activee."""
         enabled = self.settings.isRemoteControlEnabled()
         self.enable_checkbox.blockSignals(True)
         self.enable_checkbox.setChecked(enabled)
@@ -140,6 +153,7 @@ class RemoteControlSettingsWidget(QWidget):
         self._update_status_labels()
 
     def _on_toggle(self, checked: bool):
+        """Demarre ou arrete le serveur, reverte le toggle si le demarrage echoue."""
         self.settings.setRemoteControlEnabled(checked)
         if checked:
             started = self._ensure_running()
@@ -155,6 +169,7 @@ class RemoteControlSettingsWidget(QWidget):
 
     # ------------------------------------------------------------------ Server ops
     def _ensure_running(self) -> bool:
+        """Cree RemoteControlService si besoin, branche les signaux, puis demarre."""
         svc = self.app_context.remote_control
         if svc is None:
             repo_root = Path(__file__).resolve().parents[2]
@@ -245,7 +260,8 @@ class RemoteControlSettingsWidget(QWidget):
         url_lan = f"http://{lan_ip}:{port}"
         self.url_lan_label.setText(url_lan)
         self.url_local_label.setText(f"http://127.0.0.1:{port}")
-        self._update_qr_code(url_lan, running)
+        token = getattr(svc, "auth_token", None) if svc else None
+        self._update_qr_code(lan_ip, port, token, running)
 
     def _get_host(self) -> str:
         svc = self.app_context.remote_control
@@ -260,6 +276,7 @@ class RemoteControlSettingsWidget(QWidget):
         return self.settings.getRemoteControlPort()
 
     def _get_lan_ip(self) -> str:
+        """Detecte l'IP LAN en ouvrant un socket UDP vers 8.8.8.8 (pas de trafic reel)."""
         # Methode robuste pour recuperer l'IP locale reelle
         ip = "127.0.0.1"
         try:
@@ -278,7 +295,8 @@ class RemoteControlSettingsWidget(QWidget):
                 pass
         return ip
 
-    def _update_qr_code(self, url: str, running: bool):
+    def _update_qr_code(self, host: str, port: int, token, running: bool):
+        """Genere un QR code encodant un JSON {host, port, token} pour l'app mobile."""
         if not _HAS_QR:
             self.qr_label.setPixmap(QPixmap())
             self.qr_label.setText("QR indisponible\n(installe qrcode)")
@@ -288,9 +306,14 @@ class RemoteControlSettingsWidget(QWidget):
             self.qr_label.setText("Active le\nserveur")
             return
 
+        # Payload compact pour garder le QR code le plus simple possible
+        qr_data = json.dumps(
+            {"host": host, "port": port, "token": token or ""},
+            separators=(",", ":"),
+        )
         try:
             qr = qrcode.QRCode(box_size=4, border=2)
-            qr.add_data(url)
+            qr.add_data(qr_data)
             qr.make(fit=True)
             img = qr.make_image(fill_color="black", back_color="white")
             # qrcode peut renvoyer un wrapper PilImage, on recupere l'image PIL

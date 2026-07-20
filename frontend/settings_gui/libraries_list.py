@@ -3,6 +3,14 @@
 # - Section Parametres pour gerer les bibliotheques de samples.
 # - Ajout, suppression et ordre des dossiers surveilles.
 #
+# FONCTIONS (sommaire)
+# - SettingsLibrariesList    : widget de gestion des bibliotheques
+# - toggleList()             : affiche/masque la liste des dossiers
+# - selectDirectory()        : ouvre un FileDialog pour ajouter un dossier
+# - deleteLibrary()          : supprime une bibliotheque via le service
+# - updateLibraryOrder()     : persiste l'ordre apres un drag-and-drop
+# - refreshLibraryList()     : reconstruit la liste depuis les bibliotheques
+#
 # LIENS CLES
 # - backend/models/SampleLibrary.py
 # - backend/services/settings_service.py
@@ -80,6 +88,7 @@ class SettingsLibrariesList(QWidget):
 
 
     def toggleList(self):
+        """Affiche ou masque la liste + le bouton d'ajout."""
         vis = self.library_list_widget.isVisible()
         self.library_list_widget.setVisible(not vis)
         self.add_library_button.setVisible(not vis)
@@ -87,6 +96,7 @@ class SettingsLibrariesList(QWidget):
         logger.info(f"[LibrariesList] Liste {'masquée' if vis else 'affichée'}")
 
     def selectDirectory(self):
+        """Ouvre un dialog pour choisir un dossier et l’ajoute comme bibliotheque."""
         # 1) Récupère le dernier dossier ou, si vide, le home de l’utilisateur
         last = self._qs.value("lastLibraryDir", os.path.expanduser("~"), type=str)
         d = QFileDialog.getExistingDirectory(
@@ -108,6 +118,7 @@ class SettingsLibrariesList(QWidget):
         logger.info(f"[LibrariesList] Bibliothèque supprimée id={library_to_delete.id}")
 
     def updateLibraryOrder(self):
+        """Lit l'ordre courant de la QListWidget et le persiste via le service."""
         ordered_ids = []
         for idx in range(self.library_list_widget.count()):
             item = self.library_list_widget.item(idx)

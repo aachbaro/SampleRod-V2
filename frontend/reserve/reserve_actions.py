@@ -1,3 +1,31 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Objet QObject partage entre les trois onglets de la Reserve (Dossiers,
+#   Historique, Indexe) qui centralise les actions communes sur un ReserveEntry.
+# - Evite de dupliquer la logique de preview, de renommage ou d'envoi au Labo
+#   dans chaque widget.
+#
+# FONCTIONS (sommaire)
+# - ReserveActions           : classe principale (partage par reference)
+# - can_preview()            : True si le fichier est present et lisible
+# - preview()                : lecture/arret via AudioPlayer (toggle)
+# - seek_preview()           : saut a une position donnee (ms)
+# - rename()                 : renomme via sample_store
+# - reveal_in_folder()       : ouvre le dossier dans l'explorateur
+# - open_waveform()          : emet waveformRequested -> Labo
+# - send_to_lab()            : emet sendToLabRequested -> Labo
+#
+# Signaux emis :
+#   sendToLabRequested(list[str])  : liste de chemins a ouvrir dans le Labo
+#   waveformRequested(ReserveEntry): demande d'ouverture de la waveform
+#   previewChanged(ReserveEntry | None): change d'etat de la lecture
+#
+# LIENS CLES
+# - frontend/reserve/reserve_entry.py    : type ReserveEntry
+# - backend/models/AppContext.py         : audio_player, sample_store
+# - frontend/reserve/reserve_pane.py     : connecte les signaux
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
@@ -10,7 +38,13 @@ from .reserve_entry import ReserveEntry
 
 
 class ReserveActions(QObject):
-    """Common Reserve actions shared by multiple Reserve sources."""
+    """Actions communes partagees par les trois onglets de la Reserve.
+
+    Une instance est creee dans ReservePane et passee en parametre a chaque
+    widget enfant (DirectoryWidget, SampleListWidget, LibraryWidget). Cela
+    evite de reimplementer la logique de lecture, de renommage et d'envoi au
+    Labo dans chaque onglet.
+    """
 
     sendToLabRequested = Signal(list)
     waveformRequested = Signal(object)
@@ -23,6 +57,7 @@ class ReserveActions(QObject):
         self.audio_player = app_context.audio_player
 
     def can_preview(self, entry: ReserveEntry | None) -> bool:
+        """Retourne True si le fichier existe sur disque et n'est pas marque manquant."""
         return bool(entry and entry.path and os.path.isfile(entry.path) and not entry.missing)
 
     def can_rename(self, entry: ReserveEntry | None) -> bool:
@@ -38,12 +73,17 @@ class ReserveActions(QObject):
         return self.can_preview(entry)
 
     def is_previewing(self, entry: ReserveEntry | None) -> bool:
+        """Retourne True si c'est ce sample qui est actuellement en lecture."""
         if not entry or not self.audio_player.is_playing:
             return False
         current_path = normalize_audio_path(self.audio_player.current_sample_path or "")
         return current_path == normalize_audio_path(entry.path)
 
     def seek_preview(self, entry: ReserveEntry | None, position_ms: int) -> bool:
+        """Saute a la position donnee (en ms) dans la lecture du sample.
+
+        Retourne True si le sample est en lecture apres le saut.
+        """
         if not self.can_preview(entry):
             return False
         assert entry is not None
@@ -64,6 +104,12 @@ class ReserveActions(QObject):
         return is_playing
 
     def preview(self, entry: ReserveEntry | None) -> bool:
+        """Lance ou arrete la lecture du sample (toggle).
+
+        Si le sample est deja en lecture, l'arrete et emet previewChanged(None).
+        Sinon, demarre la lecture et emet previewChanged(entry).
+        Retourne True si la lecture a demarree, False si elle a ete arretee.
+        """
         if not self.can_preview(entry):
             return False
         assert entry is not None
@@ -88,6 +134,11 @@ class ReserveActions(QObject):
         return True
 
     def rename(self, entry: ReserveEntry | None, new_name: str) -> tuple[bool, str | None]:
+        """Renomme le sample via le sample_store.
+
+        Retourne (True, None) en cas de succes, (False, message_erreur) sinon.
+        Prefere rename(id, name) si le sample est indexe, sinon rename_by_path().
+        """
         if not self.can_rename(entry):
             return False, "Renommage indisponible"
         assert entry is not None
@@ -121,10 +172,12 @@ class ReserveActions(QObject):
 
     @staticmethod
     def _preview_sample_id(entry: ReserveEntry) -> int:
+        """Retourne l'ID de lecture : l'ID base si indexe, sinon un hash du chemin."""
         return int(entry.sample_id) if entry.sample_id is not None else (hash(entry.path) & 0x7FFFFFFF)
 
     @staticmethod
     def _duration_for_entry(entry: ReserveEntry) -> float:
+        """Retourne la duree du sample : depuis l'entree si connue, sinon depuis les metadonnees audio."""
         duration = float(entry.duration or 0.0)
         if duration > 0:
             return duration

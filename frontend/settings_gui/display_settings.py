@@ -3,6 +3,13 @@
 # - Section Parametres Affichage (pagination, densite de liste).
 # - Expose les reglages de presentation de la liste de samples.
 #
+# FONCTIONS (sommaire)
+# - DisplaySettingsWidget     : widget de configuration de l'affichage
+# - _build_ui()               : formulaire avec combo "Samples par page"
+# - _load_settings()          : charge la valeur depuis le service
+# - _on_combo_changed()       : persiste et emet samplesPerPageChanged
+# - _on_service_changed()     : resynchronise la combo si le service change
+#
 # LIENS CLES
 # - backend/services/settings_service.py
 # - frontend/sample_gui/sample/sample_list.py
@@ -33,6 +40,7 @@ class DisplaySettingsWidget(QWidget):
         logger.info("[DisplaySettings] Initialisation")
 
     def _build_ui(self):
+        """Construit le formulaire: combo Samples par page."""
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.samples_combo = QComboBox()
@@ -44,18 +52,21 @@ class DisplaySettingsWidget(QWidget):
         layout.addStretch()
 
     def _load_settings(self):
+        """Charge la valeur courante depuis le service et met a jour la combo."""
         count = self.settings.getSamplesPerPage()
         idx = self.samples_combo.findData(count)
         if idx >= 0:
             self.samples_combo.setCurrentIndex(idx)
 
     def _on_combo_changed(self, index):
+        """Persiste la nouvelle valeur et emet samplesPerPageChanged."""
         value = self.samples_combo.itemData(index)
         if value is not None:
             self.settings.setSamplesPerPage(value)
             self.samplesPerPageChanged.emit(value)
 
     def _on_service_changed(self, value: int):
+        """Resynchronise la combo si la valeur change via le service (signal externe)."""
         idx = self.samples_combo.findData(value)
         if idx >= 0:
             self.samples_combo.setCurrentIndex(idx)

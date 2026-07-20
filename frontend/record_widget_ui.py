@@ -14,6 +14,23 @@
 # - Logique start/stop/retro (RecordWidgetWindow).
 # - Gestion des evenements souris/molette.
 # - Polling du worker d'enregistrement.
+#
+# CLASSE ET FONCTIONS (sommaire)
+# - RecordWidgetUIBuilder
+#   - build()              : enchaine les trois etapes ci-dessous.
+#   - _build_window()      : fenetre sans bordure, translucide, toujours
+#                            au-dessus, opacite 60% au repos.
+#   - _build_widgets()     : bouton REC rond, pastille de bibliotheque,
+#                            poignee de deplacement, etiquette du nom de
+#                            bibliotheque (cachee par defaut) ; installe
+#                            les eventFilters vers la fenetre principale.
+#   - _apply_static_icons(): icones dossier et poignee (qtawesome).
+#   - apply_shell_style()  : couleurs de la coque selon l'etat (rouge =
+#                            enregistrement, couleur retro, survol...).
+#
+# NOTE
+# - Toutes les dimensions sont multipliees par window.scale (zoom global
+#   du widget) : modifier scale redimensionne tout proportionnellement.
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations

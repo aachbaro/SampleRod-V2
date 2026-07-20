@@ -1,11 +1,43 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Widget flottant de controle d'enregistrement.
-# - Pilote start/stop, etat retro et feedback visuel temps reel.
+# - La petite fenetre flottante "REC" toujours au premier plan : c'est la
+#   telecommande d'enregistrement de SampleRod, utilisable par-dessus
+#   n'importe quel autre logiciel.
+# - Interactions (tout passe par la souris) :
+#   * clic gauche sur REC      : demarrer / arreter l'enregistrement ;
+#   * clic droit sur REC       : activer / desactiver le retro-enregistrement ;
+#   * molette sur REC          : choisir combien de secondes de retro inclure
+#                                dans la prochaine prise (0..duree max) ;
+#   * molette sur la pastille  : changer de bibliotheque de destination ;
+#   * clic sur la pastille     : afficher/cacher le nom de la bibliotheque ;
+#   * glisser la zone de prise : deplacer la fenetre.
+# - Couleurs du bouton : rouge = enregistrement en cours, couleur "retro" =
+#   buffer retrospectif actif, bordure neutre sinon.
+# - Interroge le RecorderService 10 fois par seconde (_poll_worker) pour
+#   recuperer les evenements du processus d'enregistrement (fichier pret...).
+#
+# FONCTIONS (sommaire)
+# - RecordWidgetWindow (QMainWindow)
+#   - signal newSampleRecorded(path) : un nouveau fichier vient d'etre cree.
+#   - _wire_signals()    : abonnements aux changements de reglages/etat.
+#   - _start_timers()    : timer "rester au-dessus" (1 s) + polling (100 ms).
+#   - eventFilter()      : toute la logique de clics/molette decrite ci-dessus.
+#   - mousePress/Move/ReleaseEvent : deplacement de la fenetre a la souris.
+#   - enter/leaveEvent   : opacite (plus visible au survol).
+#   - _has_valid_library()/_rotate_library() : choix de la bibliotheque.
+#   - _adjust_retro_time(): molette = retro time de la prochaine prise.
+#   - _show_retro_context_menu() : menu clic-droit (toggle retro).
+#   - updateLibraryCount()/updateRetroRecording()/updateRecordButtonDisplay():
+#     rafraichissement des affichages (numero, couleurs, icone, tooltip).
+#   - animate_container(): extension animee au survol (revele la poignee).
+#   - keep_on_top()      : force la fenetre au premier plan.
+#   - _poll_worker()     : lit les messages du recorder, emet newSampleRecorded.
+#   - closeEvent()       : stoppe les timers.
 #
 # LIENS CLES
-# - backend/services/recorder_service.py
-# - backend/services/settings_service.py
+# - frontend/record_widget_ui.py : construction visuelle (RecordWidgetUIBuilder).
+# - backend/services/recorder_service.py : start/stop/poll.
+# - backend/services/settings_service.py : librairies, retro, durees.
 # -----------------------------------------------------------------------------
 # frontend/record_widget.py
 
@@ -82,6 +114,14 @@ class RecordWidgetWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Events
     def eventFilter(self, source, event):
+        """Centralise les interactions souris des sous-widgets.
+
+        Un eventFilter permet d'intercepter les evenements des widgets
+        enfants (bouton REC, pastille de bibliotheque, conteneur) sans
+        devoir creer une sous-classe pour chacun. Renvoyer True = evenement
+        consomme ; sinon on laisse Qt poursuivre le traitement normal.
+        """
+        # Survol du conteneur : extension animee + style "survole".
         if source == self.button_container:
             if event.type() == QEvent.Type.Enter:
                 self._apply_shell_style(hovered=True)
@@ -90,6 +130,7 @@ class RecordWidgetWindow(QMainWindow):
                 self._apply_shell_style(hovered=False)
                 self.animate_container(expand=False)
 
+        # Pastille de bibliotheque : molette = changer, clic = voir le nom.
         if source == self.library_indicator:
             if event.type() == QEvent.Type.Wheel:
                 delta = event.angleDelta().y()
@@ -99,6 +140,7 @@ class RecordWidgetWindow(QMainWindow):
                 self.library_name.setVisible(not self.library_name.isVisible())
                 return True
 
+        # Bouton REC : gauche = start/stop, droit = menu retro, molette = retro time.
         if source == self.recordButton:
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                 if not self._has_valid_library():
@@ -270,6 +312,13 @@ class RecordWidgetWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Animations / timers
     def animate_container(self, expand: bool):
+        """Etend ou retracte la fenetre au survol (revele la poignee de prise).
+
+        Au survol, le conteneur s'elargit d'un "slot" et la zone de prise
+        (drag) se decale d'autant ; a la sortie, tout revient a la geometrie
+        de base. Les deux animations sont gardees en attributs pour ne pas
+        etre detruites par le ramasse-miettes avant la fin.
+        """
         base_w = self.base_geometry.width()
         slot_w = int(28 * self.scale)
         drag_shift = slot_w
@@ -308,9 +357,11 @@ class RecordWidgetWindow(QMainWindow):
         self.current_animation_drag = anim_drag
 
     def keep_on_top(self):
+        """Remonte la fenetre au premier plan (appele chaque seconde)."""
         self.raise_()
 
     def _poll_worker(self):
+        """Lit les messages du recorder (10x/s) et signale les fichiers prets."""
         try:
             for msg, payload in self.app_context.recorder.poll():
                 if msg == "done" and payload:

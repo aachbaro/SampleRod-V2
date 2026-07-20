@@ -1,3 +1,18 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Module de construction de l'interface graphique de la Bibliotheque.
+# - Separe la logique UI pure (placement des widgets) du comportement
+#   (gestion des evenements et des donnees dans LibraryWidget).
+#
+# FONCTIONS (sommaire)
+# - build_library_widget_ui()  : cree et assemble tous les widgets de la vue
+# - apply_styles()             : applique le QSS dynamique via le theme courant
+#
+# LIENS CLES
+# - frontend/library_gui/library_widget.py  : appelant ; reçoit les attributs crees ici
+# - frontend/styles/theme.py               : source des couleurs
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -17,6 +32,18 @@ from frontend.styles import theme
 
 
 def build_library_widget_ui(widget) -> None:
+    """Construit toute l'interface de la Bibliotheque et attache les attributs au widget.
+
+    Structure :
+    - Header : titre, compteur, barre de recherche, filtre de statut.
+    - Splitter horizontal :
+        - Panneau de navigation (QTreeWidget) a gauche.
+        - Tableau de samples (QTableWidget, 6 colonnes) au centre.
+        - Detail du sample (LibraryDetailWidget) a droite.
+
+    Les attributs crees (tree, table, search_input, etc.) sont directement
+    attaches a `widget` pour que LibraryWidget puisse y acceder.
+    """
     widget.setObjectName("LibraryRoot")
     widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
@@ -105,6 +132,7 @@ def build_library_widget_ui(widget) -> None:
 
 
 def apply_styles(widget) -> None:
+    """Applique la feuille de style QSS a partir des couleurs du theme courant."""
     palette = theme.manager.p
     widget.setStyleSheet(
         f"""

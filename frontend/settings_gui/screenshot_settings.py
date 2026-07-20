@@ -3,6 +3,15 @@
 # - Section Parametres de la fonctionnalite screenshot.
 # - Choix dossier cible, ecran cible et activation des options associees.
 #
+# FONCTIONS (sommaire)
+# - ScreenshotSettingsWidget  : widget de configuration des captures d'ecran
+# - _build_ui()               : toggle + dossier + ecran + hint
+# - _load_state()             : charge l'etat depuis settings + peuple la combo ecrans
+# - _apply_enabled()          : active/desactive les controles selon le toggle
+# - _choose_folder()          : FileDialog pour choisir le dossier cible
+# - _load_screens()           : peuple la combo depuis screenshot_service.list_screens()
+# - _on_screen_selected()     : persiste l'ecran selectionne
+#
 # LIENS CLES
 # - backend/services/screenshot_service.py
 # - backend/services/settings_service.py
@@ -96,6 +105,7 @@ class ScreenshotSettingsWidget(QWidget):
 
     # ------------------------------------------------------------------ State
     def _load_state(self):
+        """Charge l'etat depuis les settings, peuple la combo et active/desactive les controles."""
         enabled = self.settings.isScreenshotEnabled()
         self.enable_checkbox.blockSignals(True)
         self.enable_checkbox.setChecked(enabled)
@@ -106,6 +116,7 @@ class ScreenshotSettingsWidget(QWidget):
         self._apply_enabled(enabled)
 
     def _apply_enabled(self, enabled: bool):
+        """Active ou desactive les controles (dossier, ecran) selon le toggle."""
         self.path_input.setEnabled(enabled)
         self.browse_button.setEnabled(enabled)
         self.screen_combo.setEnabled(enabled)
@@ -118,6 +129,7 @@ class ScreenshotSettingsWidget(QWidget):
             self.settings.setScreenshotLibraryPath(path)
 
     def _load_screens(self):
+        """Peuple la combo des ecrans depuis screenshot_service.list_screens()."""
         try:
             self.screens = self.app_context.screenshots.list_screens()
         except Exception:
@@ -149,6 +161,7 @@ class ScreenshotSettingsWidget(QWidget):
         self.path_input.setText(path)
 
     def _on_screen_selected(self, _index: int):
+        """Persiste l'ecran selectionne dans les settings."""
         data = self.screen_combo.currentData()
         if data is None:
             return

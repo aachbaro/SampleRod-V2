@@ -1,3 +1,37 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - La partie VISIBLE des notifications (la partie logique est dans
+#   backend/services/notification_service.py).
+# - Trois pieces qui travaillent ensemble :
+#   * NotificationPopup  : la petite bulle qui surgit en bas a droite de
+#     l'ecran, glisse vers le haut, reste quelques secondes puis s'efface ;
+#   * NotificationCenter : la fenetre "historique" ouverte par la cloche,
+#     qui liste toutes les notifications recues avec un bouton Vider ;
+#   * NotificationManager: le chef d'orchestre — il ecoute le service,
+#     alimente le centre, cree les popups (3 maximum a l'ecran, les plus
+#     anciens sont chasses) et les re-empile proprement quand l'un se ferme.
+#
+# CLASSES ET FONCTIONS (sommaire)
+# - NotificationPopup (QFrame)
+#   - _build_ui()     : titre + message, bordure coloree selon le type
+#                       (bleu=info, vert=succes, orange=alerte, rouge=erreur).
+#   - _animate_in()   : entree glissee depuis le bas de l'ecran.
+#   - _animate_out()  : sortie en fondu puis fermeture.
+# - NotificationCenter (QWidget)
+#   - add_notification() : ajoute une ligne horodatee a la liste.
+#   - clear()            : vide tout.
+# - NotificationManager (QObject)
+#   - set_center()           : branche le centre de notifications.
+#   - _on_new_notification() : recoit chaque notification du service ;
+#     l'ajoute au centre, puis cree un popup (sauf notification silencieuse).
+#   - _reposition_popups()   : re-empile les popups du bas vers le haut.
+#   - _remove_popup()        : retire un popup ferme de la pile.
+#
+# LIENS CLES
+# - backend/services/notification_service.py : la source des notifications.
+# - frontend/main_window.py : cree le manager, le centre et la cloche.
+# -----------------------------------------------------------------------------
+
 """
 Widgets pour afficher les notifications.
 
@@ -85,8 +119,10 @@ class NotificationPopup(QFrame):
         self.adjustSize()
 
     def _animate_in(self) -> None:
+        """Fait glisser le popup depuis le bord bas vers sa place definitive."""
         screen_geometry = self.screen().availableGeometry()
         width, height = self.width(), self.height()
+        # Position finale : coin bas-droit de l'ecran, avec une marge de 20 px.
         end_x = screen_geometry.x() + screen_geometry.width() - width - 20
         end_y = screen_geometry.y() + screen_geometry.height() - height - 20
 
@@ -199,6 +235,11 @@ class NotificationManager(QObject):
         self._reposition_popups()
 
     def _reposition_popups(self) -> None:
+        """Re-empile les popups visibles du bas vers le haut de l'ecran.
+
+        Le plus recent reste en bas ; chaque popup plus ancien est anime
+        vers sa nouvelle position juste au-dessus du precedent.
+        """
         if not self.popups:
             return
 

@@ -1,9 +1,18 @@
-"""
-ScreenshotListWidget
-====================
-Onglet UI pour afficher les captures d'ecran en cards.
-Calque sur l'esprit SampleList/SampleCard (liste + cartes + actions).
-"""
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Liste scrollable des captures d'ecran, affichees en ScreenshotCard.
+# - Se rafraichit automatiquement via le signal screenshotsChanged.
+#
+# FONCTIONS (sommaire)
+# - ScreenshotListWidget : widget principal (scroll + cartes)
+# - _build_ui()          : scroll area + header + empty label
+# - _wire_signals()      : branchement screenshotsChanged
+# - refresh()            : reconstruit la liste depuis le service
+#
+# LIENS CLES
+# - frontend/screenshot_gui/screenshot_card.py : ScreenshotCard
+# - backend/services/screenshot_service.py     : screenshotsChanged
+# -----------------------------------------------------------------------------
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -20,6 +29,8 @@ from frontend.screenshot_gui.screenshot_card import ScreenshotCard
 
 
 class ScreenshotListWidget(QWidget):
+    """Liste scrollable des captures d'ecran, reconstruite a chaque screenshotsChanged."""
+
     def __init__(self, app_context: AppContext, parent=None):
         super().__init__(parent)
         self.app_context = app_context
@@ -32,6 +43,7 @@ class ScreenshotListWidget(QWidget):
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
+        """Construit le scroll area, le header et le label vide."""
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
@@ -67,10 +79,12 @@ class ScreenshotListWidget(QWidget):
         self.container_layout.insertWidget(0, self.empty_label)
 
     def _wire_signals(self):
+        """Branche screenshotsChanged pour rafraichir automatiquement la liste."""
         self.svc.screenshotsChanged.connect(lambda _items: self.refresh())
 
     # ------------------------------------------------------------------ Data
     def refresh(self):
+        """Recharge les items du service et reconstruit toutes les ScreenshotCard."""
         items = self.svc.list_items()
         # plus recentes en premier
         items = list(reversed(items))

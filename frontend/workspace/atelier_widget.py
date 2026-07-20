@@ -1,3 +1,20 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Espace de travail principal : Reserve (gauche) + Labo (droite) dans un QSplitter.
+# - Pont entre ReservePane et LaboWidget : route les signaux inter-panneaux.
+#
+# FONCTIONS (sommaire)
+# - AtelierWidget       : widget racine de l'espace de travail
+# - _build_ui()         : splitter + Reserve + Labo + styles
+# - _bind_signals()     : branche les signaux entre panneaux
+# - _send_paths_to_labo(): transfert de chemins Reserve -> Labo
+# - _apply_styles()     : QSS reactif au theme courant
+#
+# LIENS CLES
+# - frontend/reserve/reserve_pane.py  : ReservePane (panneau gauche)
+# - frontend/labo/labo_widget.py      : LaboWidget (panneau droit)
+# - frontend/styles/theme.py          : theme.manager
+# -----------------------------------------------------------------------------
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -22,6 +39,7 @@ class AtelierWidget(QWidget):
         theme.manager.themeChanged.connect(lambda _: self._apply_styles())
 
     def _build_ui(self) -> None:
+        """Construit le splitter avec ReservePane a gauche et LaboWidget a droite."""
         self.setObjectName("AtelierRoot")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
@@ -48,15 +66,18 @@ class AtelierWidget(QWidget):
         self._apply_styles()
 
     def _bind_signals(self) -> None:
+        """Branche les signaux inter-panneaux (Reserve <-> Labo)."""
         self.reserve_pane.sendToLaboRequested.connect(self._send_paths_to_labo)
         self.labo_panel.openReserveDirectoryRequested.connect(self.reserve_pane.open_directory_in_folders)
         self.labo_panel.reserveRefreshRequested.connect(self.reserve_pane.refresh_current_view)
         self.labo_panel.reservePathsMoved.connect(self.reserve_pane.remove_paths_from_folders_view)
 
     def _send_paths_to_labo(self, paths: list[str]) -> None:
+        """Transfere les chemins selectionnes dans la Reserve vers le Labo."""
         self.labo_panel.open_paths(paths)
 
     def _apply_styles(self) -> None:
+        """Applique le QSS selon la palette du theme courant."""
         p = theme.manager.p
         self.setStyleSheet(
             f"""

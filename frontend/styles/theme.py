@@ -113,9 +113,15 @@ class ThemeManager(QObject):
         return self._name == "dark"
 
     def toggle(self):
+        """Bascule entre dark et light."""
         self.set_theme("light" if self._name == "dark" else "dark")
 
     def set_theme(self, name: str):
+        """Applique le theme, met a jour le QSS global et emet themeChanged.
+
+        Bloque les repaints intermediaires (setUpdatesEnabled) pour eviter
+        le scintillement quand de nombreux widgets se restylent.
+        """
         if name == self._name:
             return
         self._name    = name
@@ -137,6 +143,7 @@ class ThemeManager(QObject):
         self._apply_global_qss()
 
     def _apply_global_qss(self):
+        """Applique le QSS genere par build_global_qss a QApplication."""
         app = QApplication.instance()
         if app:
             app.setStyleSheet(build_global_qss(self._palette))

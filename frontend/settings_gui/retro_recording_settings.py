@@ -3,6 +3,13 @@
 # - Section Parametres du retro-enregistrement.
 # - Permet de regler duree du buffer et activation globale.
 #
+# FONCTIONS (sommaire)
+# - RetroRecordingWidget  : widget de configuration du retro-enregistrement
+# - init_ui()             : layout avec titre, spinbox duree, checkbox, hint
+# - on_duration_change()  : active le bouton OK quand la valeur change
+# - save_duration()       : persiste la duree du buffer via le service
+# - toggle_recording()    : active/desactive le retro et emet retroRecordingUpdated
+#
 # LIENS CLES
 # - backend/services/settings_service.py
 # - backend/services/recorder_service.py
@@ -22,6 +29,8 @@ import logging
 logger = logging.getLogger("retro_recording")
 
 class RetroRecordingWidget(QWidget):
+    """Widget de configuration du retro-enregistrement (duree buffer + activation)."""
+
     retroRecordingUpdated = Signal()
 
     def __init__(self, settingsService: SettingsService, parent=None):
@@ -97,15 +106,18 @@ class RetroRecordingWidget(QWidget):
         self.setLayout(layout)
 
     def on_duration_change(self, value):
+        """Active le bouton OK pour confirmer que la duree a change."""
         self.confirm_button.setEnabled(True)
 
     def save_duration(self):
+        """Persiste la duree du buffer retro via le service et desactive OK."""
         # Informe le service (persistance + signal)
         self.settingsService.setPreSeconds(self.duration_input.value())
         logger.info(f"[RetroRecording] DurÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e enregistrÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©e : {self.duration_input.value()}s")
         self.confirm_button.setEnabled(False)
 
     def toggle_recording(self):
+        """Bascule l'activation du retro-enregistrement et emet retroRecordingUpdated."""
         # Informe le service (persistance + signal)
         self.settingsService.toggleRetro()
         state = 'activÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©' if self.toggle_checkbox.isChecked() else 'dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©sactivÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©'

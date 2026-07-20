@@ -1,5 +1,38 @@
+# -----------------------------------------------------------------------------
+# ROLE DANS L'ARCHITECTURE
+# - Definit le type central ReserveEntry et toutes les fonctions utilitaires
+#   qui lui sont liees : creation, filtrage, formatage du statut.
+# - ReserveEntry est le "langage commun" entre les trois onglets de la Reserve
+#   (Dossiers, Historique, Indexe) : chacun produit des ReserveEntry, et les
+#   widgets UI n'ont besoin de connaitre que ce type.
+#
+# Statuts possibles (ordre de gravite croissant) :
+#   normal          -> sample indexe, fichier present, analyse OK
+#   non_indexed     -> fichier present mais pas encore indexe
+#   needs_analysis  -> indexe mais la detection de gamme n'a pas encore tourne
+#   missing         -> chemin enregistre mais fichier introuvable sur disque
+#
+# FONCTIONS (sommaire)
+# - ReserveEntry                    : dataclass avec 18 champs
+# - resolve_reserve_status()        : deduit le statut depuis 3 booleens
+# - reserve_status_label/tone()     : label lisible et "ton" (neutral/info/warning/error)
+# - reserve_status_badge_stylesheet() : QSS inline pour un badge de statut
+# - apply_status_badge()            : applique texte + style sur un QLabel
+# - reserve_entry_matches_query()   : filtre textuel multi-champs
+# - reserve_entry_matches_status()  : filtre par statut
+# - reserve_entry_from_sample()     : cree un ReserveEntry depuis un sample ORM
+# - reserve_entry_from_directory()  : cree un ReserveEntry depuis DirectoryAudioEntry
+# - _normalize_compatible_scales()  : normalise les gammes compat (str/list/JSON)
+#
+# LIENS CLES
+# - backend/models/sample.py              : modele ORM source
+# - backend/services/directory_service.py : DirectoryAudioEntry source
+# - frontend/reserve/__init__.py          : re-exporte tout vers l'exterieur
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -45,6 +78,17 @@ SOURCE_LABELS = {
 
 @dataclass(slots=True)
 class ReserveEntry:
+    """Representation unifiee d'un sample dans la Reserve, quelle que soit sa source.
+
+    Champs principaux :
+        source_kind     : d'ou vient l'entree ("filesystem", "history", "indexed").
+        path            : chemin absolu sur disque (peut ne plus exister si missing=True).
+        sample_id       : ID en base SQLite si le sample est indexe, sinon None.
+        status          : etat du sample (STATUS_NORMAL / NON_INDEXED / NEEDS_ANALYSIS / MISSING).
+        missing         : True si le fichier est introuvable sur disque.
+        indexed         : True si le sample est enregistre dans la base.
+        compatible_scales : tuple des gammes musicalement compatibles avec ce sample.
+    """
     source_kind: ReserveSourceKind
     path: str
     sample_id: int | None = None
@@ -57,6 +101,11 @@ class ReserveEntry:
     needs_analysis: bool = False
     missing: bool = False
     indexed: bool = False
+    dominant_note: str | None = None
+    detected_scale_label: str | None = None
+    detected_scale_kind: str | None = None
+    scale_confidence: float | None = None
+    compatible_scales: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -80,6 +129,7 @@ class ReserveEntry:
 
 
 def resolve_reserve_status(*, indexed: bool, missing: bool, needs_analysis: bool) -> str:
+    """Deduit le statut a partir de trois booleens (ordre de priorite : missing > not indexed > needs_analysis)."""
     if missing:
         return STATUS_MISSING
     if not indexed:
@@ -98,6 +148,7 @@ def reserve_status_tone(status: str) -> str:
 
 
 def reserve_status_badge_stylesheet(status: str) -> str:
+    """Retourne une chaine QSS inline pour colorer un QLabel badge selon le statut."""
     p = theme.manager.p
     tone = reserve_status_tone(status)
     fg = p.TEXT
@@ -130,11 +181,18 @@ def reserve_status_badge_stylesheet(status: str) -> str:
 
 
 def apply_status_badge(label_widget, status: str) -> None:
+    """Applique le texte et le style de badge de statut sur un QLabel."""
     label_widget.setText(reserve_status_label(status))
     label_widget.setStyleSheet(reserve_status_badge_stylesheet(status))
 
 
 def reserve_entry_matches_query(entry: ReserveEntry, query: str) -> bool:
+    """Retourne True si l'entree correspond a la recherche textuelle.
+
+    Cherche chaque mot de la requete (en minuscules) dans un "haystack" qui
+    combine nom, chemin, dossier, racine, source, statut, note et gamme detectee.
+    Une requete vide retourne toujours True.
+    """
     needle = " ".join((query or "").strip().lower().split())
     if not needle:
         return True
@@ -148,6 +206,9 @@ def reserve_entry_matches_query(entry: ReserveEntry, query: str) -> bool:
             entry.root_path or "",
             entry.source_label,
             entry.status_label,
+            entry.dominant_note or "",
+            entry.detected_scale_label or "",
+            " ".join(entry.compatible_scales),
         ]
         if part
     )
@@ -155,6 +216,7 @@ def reserve_entry_matches_query(entry: ReserveEntry, query: str) -> bool:
 
 
 def reserve_entry_matches_status(entry: ReserveEntry, status_filter: str) -> bool:
+    """Retourne True si le statut de l'entree correspond au filtre (ou si filtre = 'all')."""
     if not status_filter or status_filter == STATUS_ALL:
         return True
     return entry.status == status_filter
@@ -168,6 +230,11 @@ def reserve_entry_from_sample(
     folder_path: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ReserveEntry:
+    """Cree un ReserveEntry a partir d'un objet Sample ORM.
+
+    source_kind vaut "indexed" pour les samples de la bibliotheque ou
+    "history" pour ceux de l'historique recents.
+    """
     path = getattr(sample, "path", "")
     missing = bool(getattr(sample, "missing", False))
     needs_analysis = bool(getattr(sample, "needs_analysis", False))
@@ -188,11 +255,21 @@ def reserve_entry_from_sample(
         needs_analysis=needs_analysis,
         missing=missing,
         indexed=True,
+        dominant_note=str(getattr(sample, "dominant_note", "") or "").strip() or None,
+        detected_scale_label=str(getattr(sample, "detected_scale_label", "") or "").strip() or None,
+        detected_scale_kind=str(getattr(sample, "detected_scale_kind", "") or "").strip() or None,
+        scale_confidence=(
+            float(getattr(sample, "scale_confidence", 0.0))
+            if getattr(sample, "scale_confidence", None) is not None
+            else None
+        ),
+        compatible_scales=_normalize_compatible_scales(getattr(sample, "compatible_scales", None)),
         metadata=dict(metadata or {}),
     )
 
 
 def reserve_entry_from_directory(entry: DirectoryAudioEntry) -> ReserveEntry:
+    """Cree un ReserveEntry a partir d'une entree du service de navigation de dossiers."""
     return ReserveEntry(
         source_kind="filesystem",
         path=entry.path,
@@ -209,5 +286,40 @@ def reserve_entry_from_directory(entry: DirectoryAudioEntry) -> ReserveEntry:
         needs_analysis=bool(entry.needs_analysis),
         missing=bool(entry.missing),
         indexed=bool(entry.indexed),
+        dominant_note=entry.dominant_note,
+        detected_scale_label=entry.detected_scale_label,
+        detected_scale_kind=entry.detected_scale_kind,
+        scale_confidence=entry.scale_confidence,
+        compatible_scales=_normalize_compatible_scales(entry.compatible_scales),
         metadata={"directory_entry": entry},
     )
+
+
+def _normalize_compatible_scales(raw_value) -> tuple[str, ...]:
+    """Normalise les gammes compatibles en tuple de chaines, quelle que soit la forme d'entree.
+
+    Accepte : None, liste/tuple/set, chaine brute, ou chaine JSON.
+    Retourne toujours un tuple de chaines non vides.
+    """
+    if raw_value is None:
+        return ()
+    if isinstance(raw_value, (list, tuple, set)):
+        return tuple(
+            text
+            for text in (str(value or "").strip() for value in raw_value)
+            if text
+        )
+    if isinstance(raw_value, str):
+        text = raw_value.strip()
+        if not text:
+            return ()
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return (text,)
+        return tuple(
+            value
+            for value in (str(item or "").strip() for item in parsed if item is not None)
+            if value
+        )
+    return ()

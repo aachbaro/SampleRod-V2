@@ -3,6 +3,16 @@
 # - Carte UI representant une capture d'ecran sauvegardee.
 # - Affiche miniature, metadonnees et actions (ouvrir/rename/delete).
 #
+# FONCTIONS (sommaire)
+# - ScreenshotCard      : widget carte (miniature + metadonnees + actions)
+# - _build_ui()         : layout + widgets + styles
+# - _render()           : peuple les champs depuis item dict
+# - _start_rename()     : bascule vers l'input de renommage
+# - _submit_rename()    : valide le renommage via le service
+# - _delete()           : supprime via le service
+# - _open_folder()      : ouvre le dossier parent dans l'explorateur
+# - mouseDoubleClickEvent() : ouvre l'image avec l'application par defaut
+#
 # LIENS CLES
 # - frontend/screenshot_gui/screenshot_list.py
 # - backend/services/screenshot_service.py
@@ -29,6 +39,8 @@ from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 
 
 class ScreenshotCard(QWidget):
+    """Carte UI d'une capture d'ecran: miniature, metadonnees, rename/delete/open."""
+
     def __init__(self, app_context, item: dict, parent=None):
         super().__init__(parent)
         self.app_context = app_context
@@ -134,6 +146,7 @@ class ScreenshotCard(QWidget):
 
     # ------------------------------------------------------------------ Data
     def _render(self):
+        """Peuple le nom, la miniature et les metadonnees depuis self.item."""
         filename = self.item.get("filename", "")
         self.name_label.setText(filename)
         self.rename_input.setText(Path(filename).stem)
@@ -158,12 +171,14 @@ class ScreenshotCard(QWidget):
 
     # ------------------------------------------------------------------ Actions
     def _start_rename(self):
+        """Bascule du label vers l'input de renommage et donne le focus."""
         self.name_label.setVisible(False)
         self.rename_input.setVisible(True)
         self.rename_input.setFocus()
         self.rename_input.selectAll()
 
     def _submit_rename(self):
+        """Valide le renommage: appelle le service, rafraichit le rendu, revient au label."""
         new_name = self.rename_input.text().strip()
         if not new_name:
             self._cancel_rename()
@@ -179,9 +194,11 @@ class ScreenshotCard(QWidget):
         self.name_label.setVisible(True)
 
     def _delete(self):
+        """Supprime la capture via le service (retire du disque + BD)."""
         self.svc.delete(int(self.item.get("id", -1)))
 
     def _open_folder(self):
+        """Ouvre le dossier parent de la capture dans l'explorateur de fichiers."""
         path = self.svc.get_path(int(self.item.get("id", -1)))
         if not path:
             return

@@ -1,12 +1,40 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Fenetre principale de l'application desktop.
-# - Compose les onglets, panneaux et widgets racine de l'interface.
+# - La fenetre principale de l'application : tout ce que l'utilisateur voit
+#   est assemble ici.
+# - Structure generale :
+#   * un bandeau d'onglets (Atelier / Screenshots / Parametres) ;
+#   * sous les onglets, le "plateau d'activite" (taches de fond en cours) ;
+#   * en coin haut-droit : bouton theme clair/sombre + cloche de
+#     notifications avec badge de non-lus ;
+#   * une fenetre flottante independante pour l'enregistrement (REC).
+# - L'onglet Atelier (AtelierWidget) contient le coeur de l'application :
+#   liste des samples, editeur de forme d'onde, panneau droit, labo...
+# - C'est aussi cette classe qui declenche le grand nettoyage a la
+#   fermeture (closeEvent -> _exit_procedure -> AppContext.shutdown).
+#
+# FONCTIONS (sommaire)
+# - MainWindow (QMainWindow)
+#   - __init__()            : cree les services UI puis enchaine les etapes.
+#   - _setup_window()       : titre, taille, demarrage maximise.
+#   - _build_ui()           : construit TOUTE l'interface (onglets, coins,
+#                             notifications, fenetre REC, ecran parametres).
+#   - _init_signals()       : connexions entre composants (nouvel enregistrement).
+#   - _init_shortcuts()     : raccourcis globaux (F11 plein ecran).
+#   - _toggle_fullscreen()  : bascule plein ecran <-> etat precedent.
+#   - _apply_window_stylesheet() : couleurs de fond selon le theme.
+#   - _update_theme_button_icon()/_on_theme_changed() : suivi du theme.
+#   - closeEvent()/_exit_procedure() : fermeture propre de l'application.
+#   - _increment_badge()/_clear_badge() : compteur de notifications non lues.
+#   - _make_settings_group(): petit cadre titre+description pour les reglages.
+#   - _on_notif_button_clicked() : ouvre/ferme le centre de notifications.
 #
 # LIENS CLES
-# - frontend/sample_gui/sample/sample_list.py
-# - frontend/right_panel/tools_panel.py
-# - frontend/record_widget.py
+# - frontend/workspace/atelier_widget.py : le contenu de l'onglet Atelier.
+# - frontend/record_widget.py            : la fenetre flottante REC.
+# - frontend/notification_widgets.py     : popups + centre de notifications.
+# - frontend/activity/                   : le plateau des taches de fond.
+# - frontend/settings_gui/               : les blocs de l'onglet Parametres.
 # -----------------------------------------------------------------------------
 # frontend/main_window.py
 
@@ -35,10 +63,12 @@ from frontend.settings_gui.audio_settings import AudioSettingsWidget
 from frontend.settings_gui.display_settings import DisplaySettingsWidget
 from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
 from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
+from frontend.settings_gui.waveform_settings import WaveformSettingsWidget
 from frontend.screenshot_gui.screenshot_list import ScreenshotListWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.workspace.atelier_widget import AtelierWidget
 from frontend.styles import theme
+from frontend.activity import ActivityService, ActivityTrayWidget
 
 from backend.services.directory_service import DirectoryService
 
@@ -50,6 +80,7 @@ class MainWindow(QMainWindow):
         self.app_context = app_context
         self.settings = self.app_context.settings
         self.directory_service = DirectoryService(self.app_context.sample_store)
+        self.activity_service = ActivityService(self.app_context, self)
         
         self._setup_window()
         self._build_ui()
@@ -66,8 +97,19 @@ class MainWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
 
     def _build_ui(self):
-        """Construit l'interface utilisateur"""
+        """Construit toute l'interface : onglets, plateau d'activite, coins.
+
+        Ordre de construction : conteneur central (onglets + plateau
+        d'activite), fenetre REC flottante, onglet Atelier, onglet
+        Screenshots, onglet Parametres (organise en deux colonnes de
+        groupes), puis le coin haut-droit (theme + notifications).
+        """
         # Conteneur d'onglets
+        self._central_widget = QWidget(self)
+        self._central_layout = QVBoxLayout(self._central_widget)
+        self._central_layout.setContentsMargins(0, 0, 0, 0)
+        self._central_layout.setSpacing(0)
+
         self.tab_widget = QTabWidget(self)
         self.tab_widget.setObjectName("MainTabWidget")
         # Theme global (fond) : on veut que les "gaps" autour des widgets (marges, splitters,
@@ -75,7 +117,11 @@ class MainWindow(QMainWindow):
         # On limite volontairement le scope via des objectName pour eviter des effets de bord.
         self.setObjectName("MainWindow")
         self._apply_window_stylesheet()
-        self.setCentralWidget(self.tab_widget)
+
+        self.activity_tray = ActivityTrayWidget(self.activity_service, self._central_widget)
+        self._central_layout.addWidget(self.tab_widget, 1)
+        self._central_layout.addWidget(self.activity_tray, 0)
+        self.setCentralWidget(self._central_widget)
 
         # --- Onglet 'Enregistrement' (pop-up flottant)
         self.record_widget = RecordWidgetWindow(self.app_context)
@@ -122,6 +168,7 @@ class MainWindow(QMainWindow):
         self.display_settings_widget = DisplaySettingsWidget(self.settings)
         self.remote_control_widget = RemoteControlSettingsWidget(self.app_context)
         self.screenshot_settings_widget = ScreenshotSettingsWidget(self.app_context)
+        self.waveform_settings_widget = WaveformSettingsWidget(self.settings)
 
         # Section: bibliotheques (pleine largeur)
         libraries_group = self._make_settings_group(
@@ -165,9 +212,15 @@ class MainWindow(QMainWindow):
             "Capturer des images depuis le telephone (optionnel).",
             self.screenshot_settings_widget
         )
+        waveform_group = self._make_settings_group(
+            "Waveform / Decoupage",
+            "Comportement de l'editeur waveform et des outils de decoupage.",
+            self.waveform_settings_widget
+        )
 
         left_col.addWidget(retro_group)
         left_col.addWidget(display_group)
+        left_col.addWidget(waveform_group)
         left_col.addStretch()
 
         right_col.addWidget(audio_group)
@@ -297,6 +350,14 @@ class MainWindow(QMainWindow):
     def _exit_procedure(self):
         """Actions de nettoyage avant fermeture"""
         logger.info("Fermeture de l'application proprement...")
+        try:
+            self.activity_tray.shutdown()
+        except Exception:
+            logger.exception("ActivityTrayWidget: shutdown impossible")
+        try:
+            self.activity_service.shutdown()
+        except Exception:
+            logger.exception("ActivityService: shutdown impossible")
         self.app_context.shutdown()
         # TODO: autres nettoyages (sauvegarde, etc.)
 
@@ -314,6 +375,10 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ Helpers UI
     def _make_settings_group(self, title: str, description: str, widget: QWidget) -> QGroupBox:
+        """Encadre un widget de reglages avec un titre et une description.
+
+        Donne leur aspect uniforme a tous les blocs de l'onglet Parametres.
+        """
         group = QGroupBox(title)
         layout = QVBoxLayout(group)
         layout.setContentsMargins(12, 12, 12, 12)

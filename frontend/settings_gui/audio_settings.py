@@ -3,6 +3,15 @@
 # - Section Parametres Audio (sample rate, loopback, normalisation).
 # - Synchronise les choix UI avec SettingsService/RecorderService.
 #
+# FONCTIONS (sommaire)
+# - AudioSettingsWidget       : widget de configuration audio
+# - _build_ui()               : formulaire + timer de diagnostic
+# - _load_settings()          : charge sample rate + loopback devices
+# - _populate_loopback_devices(): remplit la combo des mics loopback
+# - _on_sample_rate_changed() : emet sampleRateChanged
+# - _save_settings()          : persiste sample rate + loopback
+# - _update_worker_status()   : rafraichit le label de diagnostic du worker
+#
 # LIENS CLES
 # - backend/services/settings_service.py
 # - backend/services/recorder_service.py
@@ -135,6 +144,7 @@ class AudioSettingsWidget(QWidget):
         self._update_worker_status()
 
     def _load_settings(self):
+        """Charge le sample rate courant et rafraichit la liste des mics loopback."""
         # Charger sample rate
         cur_rate = getattr(self.settings, 'sample_rate', None)
         if cur_rate:
@@ -167,12 +177,14 @@ class AudioSettingsWidget(QWidget):
             return []
 
     def _on_sample_rate_changed(self, index):
+        """Emet sampleRateChanged quand l'utilisateur change le sample rate."""
         rate = self.sample_rate_combo.itemData(index)
         if rate:
             self.sampleRateChanged.emit(rate)
             logger.info(f"[AudioSettings] Sample rate sélectionné : {rate}")
 
     def _save_settings(self):
+        """Persiste le sample rate et le device loopback via SettingsService."""
         # Sample rate
         rate = self.sample_rate_combo.currentData()
         if rate:

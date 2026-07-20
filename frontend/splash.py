@@ -3,6 +3,14 @@
 # - Fenetre de chargement affichee pendant l'initialisation de l'app.
 # - S'affiche entre la creation de QApplication et l'affichage de MainWindow.
 # - Mise a jour du statut via set_status() + processEvents() pour rester reactive.
+#
+# CLASSE ET FONCTIONS (sommaire)
+# - SplashScreen (QWidget)
+#   - __init__()           : carte sombre arrondie, titre + ligne de statut.
+#   - _center_on_screen()  : centre la fenetre sur l'ecran principal.
+#   - set_status()         : change le texte ("Initialisation de la base...")
+#     et force un rafraichissement immediat — sans processEvents(), rien ne
+#     s'afficherait car le chargement bloque la boucle d'evenements Qt.
 # -----------------------------------------------------------------------------
 # frontend/splash.py
 
@@ -67,6 +75,7 @@ class SplashScreen(QWidget):
         self._center_on_screen()
 
     def _center_on_screen(self):
+        """Place la fenetre au centre de l'ecran principal."""
         screen = QGuiApplication.primaryScreen()
         if screen:
             rect = screen.availableGeometry()

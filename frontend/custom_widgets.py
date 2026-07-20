@@ -1,15 +1,25 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Widgets PyQt reutilisables partages par plusieurs ecrans.
-# - Centralise des composants UI custom (DnD, dialogs, sliders, etc.).
+# - Boite a outils de petits widgets reutilisables par plusieurs ecrans.
+#
+# CLASSES (sommaire)
+# - QListWidgetDragBugFix : liste Qt dont on peut reordonner les elements a
+#   la souris ; corrige un bug Windows ou l'element glisse "disparaissait",
+#   et previent le parent (updateLibraryOrder) pour sauvegarder le nouvel
+#   ordre. Utilisee pour la liste des librairies dans les parametres.
+# - CustomSlider : slider ameliore — un clic n'importe ou sur la barre
+#   positionne directement le curseur a cet endroit (au lieu d'avancer pas
+#   a pas), et la molette est desactivee pour eviter les changements
+#   accidentels en scrollant la page.
+# - SaveWaveformDialog : boite de dialogue "Enregistrer la forme d'onde" —
+#   propose d'ecraser le fichier original ou d'enregistrer une copie sous
+#   un nouveau nom ; choice() renvoie (ecraser?, nouveau_nom).
 #
 # LIENS CLES
-# - frontend/main_window.py
-# - frontend/settings_gui/libraries_list.py
+# - frontend/settings_gui/libraries_list.py : utilise QListWidgetDragBugFix.
+# - frontend/sample_gui/waveform/waveform_save.py : utilise SaveWaveformDialog.
 # -----------------------------------------------------------------------------
 # frontend/custom_widgets.py
-
-# custom_widgets.py
 
 from PySide6.QtWidgets import QListWidget, QSlider, QStyle
 from PySide6.QtCore    import Qt
@@ -21,6 +31,8 @@ from PySide6.QtWidgets import (
 import qtawesome as qta
 
 class QListWidgetDragBugFix(QListWidget):
+    """Liste reordonnables a la souris, avec contournement d'un bug Windows."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragEnabled(True)
@@ -41,6 +53,13 @@ class QListWidgetDragBugFix(QListWidget):
             super().dragMoveEvent(e)
 
     def dropEvent(self, e: QDropEvent):
+        """Replace l'element lache a sa nouvelle position, widget compris.
+
+        On retire l'element de son ancienne ligne, on le reinsere a la
+        ligne visee (ou en fin de liste si lache dans le vide), puis on
+        remonte la hierarchie des parents pour trouver qui sait sauvegarder
+        le nouvel ordre (methode updateLibraryOrder).
+        """
         src_row = self.currentRow()
         dest_row = self.row(self.itemAt(e.pos()))
         if dest_row < 0:
@@ -68,6 +87,8 @@ class QListWidgetDragBugFix(QListWidget):
             parent.updateLibraryOrder()
 
 class CustomSlider(QSlider):
+    """Slider clic-direct (sans molette) utilise pour les reglages audio."""
+
     def mousePressEvent(self, event):
         """Permet de positionner directement le slider là où on clique."""
         if self.orientation() == Qt.Orientation.Horizontal:
@@ -96,6 +117,8 @@ class CustomSlider(QSlider):
 
 
 class SaveWaveformDialog(QDialog):
+    """Dialogue 'ecraser ou copier ?' a la sauvegarde d'une forme d'onde."""
+
     def __init__(self, parent, default_name: str):
         super().__init__(parent)
         self.setWindowTitle("Enregistrer la forme d'onde")
