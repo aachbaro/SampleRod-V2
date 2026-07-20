@@ -51,7 +51,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -59,6 +58,7 @@ from PySide6.QtWidgets import (
 
 from frontend.sample_gui.wave_form import WaveformWidget
 from frontend.styles import theme
+from frontend.ui import IconButton
 
 from .lab_artifact import LabArtifact
 from .waveform_tool_dnd import (
@@ -115,12 +115,14 @@ class WaveformToolWidget(QWidget):
             self.current_file_label.sizePolicy().verticalPolicy(),
         )
 
-        self.slice_button = QPushButton("Créer une slice")
-        self.slice_button.setObjectName("WaveformToolAction")
+        self.slice_button = IconButton(
+            "scissors", tooltip="Créer une slice de la sélection", size="s"
+        )
         self.slice_button.clicked.connect(self.create_selection_artifact)
 
-        self.current_file_button = QPushButton("Capturer")
-        self.current_file_button.setObjectName("WaveformToolAction")
+        self.current_file_button = IconButton(
+            "camera", tooltip="Capturer le fichier courant en artefact", size="s"
+        )
         self.current_file_button.clicked.connect(self.create_current_file_artifact)
 
         header.addWidget(self.title_label)
@@ -506,9 +508,8 @@ class WaveformToolWidget(QWidget):
         self.setStyleSheet(
             f"""
             QWidget#WaveformToolRoot {{
-                background: {p.BG_MEDIUM};
-                border: 1px solid {p.BORDER_LIGHT};
-                border-radius: 10px;
+                background: transparent;
+                border: none;
             }}
             QWidget#WaveformToolHost {{
                 background: transparent;
@@ -536,21 +537,6 @@ class WaveformToolWidget(QWidget):
                 color: {p.TEXT_MUTED};
                 font-size: 11px;
                 padding: 4px 0;
-            }}
-            QPushButton#WaveformToolAction {{
-                background: {p.BG_CARD};
-                color: {p.TEXT};
-                border: 1px solid {p.BORDER};
-                border-radius: 8px;
-                padding: 6px 10px;
-            }}
-            QPushButton#WaveformToolAction:hover {{
-                background: {p.BG_HOVER};
-                border-color: {p.BORDER_LIGHT};
-            }}
-            QPushButton#WaveformToolAction:disabled {{
-                color: {p.TEXT_MUTED};
-                border-color: {p.BORDER_LIGHT};
             }}
             """
         )

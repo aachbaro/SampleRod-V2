@@ -60,6 +60,18 @@ _INLINE: dict[str, str] = {
     "window": '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16"/>',
     "app-window": '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/>',
     "square": '<rect x="4" y="4" width="16" height="16" rx="2"/>',
+    "player-stop": '<rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none"/>',
+    "repeat": '<path d="M4 12V9a3 3 0 0 1 3-3h13"/><path d="M17 3l3 3-3 3"/>'
+              '<path d="M20 12v3a3 3 0 0 1-3 3H4"/><path d="M7 21l-3-3 3-3"/>',
+    "scissors": '<circle cx="6" cy="7" r="2"/><circle cx="6" cy="17" r="2"/>'
+                '<path d="M8.7 8.7 20 20"/><path d="M8.7 15.3 20 4"/>',
+    "camera": '<path d="M5 8h2l1.5-2h7L17 8h2a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"/>'
+              '<circle cx="12" cy="13" r="3"/>',
+    "save": '<path d="M6 4h9l3 3v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>'
+            '<path d="M8 4v4h6V4"/><path d="M8 14h8"/>',
+    "undo": '<path d="M9 13l-4-4 4-4"/><path d="M5 9h9a5 5 0 0 1 0 10h-1"/>',
+    "redo": '<path d="M15 13l4-4-4-4"/><path d="M19 9h-9a5 5 0 0 0 0 10h1"/>',
+    "pin": '<path d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/>',
     # --- Categories / modules ---
     "folder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "wave": '<path d="M3 12c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>',

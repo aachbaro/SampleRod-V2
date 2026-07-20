@@ -247,6 +247,16 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
 - **(Parallèle Codex)** : `LabArtifactStore` central + module Artefacts, flags
   `ModuleType` (workspace_creatable / renamable / duplicable / closable).
 
+### Modernisation UI — module Waveform + guide de pattern
+- **Wrapper Waveform épuré** : boutons texte « Créer une slice » / « Capturer »
+  → `IconButton` (scissors / camera) + tooltips ; root sans bordure (fini le
+  double cadre avec la fenêtre) ; QSS des anciens boutons supprimé.
+- **Icônes ajoutées** au registre pour les prochaines barres : `scissors`,
+  `camera`, `save`, `undo`, `redo`, `player-stop`, `repeat`, `pin`.
+- **Guide** : [UI_MODERNIZATION.md](UI_MODERNIZATION.md) décrit le pattern
+  d'épuration (boutons→icônes, bordures, onglets, sliders, cards) pour que Codex
+  l'applique aux autres éléments (barre interne de l'éditeur, Break, Compositeur…).
+
 ### Retouches UI (Stem Lab + onglets)
 - **Sliders épurés** : fond transparent + groove fin (plus de boîte sombre bizarre).
 - **Croix d'onglet uniformes** : IconButton « x » propre partout (Waveform **et**
