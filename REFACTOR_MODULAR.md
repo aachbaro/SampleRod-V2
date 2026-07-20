@@ -265,6 +265,13 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
 - **Mixer uniformisé** : les items du mixer utilisent les **mêmes cards `StemTile`**
   (avec mini-lecteur) que les pistes séparées, au lieu de chips plats.
 
+### Fix — drop dans le module Waveform
+- Dropper une slice/fichier sur l'éditeur d'un onglet **n'écrase plus** l'onglet
+  courant. Dans le module, le drop-remplace de l'éditeur est désactivé
+  (`WaveformToolWidget.set_drop_replace_enabled(False)`) ; les drops remontent au
+  module → **nouvel onglet** (ou focus si le fichier est déjà ouvert). Le
+  comportement classique (remplacer) reste inchangé hors module.
+
 ### À suivre
 - Break / Compositeur / Bins en modules.
 - Modèle d'artefact avec **lignée** (`parent_ids`, `operation`) + **drag-and-drop

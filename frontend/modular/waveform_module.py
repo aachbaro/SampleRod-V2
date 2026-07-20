@@ -72,6 +72,12 @@ class WaveformModule(QWidget):
             self._tabs.setCurrentIndex(existing)
             return True
         editor = self._editor_factory()
+        # Dans le module, un drop ne doit PAS ecraser l'onglet courant : on
+        # desactive le drop-remplace de l'editeur ; les drops remontent au
+        # module (nouvel onglet).
+        disable_replace = getattr(editor, "set_drop_replace_enabled", None)
+        if callable(disable_replace):
+            disable_replace(False)
         _connect = getattr(editor, "artifactCreated", None)
         if _connect is not None:
             editor.artifactCreated.connect(self.artifactCreated.emit)

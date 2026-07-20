@@ -78,6 +78,10 @@ class WaveformToolWidget(QWidget):
         self._current_path: str | None = None
         self._waveform_widget: WaveformWidget | None = None
         self._drop_active = False
+        # Drop qui REMPLACE le fichier courant : actif en mode classique, mais
+        # desactive dans l'atelier modulaire (le module ouvre alors un nouvel
+        # onglet plutot que d'ecraser l'onglet courant).
+        self._drop_replace_enabled = True
         self._build_ui()
         theme.manager.themeChanged.connect(lambda *_args: self._apply_styles())
 
@@ -287,7 +291,7 @@ class WaveformToolWidget(QWidget):
             QSizePolicy.Policy.Maximum,
         )
         waveform.setMaximumHeight(380)
-        waveform.setAcceptDrops(True)
+        waveform.setAcceptDrops(self._drop_replace_enabled)
         waveform.installEventFilter(self)
         waveform.separationRequested.connect(
             lambda p: self.separationRequested.emit([p])
@@ -423,7 +427,22 @@ class WaveformToolWidget(QWidget):
             return
         super().dropEvent(event)
 
+    def set_drop_replace_enabled(self, enabled: bool) -> None:
+        """Active/desactive le drop qui remplace le fichier courant.
+
+        Desactive dans l'atelier modulaire : les drops remontent alors au
+        WaveformModule (qui ouvre un nouvel onglet), au lieu d'ecraser l'onglet.
+        """
+        self._drop_replace_enabled = bool(enabled)
+        self.setAcceptDrops(self._drop_replace_enabled)
+        if getattr(self, "waveform_host", None) is not None:
+            self.waveform_host.setAcceptDrops(self._drop_replace_enabled)
+        if self._waveform_widget is not None:
+            self._waveform_widget.setAcceptDrops(self._drop_replace_enabled)
+
     def _handle_drag_enter(self, event) -> bool:
+        if not self._drop_replace_enabled:
+            return False
         mime = event.mimeData()
         if not has_supported_waveform_drop(mime):
             self._set_drop_active(False)
@@ -436,6 +455,8 @@ class WaveformToolWidget(QWidget):
         return True
 
     def _handle_drag_move(self, event) -> bool:
+        if not self._drop_replace_enabled:
+            return False
         mime = event.mimeData()
         if not has_supported_waveform_drop(mime):
             self._set_drop_active(False)
@@ -453,6 +474,8 @@ class WaveformToolWidget(QWidget):
         return True
 
     def _handle_drop(self, event) -> bool:
+        if not self._drop_replace_enabled:
+            return False
         paths = self._paths_from_mime(event.mimeData())
         self._set_drop_active(False)
         if not paths:
