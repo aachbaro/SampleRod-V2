@@ -35,6 +35,7 @@ class ModuleContext:
 
     app_context: object
     directory_service: object
+    artifact_store: object | None
     window_manager: "WindowManager"
 
 
@@ -50,6 +51,7 @@ class WindowManager(QObject):
         self._context = ModuleContext(
             app_context=app_context,
             directory_service=directory_service,
+            artifact_store=getattr(app_context, "lab_artifact_store", None),
             window_manager=self,
         )
         self._instances: dict[str, ModuleInstance] = {}
@@ -57,6 +59,8 @@ class WindowManager(QObject):
         self._counters: dict[str, int] = {}
         self._companions: list[QWidget] = []  # fenetres hors-module (Workspace)
         self._raising = False                 # garde anti-recursion group raise
+        self._backdrop = None                 # fond global optionnel
+        self._backdrop_enabled = False
 
     # -- Lecture ------------------------------------------------------------
     @property
@@ -70,12 +74,39 @@ class WindowManager(QObject):
     def instances(self) -> list[ModuleInstance]:
         return list(self._instances.values())
 
+    def instances_for_type(self, module_type: str) -> list[ModuleInstance]:
+        return [inst for inst in self._instances.values() if inst.module_type == module_type]
+
     def get_instance(self, instance_id: str) -> ModuleInstance | None:
         return self._instances.get(instance_id)
+
+    def module_type_for_instance(self, instance_id: str) -> ModuleType | None:
+        inst = self.get_instance(instance_id)
+        if inst is None or not self._registry.has(inst.module_type):
+            return None
+        return self._registry.get(inst.module_type)
 
     def is_visible(self, instance_id: str) -> bool:
         win = self._windows.get(instance_id)
         return bool(win is not None and win.isVisible())
+
+    def can_create_instance(self, module_type: str) -> bool:
+        if not self._registry.has(module_type):
+            return False
+        mt = self._registry.get(module_type)
+        return mt.multi or not self.instances_for_type(module_type)
+
+    def can_rename_instance(self, instance_id: str) -> bool:
+        mt = self.module_type_for_instance(instance_id)
+        return bool(mt is not None and mt.renamable)
+
+    def can_duplicate_instance(self, instance_id: str) -> bool:
+        mt = self.module_type_for_instance(instance_id)
+        return bool(mt is not None and mt.duplicable and mt.multi)
+
+    def can_close_instance(self, instance_id: str) -> bool:
+        mt = self.module_type_for_instance(instance_id)
+        return bool(mt is not None and mt.closable)
 
     def instances_by_category(self) -> dict[str, list[ModuleInstance]]:
         """Instances regroupees par categorie, dans l'ordre du registre."""
@@ -102,6 +133,13 @@ class WindowManager(QObject):
         state: dict | None = None,
     ) -> str:
         mt = self._registry.get(module_type)
+        if not mt.multi:
+            existing = self.instances_for_type(module_type)
+            if existing:
+                target_id = existing[0].instance_id
+                if show or visible:
+                    self.show_instance(target_id)
+                return target_id
         if instance_id is None:
             instance_id = self._next_id(module_type)
         inst = ModuleInstance(
@@ -144,15 +182,27 @@ class WindowManager(QObject):
             self.show_instance(instance_id)
 
     def close_instance(self, instance_id: str) -> None:
+        if not self.can_close_instance(instance_id):
+            self.hide_instance(instance_id)
+            return
         inst = self._instances.pop(instance_id, None)
         win = self._windows.pop(instance_id, None)
         if win is not None:
             win.windowHidden.disconnect(self._on_window_hidden)
+            widget = win.module_widget()
+            cleanup = getattr(widget, "cleanup", None)
+            if callable(cleanup):
+                try:
+                    cleanup()
+                except Exception:
+                    pass
             win.deleteLater()
         if inst is not None:
             self.instancesChanged.emit()
 
     def rename_instance(self, instance_id: str, title: str) -> None:
+        if not self.can_rename_instance(instance_id):
+            return
         inst = self._instances.get(instance_id)
         if inst is None:
             return
@@ -166,6 +216,8 @@ class WindowManager(QObject):
         self.instanceUpdated.emit(instance_id)
 
     def duplicate_instance(self, instance_id: str) -> str | None:
+        if not self.can_duplicate_instance(instance_id):
+            return None
         inst = self._instances.get(instance_id)
         if inst is None:
             return None
@@ -228,13 +280,17 @@ class WindowManager(QObject):
     def raise_group(self, active_window: QWidget | None = None) -> None:
         """Remonte toutes les fenetres visibles ensemble (comme une seule).
 
-        La fenetre active est remontee en dernier pour rester au-dessus.
-        Un verrou evite toute recursion via les evenements d'activation.
+        Le fond global (backdrop) est remonte en PREMIER pour rester sous les
+        fenetres tout en passant au-dessus des autres applications. La fenetre
+        active est remontee en dernier. Un verrou evite toute recursion via les
+        evenements d'activation.
         """
         if self._raising:
             return
         self._raising = True
         try:
+            if self._backdrop is not None and self._backdrop.isVisible():
+                self._backdrop.raise_()
             group: list[QWidget] = []
             for inst in self._instances.values():
                 if not inst.visible:
@@ -251,6 +307,25 @@ class WindowManager(QObject):
         finally:
             self._raising = False
 
+    # -- Fond global (backdrop) --------------------------------------------
+    def set_backdrop_enabled(self, enabled: bool) -> None:
+        """Active/desactive l'aplat plein-ecran derriere les fenetres."""
+        self._backdrop_enabled = bool(enabled)
+        if self._backdrop_enabled:
+            if self._backdrop is None:
+                from .backdrop import BackdropWindow
+
+                self._backdrop = BackdropWindow(self)
+            self._backdrop.cover_screens()
+            self._backdrop.show()
+            self._backdrop.lower()
+            self.raise_group()
+        elif self._backdrop is not None:
+            self._backdrop.hide()
+
+    def is_backdrop_enabled(self) -> bool:
+        return self._backdrop_enabled
+
     def suspend(self) -> None:
         """Masque les fenetres visibles SANS changer leur etat 'visible'.
 
@@ -261,6 +336,8 @@ class WindowManager(QObject):
             win = self._windows.get(inst.instance_id)
             if win is not None and inst.visible:
                 win.hide()
+        if self._backdrop is not None:
+            self._backdrop.hide()
 
     def resume(self) -> None:
         """Re-affiche les fenetres dont l'instance est marquee visible."""
@@ -268,6 +345,8 @@ class WindowManager(QObject):
             win = self._windows.get(inst.instance_id)
             if win is not None and inst.visible:
                 win.show()
+        if self._backdrop_enabled:
+            self.set_backdrop_enabled(True)
 
     def _on_window_activated(self, instance_id: str) -> None:
         self.raise_group(active_window=self._windows.get(instance_id))
@@ -318,6 +397,10 @@ class WindowManager(QObject):
     def _connect_module_signals(self, inst: ModuleInstance, widget: QWidget) -> None:
         # Cablage inter-modules, etendu au fur et a mesure que les modules
         # rejoignent l'atelier.
+        artifact_signal = getattr(widget, "artifactCreated", None)
+        if artifact_signal is not None:
+            artifact_signal.connect(self._on_artifact_created)
+
         if inst.module_type == "reserve":
             signal = getattr(widget, "sendToLaboRequested", None)
             if signal is not None:
@@ -326,6 +409,21 @@ class WindowManager(QObject):
             signal = getattr(widget, "separationRequested", None)
             if signal is not None:
                 signal.connect(self._open_paths_in_stems)
+        elif inst.module_type == "artifacts":
+            signal = getattr(widget, "openPathsRequested", None)
+            if signal is not None:
+                signal.connect(self._open_paths_in_waveform)
+
+    def _on_artifact_created(self, artifact) -> None:
+        store = getattr(self._context, "artifact_store", None)
+        if store is not None:
+            try:
+                store.upsert(artifact)
+            except Exception:
+                pass
+
+        if self._registry.has("artifacts") and self._pick_target("artifacts") is None:
+            self.create_instance("artifacts")
 
     def _open_paths_in_waveform(self, paths) -> str | None:
         """Ouvre chaque fichier en ONGLET dans une instance Waveform.

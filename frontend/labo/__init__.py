@@ -7,6 +7,7 @@
 """Labo widgets and artifact helpers."""
 
 from .artifact_tray import ArtifactTrayWidget
+from .artifact_store import LabArtifactStore, ensure_lab_artifact_store
 from .bins_panel import LaboBinsPanel
 from .lab_artifact import LabArtifact
 from .labo_widget import LaboWidget
@@ -15,9 +16,11 @@ from .waveform_tool import WaveformToolWidget
 
 __all__ = [
     "ArtifactTrayWidget",
+    "LabArtifactStore",
     "LaboBinsPanel",
     "LabArtifact",
     "LaboWidget",
     "StemSeparatorToolWidget",
     "WaveformToolWidget",
+    "ensure_lab_artifact_store",
 ]

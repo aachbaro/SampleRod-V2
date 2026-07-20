@@ -18,12 +18,13 @@ C'est un atelier pour **capturer, découper, transformer et organiser du son**
 ## Sommaire
 
 1. [Vision produit](#vision-produit)
-2. [Architecture actuelle](#architecture-actuelle)
-3. [État du produit, module par module](#état-du-produit-module-par-module)
-4. [Roadmap par phases](#roadmap-par-phases)
-5. [Backlog court terme (tickets flottants)](#backlog-court-terme)
-6. [Pièges à éviter](#pièges-à-éviter)
-7. [Docs spécialisées](#docs-spécialisées)
+2. [Historique de chantier](#historique-de-chantier)
+3. [Architecture actuelle](#architecture-actuelle)
+4. [État du produit, module par module](#état-du-produit-module-par-module)
+5. [Roadmap par phases](#roadmap-par-phases)
+6. [Backlog court terme (tickets flottants)](#backlog-court-terme)
+7. [Pièges à éviter](#pièges-à-éviter)
+8. [Docs spécialisées](#docs-spécialisées)
 
 ---
 
@@ -89,8 +90,48 @@ Ils deviennent des artefacts réutilisables, qui peuvent être :
 - réinjectés dans la Réserve
 - retravaillés dans le Labo
 
+Le Labo classique et l'atelier modulaire partagent maintenant un même
+registre d'artefacts temporaires (`LabArtifactStore`) :
+
+- un outil du Labo produit un `LabArtifact`
+- l'artefact apparaît dans le plateau classique
+- le même artefact peut aussi être consulté depuis le module modulaire
+  `Artefacts`
+- une sauvegarde transforme cet artefact temporaire en vrai fichier réutilisable
+
 SampleRod fonctionne comme un cycle :
 Réserve → Labo → Réserve
+
+---
+
+## Historique de chantier
+
+**Règle importante :** à chaque changement notable de structure, de flux
+produit, d'UI ou de service central, **mettre à jour cette section dans le
+README le jour même**. Ce journal sert de mémoire courte du projet ; il doit
+rester plus concret et plus rapide à relire qu'un diff Git.
+
+### 20 juillet 2026
+
+- Centralisation du flux d'artefacts du Labo via `frontend/labo/artifact_store.py`
+  (`LabArtifactStore`) partagé entre atelier classique et modulaire.
+- Le plateau d'artefacts du Labo classique n'est plus une poche d'état locale :
+  `artifact_tray.py` relaie désormais save/open/remove vers le store central.
+- Ajout du module modulaire `Artefacts` (`frontend/modular/artifact_module.py`)
+  branché au `WindowManager`.
+- Le module `Artefacts` est désormais **singleton, stable et non supprimable** :
+  une seule instance, masquable mais ni duplicable ni fermable définitivement.
+- Support du drag and drop de **slices / sélection waveform** vers les outils
+  audio du Labo : `Waveform`, `Break`, `Stems` et `Waveform` modulaire.
+- Le pipeline de drop audio sait maintenant convertir une slice dragguée en WAV
+  temporaire au moment du drop, sans créer de fichier parasite au simple hover.
+
+### 24 avril 2026
+
+- Refonte de l'architecture produit autour du modèle `Réserve → Labo → Réserve`.
+- Intégration du Break Processing dans le Labo avec UI complète.
+- Intégration de la Stem Separation asynchrone avec suivi de tâches.
+- Détection de gamme intégrée au flux principal et exposition de `dominant_note`.
 
 ## Architecture actuelle
 
@@ -147,9 +188,20 @@ samplerod/
 │   │   ├── break_generator_panel.py # générateur de patterns (knobs + 4 onglets)
 │   │   ├── stem_separator_tool.py  # interface séparation de stems
 │   │   ├── artifact_tray.py        # barre d'artefacts générés
+│   │   ├── artifact_store.py       # registre partagé des artefacts du Labo
 │   │   ├── bins_panel.py           # bacs de rangement des slices
 │   │   ├── lab_artifact.py         # modèle d'artefact Labo
 │   │   └── audio_drop.py           # zone de dépôt audio
+│   ├── modular/                    # atelier modulaire (refactor incrémental)
+│   │   ├── window_manager.py       # orchestration des fenêtres/modules
+│   │   ├── workspace_window.py     # centre de contrôle modulaire
+│   │   ├── waveform_module.py      # conteneur à onglets pour plusieurs waveforms
+│   │   ├── artifact_module.py      # navigateur modulaire des artefacts
+│   │   └── modules_setup.py        # registre des modules disponibles
+│   ├── ui/                         # design-core partagé du refactor modulaire
+│   │   ├── icons.py
+│   │   ├── icon_button.py
+│   │   └── fast_tooltip.py
 │   ├── library_gui/                # gestion des bibliothèques
 │   │   ├── library_widget.py
 │   │   ├── library_detail.py
@@ -190,6 +242,13 @@ samplerod/
 - `backend/models/` = données + logique métier (indépendant de Qt)
 - `backend/services/` = orchestration (connaît Qt pour les signaux, pas l'UI)
 - `frontend/` = UI pure, consomme les services
+
+**Refactor en cours à garder lisible :**
+
+- l'onglet `Atelier` classique reste la référence fonctionnelle
+- `frontend/modular/` prépare l'atelier multi-fenêtres, sans casser le flux existant
+- les artefacts du Labo ne vivent plus seulement dans un widget local :
+  `artifact_store.py` sert de point de partage entre classique et modulaire
 
 **Un pattern précieux à conserver :** les prototypes (`drum_detector`,
 `scale_detector`) sont volontairement conservés comme référence algorithmique,
@@ -238,6 +297,7 @@ Légende : [x] opérationnel · [~] partiel · [ ] à faire
 - [x] `labo/stem_separator_tool.py` : UI de lancement + suivi progression
 - [x] `frontend/activity/` : système ActivityService + ActivityTrayWidget pour
       toutes les tâches de fond longues (stems, analyse, etc.)
+- [x] Les stems tombent dans le flux d'artefacts partagé du Labo
 - [ ] Réinjection automatique des stems dans la Réserve
 
 ### Module 5 — Analyse musicale [~]
@@ -436,6 +496,7 @@ Bugs et petites features à traiter :
 Ces README restent utiles comme références de modules. Le présent document
 est le point d'entrée ; les suivants entrent dans les détails d'implémentation.
 
+- [REFACTOR_MODULAR.md](REFACTOR_MODULAR.md) — état du chantier atelier modulaire
 - [site/README.md](site/README.md) — le site marchand (Stripe, OIDC, feed)
 - [README_WAVEFORM_EDITOR.md](README_WAVEFORM_EDITOR.md)
 - [README_SAMPLE_COMPOSER.md](README_SAMPLE_COMPOSER.md)
@@ -450,4 +511,4 @@ est le point d'entrée ; les suivants entrent dans les détails d'implémentatio
 
 ---
 
-_Dernière mise à jour : 24 avril 2026 — version courante : voir `VERSION`._
+_Dernière mise à jour : 20 juillet 2026 — version courante : voir `VERSION`._

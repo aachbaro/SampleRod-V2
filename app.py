@@ -234,7 +234,8 @@ if __name__ == '__main__':
         # dans la boucle d'evenements Qt : l'application "vit" dans gui.exec()
         # jusqu'a sa fermeture par l'utilisateur.
         splash.close()
-        main_window.show()
+        # start() choisit le mode (classique / modulaire) sans flash de l'autre.
+        main_window.start()
         sys.exit(gui.exec())
     except Exception:
         logger.exception("Echec pendant l'initialisation de l'interface")

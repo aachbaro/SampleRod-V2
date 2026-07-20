@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
@@ -42,10 +42,23 @@ class _InstanceRow(QWidget):
     duplicate = Signal(str)
     closeInstance = Signal(str)
 
-    def __init__(self, instance_id: str, title: str, visible: bool, parent=None):
+    def __init__(
+        self,
+        instance_id: str,
+        title: str,
+        visible: bool,
+        *,
+        renamable: bool = True,
+        duplicable: bool = True,
+        closable: bool = True,
+        parent=None,
+    ):
         super().__init__(parent)
         self._instance_id = instance_id
         self._visible = visible
+        self._renamable = bool(renamable)
+        self._duplicable = bool(duplicable)
+        self._closable = bool(closable)
         self.setObjectName("WsInstanceRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
@@ -84,8 +97,10 @@ class _InstanceRow(QWidget):
         self._refresh_visual()
 
     def _set_actions_visible(self, visible: bool) -> None:
-        for btn in self._actions:
-            btn.setVisible(visible)
+        self._eye_btn.setVisible(visible)
+        self._rename_btn.setVisible(visible and self._renamable)
+        self._dup_btn.setVisible(visible and self._duplicable)
+        self._close_btn.setVisible(visible and self._closable)
 
     def enterEvent(self, event):  # noqa: N802
         self._set_actions_visible(True)
@@ -137,6 +152,17 @@ class WorkspaceWindow(QWidget):
         theme.manager.themeChanged.connect(lambda *_a: self._apply_styles())
         self._wm.add_companion(self)
         self._rebuild()
+        # Restaure l'etat du fond global (backdrop)
+        backdrop_on = QSettings("SampleRod", "Main").value(
+            "modular_backdrop_enabled", False, type=bool
+        )
+        self._backdrop_btn.setChecked(bool(backdrop_on))
+        self._wm.set_backdrop_enabled(bool(backdrop_on))
+
+    def _on_backdrop_toggled(self, *_args) -> None:
+        enabled = self._backdrop_btn.isChecked()
+        self._wm.set_backdrop_enabled(enabled)
+        QSettings("SampleRod", "Main").setValue("modular_backdrop_enabled", enabled)
 
     def changeEvent(self, event):  # noqa: N802
         # Workspace active -> remonte tout le groupe de fenetres visibles.
@@ -162,6 +188,13 @@ class WorkspaceWindow(QWidget):
         h.setContentsMargins(14, 10, 8, 10)
         self._brand = QLabel("SAMPLEROD")
         self._brand.setObjectName("WsBrand")
+        self._backdrop_btn = IconButton(
+            "square",
+            tooltip="Fond global : masquer le bureau derriere l'atelier",
+            size="s",
+        )
+        self._backdrop_btn.setCheckable(True)
+        self._backdrop_btn.clicked.connect(self._on_backdrop_toggled)
         self._exit_btn = IconButton(
             "window",
             tooltip="Revenir a l'affichage classique",
@@ -169,6 +202,7 @@ class WorkspaceWindow(QWidget):
         )
         self._exit_btn.clicked.connect(self.exitRequested.emit)
         h.addWidget(self._brand, 1)
+        h.addWidget(self._backdrop_btn, 0)
         h.addWidget(self._exit_btn, 0)
         root.addWidget(header)
 
@@ -237,16 +271,30 @@ class WorkspaceWindow(QWidget):
         lay.addWidget(label, 1)
 
         if type_id is not None:
+            mt = self._wm.registry.get(type_id)
+        else:
+            mt = None
+
+        if (
+            type_id is not None
+            and mt is not None
+            and mt.workspace_creatable
+            and self._wm.can_create_instance(type_id)
+        ):
             add_btn = IconButton("plus", tooltip=f"Nouvelle instance ({category.lower()})", size="s")
             add_btn.clicked.connect(lambda _=False, tid=type_id: self._wm.create_instance(tid))
             lay.addWidget(add_btn, 0)
         return widget
 
     def _build_row(self, inst) -> _InstanceRow:
+        mt = self._wm.module_type_for_instance(inst.instance_id)
         row = _InstanceRow(
             inst.instance_id,
             inst.title,
             self._wm.is_visible(inst.instance_id),
+            renamable=bool(mt is not None and mt.renamable),
+            duplicable=bool(mt is not None and mt.duplicable and mt.multi),
+            closable=bool(mt is not None and mt.closable),
         )
         row.activate.connect(self._wm.show_instance)
         row.toggleVisibility.connect(self._wm.toggle_instance)
@@ -256,6 +304,8 @@ class WorkspaceWindow(QWidget):
         return row
 
     def _on_rename(self, instance_id: str) -> None:
+        if not self._wm.can_rename_instance(instance_id):
+            return
         inst = self._wm.get_instance(instance_id)
         if inst is None:
             return

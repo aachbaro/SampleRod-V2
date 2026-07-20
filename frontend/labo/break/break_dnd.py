@@ -13,6 +13,7 @@ from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import QWidget
 
 from frontend.labo.waveform_tool_dnd import (
+    can_accept_waveform_drop,
     has_supported_waveform_drop,
     resolve_waveform_drop_paths,
 )
@@ -56,7 +57,10 @@ class BreakDndController:
         if self.widget._internal_drag_active:
             return False
         mime = event.mimeData()
-        if not has_supported_waveform_drop(mime) or not self._paths_from_mime(mime):
+        if not has_supported_waveform_drop(mime):
+            self._set_drop_active(False)
+            return False
+        if not can_accept_waveform_drop(mime, sample_path_lookup=self._path_for_sample_id):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()
@@ -67,7 +71,10 @@ class BreakDndController:
         if self.widget._internal_drag_active:
             return False
         mime = event.mimeData()
-        if not has_supported_waveform_drop(mime) or not self._paths_from_mime(mime):
+        if not has_supported_waveform_drop(mime):
+            self._set_drop_active(False)
+            return False
+        if not can_accept_waveform_drop(mime, sample_path_lookup=self._path_for_sample_id):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()

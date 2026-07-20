@@ -40,6 +40,12 @@ def _stems_factory(ctx):
     return StemSeparatorToolWidget(ctx.app_context)
 
 
+def _artifacts_factory(ctx):
+    from .artifact_module import ArtifactModule
+
+    return ArtifactModule(ctx.app_context)
+
+
 def build_default_registry() -> ModuleRegistry:
     """Registre des modules disponibles dans l'atelier modulaire (v1)."""
     registry = ModuleRegistry()
@@ -74,6 +80,21 @@ def build_default_registry() -> ModuleRegistry:
             factory=_stems_factory,
             default_title="Stem Lab",
             multi=True,
+        )
+    )
+    registry.register(
+        ModuleType(
+            type_id="artifacts",
+            label="Artefacts",
+            category="ARTEFACTS",
+            icon="box",
+            factory=_artifacts_factory,
+            default_title="Artefacts",
+            multi=False,
+            workspace_creatable=False,
+            renamable=False,
+            duplicable=False,
+            closable=False,
         )
     )
     return registry

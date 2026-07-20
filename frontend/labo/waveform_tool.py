@@ -61,7 +61,11 @@ from frontend.sample_gui.wave_form import WaveformWidget
 from frontend.styles import theme
 
 from .lab_artifact import LabArtifact
-from .waveform_tool_dnd import has_supported_waveform_drop, resolve_waveform_drop_paths
+from .waveform_tool_dnd import (
+    can_accept_waveform_drop,
+    has_supported_waveform_drop,
+    resolve_waveform_drop_paths,
+)
 
 
 class WaveformToolWidget(QWidget):
@@ -188,6 +192,15 @@ class WaveformToolWidget(QWidget):
         path = str((state or {}).get("path") or "")
         if path and os.path.isfile(path):
             self.open_file(path)
+
+    def cleanup(self) -> None:
+        """Arrete la lecture et detruit proprement l'editeur.
+
+        A appeler AVANT de supprimer ce widget (fermeture d'onglet / de module)
+        pour eviter que le callback audio sounddevice n'emette sur un widget
+        deja detruit ("Signal source has been deleted").
+        """
+        self._destroy_waveform_widget()
 
     def create_selection_artifact(self) -> None:
         """Bouton "Creer une slice" : capture la selection en artefact.
@@ -413,8 +426,7 @@ class WaveformToolWidget(QWidget):
         if not has_supported_waveform_drop(mime):
             self._set_drop_active(False)
             return False
-        paths = self._paths_from_mime(mime)
-        if not paths:
+        if not can_accept_waveform_drop(mime, sample_path_lookup=self._path_for_sample_id):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()
@@ -426,8 +438,7 @@ class WaveformToolWidget(QWidget):
         if not has_supported_waveform_drop(mime):
             self._set_drop_active(False)
             return False
-        paths = self._paths_from_mime(mime)
-        if not paths:
+        if not can_accept_waveform_drop(mime, sample_path_lookup=self._path_for_sample_id):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()

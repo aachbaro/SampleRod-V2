@@ -60,14 +60,15 @@ Modèle conceptuel :
   (create / show / hide / rename / duplicate / close + save/restore de session
   en mémoire), fenêtres `ModuleWindow` (hide-on-close + géométrie avec clamp
   multi-écran), fenêtre **Workspace** listant les instances par catégorie.
-- **Modules branchés** : **Réserve**, **Waveform** et **Stem Lab** (réutilisent
-  les widgets existants) ; routage Waveform → Stems (envoi au séparateur).
+- **Modules branchés** : **Réserve**, **Waveform**, **Stem Lab** et
+  **Artefacts** (réutilisent les widgets existants) ; routage Waveform → Stems
+  (envoi au séparateur) et ouverture Artefacts → Waveform.
 - **Réserve → Waveform** : « envoyer au labo » **ou glisser-déposer** (depuis la
   Réserve ou un fichier externe) ouvre chaque fichier dans un **onglet** du module
   Waveform (réutilise une fenêtre existante ; le module est cible de drop, même vide).
-- **Fenêtres immersives** : modules **sans cadre OS** (ni croix ni réduction),
-  **coins arrondis** ; bordure qui **s'éclaire au focus** ; déplacement par la
-  barre de titre fine, redimensionnement par les bords.
+- **Fenêtres natives** : les modules utilisent de nouveau le **cadre OS natif**
+  (déplacement, redimensionnement, croix native), tout en gardant le
+  comportement **hide-on-close**.
 - **Onglets par fichier** : le module Waveform a un onglet par fichier (bouton
   `+` pour ouvrir, onglets fermables et déplaçables).
 - **Workspace** : les actions de chaque ligne n'apparaissent qu'**au survol**.
@@ -80,9 +81,22 @@ Modèle conceptuel :
 - **Focus groupé** : activer une fenêtre remonte tout le groupe de fenêtres
   visibles + le Workspace au premier plan, comme si c'était une seule fenêtre
   (le modulaire sert à organiser l'espace, pas à disperser les fenêtres).
-- **Mode mémorisé** : le dernier mode (classique / modulaire) est restauré au
-  lancement. La restauration des *fenêtres* de session est temporairement
-  désactivée (voir Limites).
+- **Session modulaire mémorisée** : le dernier mode est restauré au lancement,
+  et les instances modulaires sont de nouveau sauvegardées/restaurées via
+  `QSettings` (`modular_session_v1`).
+- **Artefacts centralisés** : le Labo classique et l'atelier modulaire passent
+  maintenant par un même `LabArtifactStore` ; un artefact produit par Waveform
+  ou Stem Lab peut apparaître dans le plateau classique et dans une fenêtre
+  modulaire `Artefacts`.
+- **Stem Lab refondu** (ergonomique) : la file d'attente est remplacée par des
+  **onglets** (un par fichier). Chaque onglet montre les **4 pistes séparées**
+  (tuiles draggables avec **mini-lecteur** : play/pause + slider de position) et
+  un **mixer** en dessous (glisser des stems → preview du mix → tuile de mix
+  draggable ailleurs + envoi artefact). Le drop qui lance la séparation n'est
+  accepté que dans la zone du haut ; croix d'onglet = IconButton propre.
+- **Fond global optionnel** (backdrop) : un aplat plein-écran se pose derrière
+  l'atelier pour masquer le bureau / les autres applis. Toggle depuis le
+  Workspace (bouton □), mémorisé (QSettings), et intégré au focus groupé.
 
 ### Arborescence des nouveaux fichiers
 
@@ -99,11 +113,17 @@ frontend/modular/                ← atelier modulaire
 ├── module_registry.py           ModuleType / ModuleRegistry (catalogue)
 ├── window_manager.py            WindowManager (contrôleur) + ModuleContext
 ├── modules_setup.py             enregistrement des modules concrets
+├── artifact_module.py           navigateur modulaire des artefacts
 ├── waveform_module.py           WaveformModule (conteneur à onglets, 1/fichier)
 └── workspace_window.py          WorkspaceWindow (centre de contrôle)
+
+frontend/labo/
+├── lab_artifact.py              fiche d'un artefact temporaire
+├── artifact_store.py            registre partagé des artefacts du Labo
+└── artifact_tray.py             vue liste / preview / save / open
 ```
 
-Point de montage : `frontend/main_window.py` (`_open_modular_workspace`, bouton coin).
+Point de montage : `frontend/main_window.py` (`_enter_modular_mode`, bouton coin).
 
 ---
 
@@ -116,9 +136,9 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 | 1 | Design-core (icônes Tabler, IconButton, tooltips, palette)  | ✅ (barre de titre custom différée) |
 | 2 | WindowManager + fenêtre Workspace (create/show/hide/rename) | ✅ (+ duplicate) |
 | 3 | Plusieurs Waveforms (fenêtres, état indépendant, restauration) | ✅ module + multi-instances + routage + restauration de session |
-| 4 | Modèle central d'artefact (id, chemin, métadonnées, lignée) | ⬜ (LabArtifact existe → à formaliser en ArtifactStore) |
+| 4 | Modèle central d'artefact (id, chemin, métadonnées, lignée) | 🟡 `LabArtifactStore` en place ; lignée / store global final encore à enrichir |
 | 5 | Drag-and-drop d'artefacts (MIME `application/x-samplerod-artifact`) | ⬜ |
-| 6 | Sauvegarde/restauration de session + workspaces nommés      | 🟡 mode mémorisé ✅ · restauration des fenêtres **désactivée** (temporaire) · workspaces nommés ⬜ |
+| 6 | Sauvegarde/restauration de session + workspaces nommés      | 🟡 mode mémorisé ✅ · session modulaire restaurée ✅ · workspaces nommés ⬜ |
 | 7 | Onglets par fichier (module) ✅ · regroupement/détachement d'instances ⬜ | 🟡 |
 
 ### Modules à intégrer
@@ -128,10 +148,10 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 | Réserve de samples             | ✅ branché |
 | Waveform / éditeur de découpe  | ✅ branché |
 | Laboratoire de stems           | ✅ branché (routage Waveform→Stems) |
+| Navigateur d'artefacts         | ✅ branché |
 | Générateur de breaks           | ⬜ |
 | Compositeur                    | ⬜ |
 | Bins d'export                  | ⬜ |
-| Navigateur d'artefacts         | ⬜ |
 | Historique / graphe de transformations | ⬜ |
 
 ---
@@ -143,31 +163,28 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
    modulaire (l'affichage classique se masque). La fenêtre **Workspace** s'ouvre,
    une **Réserve** apparaît en fenêtre indépendante.
 3. Depuis la Réserve, « envoyer au labo » ouvre le(s) fichier(s) en fenêtre(s) Waveform.
-4. Dans le Workspace : `+` crée une instance, l'œil affiche/masque, ✎ renomme,
+4. Créer une slice ou capturer un fichier dans Waveform : une fenêtre
+   **Artefacts** peut apparaître automatiquement pour exposer le résultat.
+5. Dans le Workspace : `+` crée une instance, l'œil affiche/masque, ✎ renomme,
    ⧉ duplique, ✕ ferme. Fermer une fenêtre (croix OS) la masque sans perdre son contenu.
-5. Cliquer n'importe quelle fenêtre remonte tout le groupe au premier plan.
-6. Le bouton retour du Workspace (ou fermer le Workspace) revient à l'affichage classique.
+6. Cliquer n'importe quelle fenêtre remonte tout le groupe au premier plan.
+7. Le bouton retour du Workspace (ou fermer le Workspace) revient à l'affichage classique.
 
 ---
 
 ## 6. Limites connues / différé
 
-- **Restauration des fenêtres de session : DÉSACTIVÉE pour l'instant** (elle
-  créait trop de désordre). La machinerie (`save_session`/`restore_session`,
-  `save_state`/`restore_state`) reste en place mais n'est plus câblée dans
-  `MainWindow` — à réactiver plus tard, avec workspaces nommés multiples.
-  Seul le **mode** (classique/modulaire) est mémorisé, pas les fenêtres.
-- **Fenêtres sans cadre** : déplacement (barre fine) et redimensionnement (bords)
-  reposent sur `startSystemMove` / `startSystemResize` — à **valider en usage réel**
-  (non testable en headless).
-- **Artefacts** : le modèle actuel (`frontend/labo/lab_artifact.py`) n'est pas
-  encore centralisé en `ArtifactStore` avec lignée (`parent_ids`, `operation`).
+- **Session** : les fenêtres sont restaurées, mais il n'y a encore ni
+  **workspaces nommés**, ni choix explicite entre plusieurs sessions.
+- **Artefacts** : `LabArtifactStore` centralise déjà le flux courant, mais il
+  n'embarque pas encore la **lignée** complète (`parent_ids`, `operation`) ni
+  un historique transverse de transformations.
 - **Drag-and-drop inter-fenêtres** + drag externe (vers Renoise/Tracker) : à faire.
 - **Icônes** : jeu inline « style Tabler » pour démarrer. Pour les officielles,
   déposer les `.svg` dans `frontend/ui/assets/icons/` (prioritaires, même
   mécanisme `currentColor`).
-- **`separationRequested`** (Waveform → Stems) et `artifactCreated` (→ plateau
-  d'artefacts) : hooks prévus, câblés quand ces modules rejoindront l'atelier.
+- **Modules classiques encore non migrés** : Break, Compositeur et Bins ne sont
+  pas encore des fenêtres modulaires de première classe.
 
 ---
 
@@ -195,3 +212,44 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 - **Multi-écran** : `clamp_rect_to_screens` ramène une fenêtre sur un écran
   existant si sa géométrie sauvegardée tombe hors des écrans branchés.
 - **Titres auto** : 1ʳᵉ instance = `default_title`, suivantes `default_title N`.
+- **Fond global** : `BackdropWindow` (aplat au ton du thème, pas un vrai flou —
+  le flou acrylique Windows est trop fragile). Remonté en premier par
+  `raise_group` (sous les fenêtres SampleRod, au-dessus des autres applis).
+- **Nettoyage à la fermeture** : un module peut exposer `cleanup()` ; le
+  `WindowManager` l'appelle sur `close_instance`, et `WaveformModule` l'appelle à
+  la fermeture d'un onglet — évite le crash du callback sounddevice sur un
+  éditeur détruit.
+
+---
+
+## 9. Journal du refactor
+
+Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refactor`).
+À maintenir à chaque push pour garder un tracking clair (côté Claude et côté Codex).
+
+### Checkpoint — atelier modulaire + Stem Lab ergonomique + fond global
+- **Socle** : design-core (icônes Tabler, `IconButton`, tooltips rapides),
+  `WindowManager`, fenêtre `Workspace`, `ModuleWindow` (cadre natif, hide-on-close,
+  géométrie multi-écran).
+- **Modules** : Réserve, Waveform (onglets/fichier), Stem Lab, Artefacts.
+- **Routages** : Réserve→Waveform, Waveform→Stems.
+- **Modes** : toggle classique/modulaire mémorisé ; croix du Workspace = quitter
+  l'app (nettoyage complet des services) ; pas de flash de la fenêtre classique au
+  lancement en modulaire (`MainWindow.start()`).
+- **Focus groupé** : activer une fenêtre remonte tout le groupe.
+- **Session** : instances + géométrie + fichier Waveform restaurés.
+- **Stem Lab refondu** : onglets, zone 4 stems + mixer, drag stems/mix, mini-lecteur
+  (slider de position + play/pause), croix d'onglet propres, drop restreint à la
+  zone du haut, tailles d'éléments fixes (mixer stable).
+- **Fond global** (backdrop) togglé depuis le Workspace, mémorisé.
+- **Fix** : crash à la fermeture d'un onglet Waveform en lecture (arrêt du flux
+  sounddevice via `cleanup()` avant destruction).
+- **(Parallèle Codex)** : `LabArtifactStore` central + module Artefacts, flags
+  `ModuleType` (workspace_creatable / renamable / duplicable / closable).
+
+### À suivre
+- Break / Compositeur / Bins en modules.
+- Modèle d'artefact avec **lignée** (`parent_ids`, `operation`) + **drag-and-drop
+  inter-fenêtres** (MIME `application/x-samplerod-artifact`).
+- **Workspaces nommés** multiples.
+- Barre de titre custom / regroupement d'instances en onglets détachables (étape 7).

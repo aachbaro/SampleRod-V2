@@ -353,6 +353,7 @@ class ArtifactTrayWidget(QWidget):
 
     saveArtifactRequested = Signal(str)
     openArtifactRequested = Signal(str)
+    removeArtifactRequested = Signal(str, bool)
 
     def __init__(self, app_context, parent=None):
         super().__init__(parent)
@@ -455,38 +456,22 @@ class ArtifactTrayWidget(QWidget):
         row_data = self._rows.get(artifact_id)
         return row_data[1].artifact if row_data else None
 
-    # ------------------------------------------------------------------
-    # Suppression
-
-    def _on_remove_requested(self, artifact_id: str, delete_from_disk: bool) -> None:
-        """Retire un artefact du tray. Si delete_from_disk, supprime aussi le fichier temp."""
-        artifact = self.artifact(artifact_id)
-
-        # Stopper la lecture si c'est cet artefact qui joue
-        if artifact is not None and self._is_playing(artifact):
-            try:
-                self.app_context.audio_player.clear_audio()
-            except Exception:
-                pass
-
-        # Supprimer le fichier si demandé (bouton ✕ ou menu clic droit)
-        if delete_from_disk and artifact is not None:
-            path = artifact_file_path(artifact)
-            if path and os.path.isfile(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
-
-        # Retirer la ligne
+    def remove_artifact(self, artifact_id: str) -> None:
+        """Retire une ligne deja supprimee du store central."""
         row_data = self._rows.pop(artifact_id, None)
         if row_data:
             item, _ = row_data
             row_idx = self.list_widget.row(item)
             if row_idx >= 0:
                 self.list_widget.takeItem(row_idx)
-
         self._update_count()
+
+    # ------------------------------------------------------------------
+    # Suppression
+
+    def _on_remove_requested(self, artifact_id: str, delete_from_disk: bool) -> None:
+        """Relaye la suppression vers l'orchestrateur / le store central."""
+        self.removeArtifactRequested.emit(artifact_id, delete_from_disk)
 
     # ------------------------------------------------------------------
     # Lecture

@@ -20,22 +20,60 @@
 from __future__ import annotations
 
 import os
+import re
+import tempfile
+import uuid
 from typing import Callable
 
 from PySide6.QtCore import QMimeData
+import soundfile as sf
 
 from backend.services.audio_metadata import normalize_audio_path
 from frontend.right_panel.composer.composer_dnd import (
     has_audio_file_urls,
+    has_slice,
     has_sample_card,
     parse_audio_file_urls,
+    parse_slice_mime,
     parse_sample_card_mime,
 )
 
 
 def has_supported_audio_drop(mime: QMimeData) -> bool:
     """Vrai si le depot contient des fichiers audio ou une carte de sample."""
-    return has_audio_file_urls(mime) or has_sample_card(mime)
+    return has_audio_file_urls(mime) or has_sample_card(mime) or has_slice(mime)
+
+
+def can_accept_audio_drop(
+    mime: QMimeData,
+    *,
+    sample_path_lookup: Callable[[int], str | None],
+) -> bool:
+    """Validation sans effet de bord pour les survols de drag-and-drop.
+
+    Contrairement a resolve_audio_drop_paths(), cette fonction ne cree aucun
+    fichier temporaire pour une slice ; elle sert aux dragEnter/dragMove.
+    """
+    if has_audio_file_urls(mime):
+        return bool(parse_audio_file_urls(mime))
+
+    if has_sample_card(mime):
+        try:
+            payload = parse_sample_card_mime(mime)
+        except Exception:
+            return False
+        sample_path = sample_path_lookup(int(payload["sample_id"]))
+        return bool(sample_path and os.path.isfile(sample_path))
+
+    if has_slice(mime):
+        try:
+            payload = parse_slice_mime(mime)
+        except Exception:
+            return False
+        audio = payload.get("audio")
+        return getattr(audio, "size", 0) > 0 and int(payload.get("sample_rate", 0) or 0) > 0
+
+    return False
 
 
 def resolve_audio_drop_paths(
@@ -55,6 +93,15 @@ def resolve_audio_drop_paths(
         if sample_path:
             paths.append(sample_path)
 
+    if not paths and has_slice(mime):
+        try:
+            payload = parse_slice_mime(mime)
+            temp_path = _materialize_slice_payload(payload)
+        except Exception:
+            temp_path = ""
+        if temp_path:
+            paths.append(temp_path)
+
     normalized_paths: list[str] = []
     seen: set[str] = set()
     for path in paths:
@@ -66,3 +113,23 @@ def resolve_audio_drop_paths(
         seen.add(normalized)
         normalized_paths.append(normalized)
     return normalized_paths
+
+
+def _materialize_slice_payload(payload: dict) -> str:
+    """Ecrit une slice draggee dans un WAV temporaire reutilisable par le Labo."""
+    audio = payload["audio"]
+    sample_rate = int(payload["sample_rate"])
+    label = _sanitize_slice_label(str(payload.get("label") or "slice"))
+
+    folder = os.path.join(tempfile.gettempdir(), "SampleRod", "drag_slices")
+    os.makedirs(folder, exist_ok=True)
+    filename = f"{label}_{uuid.uuid4().hex[:8]}.wav"
+    path = os.path.join(folder, filename)
+    sf.write(path, audio, sample_rate)
+    return path
+
+
+def _sanitize_slice_label(label: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", label.strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned or "slice"

@@ -43,7 +43,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 
 from PySide6.QtCore import Qt, QSettings, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -59,10 +58,11 @@ from PySide6.QtWidgets import (
 from frontend.right_panel.composer.composer_widget import SampleComposerWidget
 from frontend.styles import theme
 
+from .artifact_store import ensure_lab_artifact_store
 from .artifact_tray import ArtifactTrayWidget
 from .bins_panel import LaboBinsPanel
 from .break_widget import BreakWidget
-from .lab_artifact import LabArtifact, artifact_file_path, build_artifact_filename
+from .lab_artifact import LabArtifact, artifact_file_path
 from .stem_separator_tool import StemSeparatorToolWidget
 from .waveform_tool import WaveformToolWidget
 
@@ -78,7 +78,7 @@ class LaboWidget(QWidget):
         super().__init__(parent)
         self.app_context = app_context
         self._qs = QSettings("SampleRod", "Main")
-        self._artifacts: dict[str, LabArtifact] = {}
+        self.artifact_store = ensure_lab_artifact_store(self.app_context, self)
         self._build_ui()
         self._bind_signals()
         theme.manager.themeChanged.connect(lambda *_args: self._apply_styles())
@@ -111,6 +111,7 @@ class LaboWidget(QWidget):
 
         self.artifact_tray = ArtifactTrayWidget(self.app_context)
         self.artifact_tray.setMinimumHeight(220)
+        self.artifact_tray.set_artifacts(self.artifact_store.all_artifacts())
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.setObjectName("LaboSplitter")
@@ -166,8 +167,11 @@ class LaboWidget(QWidget):
         self.waveform_tool.artifactCreated.connect(self._upsert_artifact)
         self.stem_separator_tool.artifactCreated.connect(self._upsert_artifact)
         self.break_widget.artifactCreated.connect(self._upsert_artifact)
+        self.artifact_store.artifactUpserted.connect(self.artifact_tray.upsert_artifact)
+        self.artifact_store.artifactRemoved.connect(self.artifact_tray.remove_artifact)
         self.artifact_tray.saveArtifactRequested.connect(self._save_artifact)
         self.artifact_tray.openArtifactRequested.connect(self._open_artifact_in_waveform)
+        self.artifact_tray.removeArtifactRequested.connect(self.artifact_store.remove)
         self.waveform_tool.separationRequested.connect(self._send_to_stem_separator)
         self.bins_panel.openInReserveRequested.connect(self.openReserveDirectoryRequested.emit)
         self.bins_panel.reserveRefreshRequested.connect(self.reserveRefreshRequested.emit)
@@ -198,17 +202,16 @@ class LaboWidget(QWidget):
 
     def _upsert_artifact(self, artifact: LabArtifact) -> None:
         """Ajoute ou met a jour un artefact dans le registre et le plateau."""
-        self._artifacts[artifact.artifact_id] = artifact
-        self.artifact_tray.upsert_artifact(artifact)
+        self.artifact_store.upsert(artifact)
 
     def _save_artifact(self, artifact_id: str) -> None:
         """Sauvegarde definitive d'un artefact choisi dans le plateau."""
-        artifact = self._artifacts.get(artifact_id)
+        artifact = self.artifact_store.artifact(artifact_id)
         source_path = artifact_file_path(artifact) if artifact is not None else ""
         if artifact is None or not source_path or not os.path.isfile(source_path):
             return
 
-        default_dir = self._default_export_dir(artifact)
+        default_dir = self.artifact_store.default_export_dir(artifact)
         target_dir = QFileDialog.getExistingDirectory(
             self,
             "Choisir un dossier pour l'artefact",
@@ -217,57 +220,17 @@ class LaboWidget(QWidget):
         if not target_dir:
             return
 
-        self._qs.setValue("labo_last_artifact_dir", target_dir)
-
-        target_path = self._unique_target_path(
-            target_dir,
-            build_artifact_filename(artifact),
-        )
-        shutil.copy2(source_path, target_path)
-        self.app_context.sample_store.add(target_path)
-
-        artifact.persisted = True
-        artifact.metadata["saved_path"] = target_path
-        self.artifact_tray.upsert_artifact(artifact)
+        self.artifact_store.save_to_directory(artifact_id, target_dir)
 
     def _open_artifact_in_waveform(self, artifact_id: str) -> None:
         """Recharge le fichier d'un artefact dans l'editeur Waveform."""
-        artifact = self._artifacts.get(artifact_id)
+        artifact = self.artifact_store.artifact(artifact_id)
         path = artifact_file_path(artifact) if artifact is not None else ""
         if not path or not os.path.isfile(path):
             return
         if self.waveform_tool.open_file(path):
             self.tools_tabs.setCurrentWidget(self.waveform_tool)
             self.waveform_tool.setFocus()
-
-    def _default_export_dir(self, artifact: LabArtifact) -> str:
-        """Meilleur dossier a proposer dans le dialogue de sauvegarde."""
-        last_dir = self._qs.value("labo_last_artifact_dir", "")
-        if isinstance(last_dir, str) and last_dir and os.path.isdir(last_dir):
-            return last_dir
-        source_folder = os.path.dirname(artifact.source_path or "")
-        if source_folder and os.path.isdir(source_folder):
-            return source_folder
-        libraries = getattr(self.app_context.settings, "libraries", []) or []
-        if libraries:
-            path = getattr(sorted(libraries, key=lambda lib: lib.position)[0], "path", "")
-            if path and os.path.isdir(path):
-                return path
-        return os.path.expanduser("~")
-
-    @staticmethod
-    def _unique_target_path(folder: str, filename: str) -> str:
-        """Trouve un chemin libre dans le dossier (suffixe _2, _3... si pris)."""
-        base, ext = os.path.splitext(filename)
-        candidate = os.path.join(folder, filename)
-        if not os.path.exists(candidate):
-            return candidate
-        index = 2
-        while True:
-            candidate = os.path.join(folder, f"{base}_{index}{ext}")
-            if not os.path.exists(candidate):
-                return candidate
-            index += 1
 
     def _apply_styles(self) -> None:
         p = theme.manager.p

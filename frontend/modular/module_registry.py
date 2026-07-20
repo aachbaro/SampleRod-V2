@@ -34,6 +34,10 @@ class ModuleType:
     factory: ModuleFactory
     default_title: str    # titre de base des instances
     multi: bool = True    # plusieurs instances autorisees ?
+    workspace_creatable: bool = True
+    renamable: bool = True
+    duplicable: bool = True
+    closable: bool = True
 
 
 class ModuleRegistry:

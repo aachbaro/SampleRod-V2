@@ -24,6 +24,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFileDialog, QTabWidget, QVBoxLayout, QWidget
 
+from frontend.labo.audio_drop import can_accept_audio_drop
 from frontend.ui import IconButton
 
 _AUDIO_FILTER = "Audio (*.wav *.flac *.aif *.aiff *.mp3 *.ogg);;Tous (*.*)"
@@ -90,13 +91,19 @@ class WaveformModule(QWidget):
 
     # -- Glisser-deposer (Reserve / fichiers externes) ----------------------
     def dragEnterEvent(self, event):  # noqa: N802
-        if self._paths_from_mime(event.mimeData()):
+        if can_accept_audio_drop(
+            event.mimeData(),
+            sample_path_lookup=self._path_for_sample_id,
+        ):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):  # noqa: N802
-        if self._paths_from_mime(event.mimeData()):
+        if can_accept_audio_drop(
+            event.mimeData(),
+            sample_path_lookup=self._path_for_sample_id,
+        ):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -142,7 +149,24 @@ class WaveformModule(QWidget):
         editor = self._tabs.widget(index)
         self._tabs.removeTab(index)
         if editor is not None:
+            self._cleanup_editor(editor)
             editor.deleteLater()
+
+    @staticmethod
+    def _cleanup_editor(editor) -> None:
+        # Arrete la lecture avant destruction (evite le crash du callback
+        # sounddevice sur un widget deja detruit).
+        cleanup = getattr(editor, "cleanup", None)
+        if callable(cleanup):
+            try:
+                cleanup()
+            except Exception:
+                pass
+
+    def cleanup(self) -> None:
+        """Arrete la lecture de tous les onglets (avant destruction du module)."""
+        for i in range(self._tabs.count()):
+            self._cleanup_editor(self._tabs.widget(i))
 
     def _open_file_dialog(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(

@@ -11,12 +11,21 @@
 
 from __future__ import annotations
 
-from .audio_drop import has_supported_audio_drop, resolve_audio_drop_paths
+from .audio_drop import (
+    can_accept_audio_drop,
+    has_supported_audio_drop,
+    resolve_audio_drop_paths,
+)
 
 
 def has_supported_waveform_drop(mime):
     """Alias : le depot contient-il de l'audio exploitable ?"""
     return has_supported_audio_drop(mime)
+
+
+def can_accept_waveform_drop(mime, *, sample_path_lookup):
+    """Alias : validation sans creer de fichiers temporaires au survol."""
+    return can_accept_audio_drop(mime, sample_path_lookup=sample_path_lookup)
 
 
 def resolve_waveform_drop_paths(mime, *, sample_path_lookup):

@@ -55,8 +55,11 @@ _INLINE: dict[str, str] = {
     "refresh": '<path d="M19.933 13.04a8 8 0 1 1-9.925-8.788c3.899-1 7.935 1.007 9.425 4.747"/>'
                '<path d="M20 4v5h-5"/>',
     "player-play": '<path d="M7 4v16l13-8z" fill="currentColor" stroke="none"/>',
+    "player-pause": '<path d="M6 5h4v14H6z" fill="currentColor" stroke="none"/>'
+                    '<path d="M14 5h4v14h-4z" fill="currentColor" stroke="none"/>',
     "window": '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16"/>',
     "app-window": '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/>',
+    "square": '<rect x="4" y="4" width="16" height="16" rx="2"/>',
     # --- Categories / modules ---
     "folder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "wave": '<path d="M3 12c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>',
