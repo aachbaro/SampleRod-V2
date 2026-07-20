@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFileDialog, QTabWidget, QVBoxLayout, QWidget
 
 from frontend.labo.audio_drop import can_accept_audio_drop
-from frontend.ui import IconButton
+from frontend.ui import IconButton, add_tab_close_button
 
 _AUDIO_FILTER = "Audio (*.wav *.flac *.aif *.aiff *.mp3 *.ogg);;Tous (*.*)"
 
@@ -50,10 +50,10 @@ class WaveformModule(QWidget):
 
         self._tabs = QTabWidget()
         self._tabs.setObjectName("WaveformTabs")
-        self._tabs.setTabsClosable(True)
+        # Croix custom (IconButton) au lieu du bouton de fermeture par defaut.
+        self._tabs.setTabsClosable(False)
         self._tabs.setMovable(True)
         self._tabs.setDocumentMode(True)
-        self._tabs.tabCloseRequested.connect(self._close_tab)
         self._tabs.currentChanged.connect(lambda *_a: self.activeFileChanged.emit(self.current_path() or ""))
 
         self._add_btn = IconButton("plus", tooltip="Ouvrir un fichier", size="s")
@@ -81,8 +81,14 @@ class WaveformModule(QWidget):
         ok = bool(editor.open_file(normalized))
         index = self._tabs.addTab(editor, Path(normalized).stem)
         self._tabs.setTabToolTip(index, normalized)
+        add_tab_close_button(self._tabs, index, lambda: self._close_editor(editor))
         self._tabs.setCurrentIndex(index)
         return ok
+
+    def _close_editor(self, editor) -> None:
+        index = self._tabs.indexOf(editor)
+        if index >= 0:
+            self._close_tab(index)
 
     def current_path(self) -> str | None:
         editor = self._tabs.currentWidget()

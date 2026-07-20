@@ -247,6 +247,14 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
 - **(Parallèle Codex)** : `LabArtifactStore` central + module Artefacts, flags
   `ModuleType` (workspace_creatable / renamable / duplicable / closable).
 
+### Retouches UI (Stem Lab + onglets)
+- **Sliders épurés** : fond transparent + groove fin (plus de boîte sombre bizarre).
+- **Croix d'onglet uniformes** : IconButton « x » propre partout (Waveform **et**
+  Stem Lab) via le helper réutilisable `frontend/ui/tabs.py::add_tab_close_button`
+  (fini les croix rouges par défaut de Qt).
+- **Mixer uniformisé** : les items du mixer utilisent les **mêmes cards `StemTile`**
+  (avec mini-lecteur) que les pistes séparées, au lieu de chips plats.
+
 ### À suivre
 - Break / Compositeur / Bins en modules.
 - Modèle d'artefact avec **lignée** (`parent_ids`, `operation`) + **drag-and-drop

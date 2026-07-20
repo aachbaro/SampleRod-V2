@@ -224,14 +224,19 @@ class StemTile(QFrame):
             QFrame#StemTile:hover {{ border-color: {p.BORDER_LIGHT}; }}
             QLabel#StemTileName {{ color: {p.TEXT}; font-size: 12px; font-weight: 600; }}
             QLabel#StemTileTime {{ color: {p.TEXT_MUTED}; font-size: 10px; }}
+            QSlider#StemTileSlider {{ background: transparent; min-height: 16px; }}
             QSlider#StemTileSlider::groove:horizontal {{
-                height: 4px; background: {p.BG_DARK}; border-radius: 2px;
+                height: 3px; background: {p.BORDER}; border-radius: 1px;
             }}
             QSlider#StemTileSlider::sub-page:horizontal {{
-                background: {p.ACCENT}; border-radius: 2px;
+                background: {p.ACCENT}; border-radius: 1px;
+            }}
+            QSlider#StemTileSlider::add-page:horizontal {{
+                background: {p.BORDER}; border-radius: 1px;
             }}
             QSlider#StemTileSlider::handle:horizontal {{
-                width: 10px; margin: -4px 0; border-radius: 5px; background: {p.TEXT};
+                width: 9px; height: 9px; margin: -3px 0; border-radius: 4px;
+                background: {p.TEXT};
             }}
             """
         )
@@ -317,24 +322,13 @@ class StemMixerZone(QFrame):
         self._hint.setVisible(not self._paths)
         self._preview_btn.setEnabled(len(self._paths) >= 1)
 
-    def _make_chip(self, path: str) -> QFrame:
-        chip = QFrame()
-        chip.setObjectName("StemMixChip")
-        chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        chip.setFixedHeight(34)
-        row = QHBoxLayout(chip)
-        row.setContentsMargins(8, 3, 4, 3)
-        row.setSpacing(6)
-        name = QLabel(Path(path).stem)
-        name.setObjectName("StemMixChipName")
-        play = IconButton("player-play", tooltip="Ecouter", size="s")
-        play.clicked.connect(lambda _=False, p=path: self.playRequested.emit(p))
-        remove = IconButton("x", tooltip="Retirer", size="s")
-        remove.clicked.connect(lambda _=False, p=path: self._remove(p))
-        row.addWidget(name, 1)
-        row.addWidget(play, 0)
-        row.addWidget(remove, 0)
-        return chip
+    def _make_chip(self, path: str) -> "StemTile":
+        # Meme card que les pistes separees (avec mini-lecteur), + bouton retirer.
+        tile = StemTile(Path(path).stem, path, removable=True)
+        tile.playRequested.connect(self.playRequested.emit)
+        tile.seekRequested.connect(self.seekRequested.emit)
+        tile.removeRequested.connect(lambda t: self._remove(t.path))
+        return tile
 
     def _refresh_result(self) -> None:
         while self._result_box.count():

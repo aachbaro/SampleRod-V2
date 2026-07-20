@@ -14,6 +14,7 @@
 from .icon_button import IconButton
 from .icons import available_names, clear_cache, render_pixmap, themed_icon
 from .fast_tooltip import FastTooltipStyle, install_fast_tooltips
+from .tabs import add_tab_close_button
 
 __all__ = [
     "IconButton",
@@ -23,4 +24,5 @@ __all__ = [
     "clear_cache",
     "FastTooltipStyle",
     "install_fast_tooltips",
+    "add_tab_close_button",
 ]

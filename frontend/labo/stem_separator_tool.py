@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QTabBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -49,7 +48,7 @@ from PySide6.QtWidgets import (
 
 from backend.services.audio_metadata import is_audio_file, normalize_audio_path
 from frontend.styles import theme
-from frontend.ui import IconButton
+from frontend.ui import IconButton, add_tab_close_button
 
 from .audio_drop import (
     can_accept_audio_drop,
@@ -218,11 +217,7 @@ class StemSeparatorToolWidget(QWidget):
         self._sessions[normalized] = session
         index = self.tabs.addTab(session, Path(normalized).stem)
         self.tabs.setTabToolTip(index, normalized)
-        close_btn = IconButton("x", tooltip="Fermer l'onglet", size="s")
-        close_btn.clicked.connect(lambda _=False, s=session: self._close_session(s))
-        self.tabs.tabBar().setTabButton(
-            index, QTabBar.ButtonPosition.RightSide, close_btn
-        )
+        add_tab_close_button(self.tabs, index, lambda: self._close_session(session))
         self.tabs.setCurrentIndex(index)
         self._refresh_tabs_visibility()
         return session
