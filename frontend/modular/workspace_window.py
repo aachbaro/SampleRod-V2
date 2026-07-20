@@ -78,7 +78,22 @@ class _InstanceRow(QWidget):
         row.addWidget(self._dup_btn, 0)
         row.addWidget(self._close_btn, 0)
 
+        # Boutons d'action visibles seulement au survol de la ligne.
+        self._actions = [self._eye_btn, self._rename_btn, self._dup_btn, self._close_btn]
+        self._set_actions_visible(False)
         self._refresh_visual()
+
+    def _set_actions_visible(self, visible: bool) -> None:
+        for btn in self._actions:
+            btn.setVisible(visible)
+
+    def enterEvent(self, event):  # noqa: N802
+        self._set_actions_visible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):  # noqa: N802
+        self._set_actions_visible(False)
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:

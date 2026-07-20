@@ -148,7 +148,6 @@ class WindowManager(QObject):
         win = self._windows.pop(instance_id, None)
         if win is not None:
             win.windowHidden.disconnect(self._on_window_hidden)
-            win.setCentralWidget(QWidget())  # detache le widget module
             win.deleteLater()
         if inst is not None:
             self.instancesChanged.emit()
@@ -185,7 +184,7 @@ class WindowManager(QObject):
                 continue
             if win.isVisible():
                 inst.geometry = win.current_geometry()
-            widget = win.centralWidget()
+            widget = win.module_widget()
             saver = getattr(widget, "save_state", None)
             if callable(saver):
                 try:
@@ -334,7 +333,7 @@ class WindowManager(QObject):
             if not path or not os.path.isfile(path):
                 continue
             instance_id = self.create_instance("waveform", title=Path(path).stem)
-            widget = self._windows[instance_id].centralWidget()
+            widget = self._windows[instance_id].module_widget()
             opener = getattr(widget, "open_file", None)
             if callable(opener):
                 try:
