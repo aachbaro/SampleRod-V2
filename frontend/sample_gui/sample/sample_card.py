@@ -25,7 +25,7 @@
 # - frontend/sample_gui/sample/sample_list.py    : conteneur parent
 # -----------------------------------------------------------------------------
 
-from PySide6.QtCore import Signal, Qt, QEvent
+from PySide6.QtCore import Signal, Qt, QEvent, QSettings
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QWidget, QAbstractButton, QLineEdit, QComboBox, QSlider, QMenu
 import logging
@@ -39,7 +39,7 @@ from frontend.sample_gui.sample.sample_card_move import SampleCardMove
 from frontend.sample_gui.sample.sample_card_playback import SampleCardPlayback
 from frontend.sample_gui.sample.sample_card_selection import SampleCardSelection
 from frontend.sample_gui.sample.sample_card_status import SampleCardStatus
-from frontend.sample_gui.sample.sample_card_ui import SampleCardUIBuilder
+from frontend.sample_gui.sample.sample_card_ui import SampleCardUIBuilder, SHOW_KEY_BADGE_KEY
 from frontend.sample_gui.sample.sample_card_waveform import SampleCardWaveform
 from frontend.styles import theme
 
@@ -313,7 +313,11 @@ class SampleCard(QWidget):
                 f"{tooltip_prefix} : {tooltip_label}{confidence_suffix}\n"
                 "Cliquer pour trouver les samples compatibles"
             )
-            badge.setVisible(True)
+            # Visible uniquement si le toggle global "afficher la gamme" est actif.
+            show = QSettings("SampleRod", "Main").value(
+                SHOW_KEY_BADGE_KEY, False, type=bool
+            )
+            badge.setVisible(bool(show))
         else:
             badge.setText("")
             badge.setToolTip("")
@@ -322,6 +326,12 @@ class SampleCard(QWidget):
     def _on_key_badge_clicked(self) -> None:
         """Emet findCompatiblesRequested quand on clique le badge de gamme."""
         self.findCompatiblesRequested.emit(int(self.sample.id))
+
+    def event(self, e):
+        # Reconstruit le tooltip juste avant son affichage (etat/duree a jour).
+        if e.type() == QEvent.Type.ToolTip:
+            SampleCardUIBuilder._refresh_tooltip(self)
+        return super().event(e)
 
     # ---- Move / combobox
     def move_sample(self, index: int):

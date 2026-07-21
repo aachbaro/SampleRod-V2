@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QLabel,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QCheckBox,
+    QMenu,
     QWidget,
     QPushButton,
 )
@@ -38,6 +39,10 @@ from PySide6.QtWidgets import (
 from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from frontend.styles import theme
+from frontend.ui import IconButton
+
+# Cle QSettings globale : afficher le badge gamme sur toutes les cartes analysees.
+SHOW_KEY_BADGE_KEY = "reserve/show_key_badge"
 
 
 class SampleCardUIBuilder:
@@ -254,67 +259,44 @@ class SampleCardUIBuilder:
         c.waveform_layout.setContentsMargins(0, 0, 0, 0)
         c.waveform_layout.setSpacing(0)
 
-        # ---- Layouts
+        # ---- Menu d'options (remplace la rangee de boutons d'action)
+        c.options_button = IconButton("dots-vertical", tooltip="Options", size="s")
+        c.options_menu = self._build_options_menu(c)
+        c.options_button.clicked.connect(
+            lambda: c.options_menu.exec(
+                c.options_button.mapToGlobal(c.options_button.rect().bottomLeft())
+            )
+        )
+
+        # ---- Layouts (carte compacte : 2 lignes)
         main_layout = QVBoxLayout(c)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(10, 8, 10, 8)
+        main_layout.setSpacing(6)
 
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
-
-        left_header = QHBoxLayout()
-        left_header.setSpacing(8)
-        left_header.addWidget(c.checkbox)
-        left_header.addWidget(c.name_label, 0, alignment=Qt.AlignmentFlag.AlignLeft)
-        left_header.addWidget(c.rename_input, 0, alignment=Qt.AlignmentFlag.AlignLeft)
-        left_header.addWidget(c.check_button)
-        left_header.addWidget(c.cancel_button)
-        # Le reste de la ligne est du "vrai" vide (pas un QLabel expansif),
-        # donc cliquer hors du nom se comporte comme un clic sur la card.
-        left_header.addStretch(1)
-
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(6)
-        actions_layout.addWidget(c.concat_button)
-        actions_layout.addWidget(c.concat_cancel_button)
-        actions_layout.addWidget(c.normalize_button)
-        actions_layout.addWidget(c.waveform_button)
-        actions_layout.addWidget(c.archive_button)
-        actions_layout.addWidget(c.delete_button)
-
-        header_layout.addLayout(left_header, 1)
-        header_layout.addLayout(actions_layout)
+        header_layout.addWidget(c.checkbox)
+        header_layout.addWidget(c.name_label, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        header_layout.addWidget(c.rename_input, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        header_layout.addWidget(c.check_button)
+        header_layout.addWidget(c.cancel_button)
+        header_layout.addWidget(c.concat_button)
+        header_layout.addWidget(c.concat_cancel_button)
+        # Vrai vide (pas un QLabel expansif) : cliquer ici = clic sur la card.
+        header_layout.addStretch(1)
+        header_layout.addWidget(c.key_badge)
+        header_layout.addWidget(c.options_button)
         main_layout.addLayout(header_layout)
 
-        info_layout = QHBoxLayout()
-        info_layout.setSpacing(0)
-
-        left_box = QWidget()
-        left_box.setObjectName("InfoLeft")
-        left_layout = QHBoxLayout(left_box)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.addWidget(c.change_dir_combobox, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        center_box = QWidget()
-        center_box.setObjectName("InfoCenter")
-        center_layout = QHBoxLayout(center_box)
-        center_layout.setContentsMargins(0, 0, 0, 0)
-        center_layout.addWidget(c.date_label, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        right_box = QWidget()
-        right_box.setObjectName("InfoRight")
-        right_layout = QHBoxLayout(right_box)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.addWidget(c.key_badge, alignment=Qt.AlignmentFlag.AlignRight)
-        right_layout.addSpacing(4)
-        right_layout.addWidget(c.status_label, alignment=Qt.AlignmentFlag.AlignRight)
-        right_layout.addSpacing(6)
-        right_layout.addWidget(c.id_label, alignment=Qt.AlignmentFlag.AlignRight)
-
-        info_layout.addWidget(left_box, 1)
-        info_layout.addWidget(center_box, 1)
-        info_layout.addWidget(right_box, 1)
-        main_layout.addLayout(info_layout)
+        # Elements desormais NON affiches : porteurs de donnees pour le tooltip
+        # (date/id/dossier/duree/etat) et pour la logique (move via combobox).
+        # Ils restent crees et mis a jour par les controleurs, mais invisibles.
+        for _holder in (
+            c.date_label, c.id_label, c.status_label,
+            c.length_label, c.change_dir_combobox,
+        ):
+            _holder.setParent(c)
+            _holder.setVisible(False)
 
         # Playback container : on l'anime (maxHeight) en meme temps que le waveform
         # pour eviter l'effet "la card remonte puis redescend".
@@ -417,9 +399,63 @@ class SampleCardUIBuilder:
         # Style du playback_slider
         self._apply_slider_stylesheet(c)
 
+        # Tooltip initial (nom/id/dossier/date/duree/gamme/etat)
+        self._refresh_tooltip(c)
+
         # Installer l'event filter sur tous les enfants pour gerer le focus visuel
         for child in c.findChildren(QWidget):
             child.installEventFilter(c)
+
+    # ------------------------------------------------------------------
+    # Menu d'options + tooltip (carte compacte)
+
+    def _build_options_menu(self, c) -> QMenu:
+        menu = QMenu(c)
+        menu.addAction("Normaliser").triggered.connect(c.onNormalizeButtonClicked)
+        menu.addAction("Afficher le waveform").triggered.connect(c.toggleWaveform)
+        menu.addAction("Renommer").triggered.connect(
+            lambda: c.header_actions.start_rename()
+        )
+        c._move_menu = menu.addMenu("Déplacer vers")
+        menu.aboutToShow.connect(lambda: self._populate_move_menu(c))
+        menu.addSeparator()
+        menu.addAction("Retirer de l'historique").triggered.connect(c.onArchiveClicked)
+        menu.addAction("Supprimer").triggered.connect(c.confirmDelete)
+        return menu
+
+    @staticmethod
+    def _populate_move_menu(c) -> None:
+        move_menu = getattr(c, "_move_menu", None)
+        if move_menu is None:
+            return
+        move_menu.clear()
+        combo = c.change_dir_combobox
+        for idx in range(1, combo.count()):  # 0 = dossier courant
+            action = move_menu.addAction(combo.itemText(idx))
+            action.triggered.connect(
+                lambda checked=False, i=idx: c.change_dir_combobox.setCurrentIndex(i)
+            )
+
+    @staticmethod
+    def _refresh_tooltip(c) -> None:
+        parts = [c.get_sample_name(), f"ID {c.sample.id}"]
+        folder = c.get_folder_name(c.sample.path)
+        if folder:
+            parts.append(f"Dossier : {folder}")
+        try:
+            parts.append(f"Date : {c.sample.created_at.strftime('%d/%m/%Y %H:%M')}")
+        except Exception:
+            pass
+        duration = getattr(c.sample, "duration", None)
+        if duration:
+            parts.append(f"Durée : {float(duration):.1f}s")
+        key = c.key_badge.text().strip() if getattr(c, "key_badge", None) else ""
+        if key:
+            parts.append(f"Gamme : {key}")
+        state = c.status_label.text().strip() if getattr(c, "status_label", None) else ""
+        if state:
+            parts.append(f"État : {state}")
+        c.setToolTip("\n".join(p for p in parts if p))
 
     def _make_round_btn(
         self,

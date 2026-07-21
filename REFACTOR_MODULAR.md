@@ -291,6 +291,16 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
   `application/x-samplerod-artifact` et la lignée minimale (`operation`) est
   alimentée par Waveform, Break et Stem Mixer.
 
+### Réserve — sample cards compactes (en cours, Claude)
+- **SampleCard 3 → 2 lignes** : ligne 1 = `[checkbox] [nom] … [gamme] [⋮]`, ligne 2 =
+  `[play] [slider] [temps]`. Actions (normaliser/waveform/renommer/déplacer/archiver/
+  supprimer) regroupées dans un **menu ⋮** (IconButton `dots-vertical`). Date, id,
+  dossier, durée, gamme, état → **tooltip** reconstruit au survol. Objets conservés
+  comme porteurs de données (aucune casse des contrôleurs). Badge **gamme** masqué par
+  défaut, gouverné par le flag QSettings `reserve/show_key_badge`.
+- **Reste** : le **toggle** UI (montrer/masquer la gamme), l'épuration du chrome
+  Réserve, et la refonte de la vue **Indexé** (désuète/incohérente).
+
 ### À suivre
 - Polir l'UI de **Break / Compositeur / Artefacts** pour finir d'éliminer les
   derniers boutons texte et anciens patterns visuels.
