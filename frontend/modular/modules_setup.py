@@ -41,15 +41,15 @@ def _stems_factory(ctx):
 
 
 def _break_factory(ctx):
-    from frontend.labo.break_widget import BreakWidget
+    from .break_module import BreakModule
 
-    return BreakWidget(ctx.app_context)
+    return BreakModule(ctx.app_context)
 
 
 def _composer_factory(ctx):
-    from frontend.right_panel.composer.composer_widget import SampleComposerWidget
+    from .composer_module import ComposerModule
 
-    return SampleComposerWidget(ctx.app_context)
+    return ComposerModule(ctx.app_context)
 
 
 def _bins_factory(ctx):

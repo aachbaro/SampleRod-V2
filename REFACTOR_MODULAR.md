@@ -61,9 +61,10 @@ Modèle conceptuel :
   en mémoire), fenêtres `ModuleWindow` (hide-on-close + géométrie avec clamp
   multi-écran), fenêtre **Workspace** listant les instances par catégorie.
 - **Modules branchés** : **Réserve**, **Waveform**, **Stem Lab**,
-  **Break**, **Compositeur**, **Bins** et **Artefacts** (réutilisent les
-  widgets existants) ; routage Waveform → Stems, Artefacts → Waveform et
-  Bins → Réserve.
+  **Break**, **Compositeur**, **Bins** et **Artefacts**. `Break` et
+  `Compositeur` ont maintenant leur propre conteneur modulaire à onglets
+  (plusieurs fichiers / plusieurs compositions), avec session restaurée.
+  Routage Waveform → Stems, Artefacts → Waveform et Bins → Réserve.
 - **Réserve → Waveform** : « envoyer au labo » **ou glisser-déposer** (depuis la
   Réserve ou un fichier externe) ouvre chaque fichier dans un **onglet** du module
   Waveform (réutilise une fenêtre existante ; le module est cible de drop, même vide).
@@ -120,6 +121,8 @@ frontend/modular/                ← atelier modulaire
 ├── modules_setup.py             enregistrement des modules concrets
 ├── artifact_module.py           navigateur modulaire des artefacts
 ├── waveform_module.py           WaveformModule (conteneur à onglets, 1/fichier)
+├── break_module.py              BreakModule (conteneur à onglets, 1/fichier)
+├── composer_module.py           ComposerModule (conteneur à onglets, 1/compo)
 └── workspace_window.py          WorkspaceWindow (centre de contrôle)
 
 frontend/labo/
@@ -188,8 +191,8 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 - **Icônes** : jeu inline « style Tabler » pour démarrer. Pour les officielles,
   déposer les `.svg` dans `frontend/ui/assets/icons/` (prioritaires, même
   mécanisme `currentColor`).
-- **Modules classiques encore non migrés** : Break, Compositeur et Bins ne sont
-  pas encore des fenêtres modulaires de première classe.
+- **Bins** reste le principal module encore à approfondir côté session/outillage
+  modulaire ; Break et Compositeur disposent maintenant de leur coque à onglets.
 
 ---
 
@@ -290,6 +293,27 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
 - **Artefacts** : `LabArtifactStore` sait attacher/résoudre le MIME
   `application/x-samplerod-artifact` et la lignée minimale (`operation`) est
   alimentée par Waveform, Break et Stem Mixer.
+
+### Checkpoint — Break/Compositeur modulaires avec persistance
+- **BreakModule** : nouveau conteneur à onglets inspiré de `WaveformModule`
+  (`frontend/modular/break_module.py`). Un fichier = un onglet, dédup par
+  chemin, croix custom, bouton `+`, drop audio sur le module et restauration
+  des marqueurs manuels par onglet.
+- **BreakWidget** : API additive minimale pour le mode modulaire
+  (`current_path`, `set_markers`, `cleanup`, `set_drop_replace_enabled`) afin
+  de conserver l'usage classique intact tout en laissant les drops remonter au
+  module quand il est tabbé.
+- **ComposerModule** : nouveau conteneur à onglets pour compositions
+  indépendantes (`frontend/modular/composer_module.py`). Drop sur la barre
+  d'onglets = nouvelle composition ; drop dans le contenu = comportement natif
+  du `SampleComposerWidget`.
+- **Session Compositeur** : persistance des clips via snapshot par onglet. Les
+  clips "fichier source entier" réutilisent leur path ; les clips non
+  reconstructibles directement sont matérialisés dans
+  `%TEMP%/SampleRod/composer_clips` pour restaurer la composition sans perte.
+- **Factories** : `frontend/modular/modules_setup.py` renvoie maintenant
+  `BreakModule` et `ComposerModule` au lieu des widgets bruts, ce qui branche
+  automatiquement `save_state` / `restore_state` dans le `WindowManager`.
 
 ### Réserve — sample cards compactes (en cours, Claude)
 - **SampleCard 3 → 2 lignes** : ligne 1 = `[checkbox] [nom] … [gamme] [⋮]`, ligne 2 =

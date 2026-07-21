@@ -27,6 +27,40 @@ class BreakMarkersController:
         finally:
             w._record_history = True
 
+    def set_markers(self, markers: list[float]) -> None:
+        """Pose une liste de marqueurs manuels sur la waveform courante."""
+        w = self.widget._waveform_widget
+        if w is None or getattr(w, "waveform_data", None) is None:
+            return
+
+        duration = float(getattr(w, "duration", 0.0) or 0.0)
+        cleaned: list[float] = []
+        seen: set[float] = set()
+        for marker in markers or []:
+            try:
+                value = float(marker)
+            except (TypeError, ValueError):
+                continue
+            if value < 0.0 or (duration > 0.0 and value >= duration):
+                continue
+            key = round(value, 6)
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(value)
+
+        cleaned.sort()
+        self._clear_waveform_markers()
+        if not cleaned:
+            return
+
+        w._record_history = False
+        try:
+            for marker in cleaned:
+                w.add_marker(float(marker))
+        finally:
+            w._record_history = True
+
     def _clear_waveform_markers(self) -> None:
         w = self.widget._waveform_widget
         if w is None:

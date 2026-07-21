@@ -135,11 +135,14 @@ seule classe = look uniforme + mini-lecteur (slider) partout.
 - `frontend/main_window.py` / `frontend/reserve/reserve_pane.py` /
   `frontend/labo/bins_panel.py` — premiers points visibles de l'Atelier
   harmonisés avec le design-core.
+- `frontend/modular/break_module.py` / `frontend/modular/composer_module.py` —
+  coques à onglets cohérentes avec `WaveformModule` (croix `IconButton`,
+  bouton `+`, logique de session au niveau module).
 
 ## 9. Candidats suivants (à faire, ex. par Codex)
 
-- **Break generator**, **Compositeur**, **Artefacts** : finir de retirer les
-  derniers `QPushButton` texte et les aligner sur `IconButton` + tooltips.
+- **Break generator**, **Compositeur** interne, **Artefacts** : finir de retirer
+  les derniers `QPushButton` texte et les aligner sur `IconButton` + tooltips.
 - **Réserve** : continuer le nettoyage des vues internes (`directory_detail`,
   `library_detail`) quand elles restent visibles hors mode unifié.
 - **Settings / notifications / activity tray** : appliquer le même pattern sur

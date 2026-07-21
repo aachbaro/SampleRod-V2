@@ -111,6 +111,26 @@ produit, d'UI ou de service central, **mettre à jour cette section dans le
 README le jour même**. Ce journal sert de mémoire courte du projet ; il doit
 rester plus concret et plus rapide à relire qu'un diff Git.
 
+### 21 juillet 2026
+
+- Les modules modulaires **Break** et **Compositeur** ne sont plus de simples
+  widgets bruts : `frontend/modular/break_module.py` et
+  `frontend/modular/composer_module.py` ajoutent maintenant une vraie coque à
+  onglets, avec croix custom, bouton `+` et persistance de session.
+- Le module **Break** mémorise désormais les fichiers ouverts **et** leurs
+  marqueurs manuels d'un onglet à l'autre ; `BreakWidget` expose pour cela une
+  petite API additive (`current_path`, `set_markers`, `cleanup`,
+  `set_drop_replace_enabled`) sans casser l'usage classique du Labo.
+- Le module **Compositeur** mémorise désormais plusieurs compositions en
+  parallèle. Les clips provenant d'un fichier source entier réutilisent leur
+  chemin original ; les clips non reconstructibles proprement (slice draggée,
+  silence, état audio matérialisé) sont sauvegardés sous forme de WAV
+  temporaires dans `%TEMP%/SampleRod/composer_clips` pour restaurer la session.
+- Le drop ciblé du Compositeur est maintenant cadré : drop sur le **contenu**
+  d'un onglet = ajout normal à la composition courante ; drop sur la **barre
+  d'onglets** = création d'une nouvelle composition alimentée avec les fichiers
+  déposés.
+
 ### 20 juillet 2026
 
 - Modernisation du socle UI partagé : la barre interne du waveform passe aux
@@ -211,6 +231,8 @@ samplerod/
 │   │   ├── window_manager.py       # orchestration des fenêtres/modules
 │   │   ├── workspace_window.py     # centre de contrôle modulaire
 │   │   ├── waveform_module.py      # conteneur à onglets pour plusieurs waveforms
+│   │   ├── break_module.py         # conteneur à onglets pour plusieurs breaks
+│   │   ├── composer_module.py      # conteneur à onglets pour plusieurs compositions
 │   │   ├── artifact_module.py      # navigateur modulaire des artefacts
 │   │   └── modules_setup.py        # registre des modules disponibles
 │   ├── ui/                         # design-core partagé du refactor modulaire

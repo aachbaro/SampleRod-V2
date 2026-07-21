@@ -54,6 +54,9 @@ class BreakDndController:
             QWidget.dropEvent(self.widget, event)
 
     def _handle_drag_enter(self, event) -> bool:
+        if not getattr(self.widget, "_drop_replace_enabled", True):
+            self._set_drop_active(False)
+            return False
         if self.widget._internal_drag_active:
             return False
         mime = event.mimeData()
@@ -68,6 +71,9 @@ class BreakDndController:
         return True
 
     def _handle_drag_move(self, event) -> bool:
+        if not getattr(self.widget, "_drop_replace_enabled", True):
+            self._set_drop_active(False)
+            return False
         if self.widget._internal_drag_active:
             return False
         mime = event.mimeData()
@@ -87,6 +93,9 @@ class BreakDndController:
         return True
 
     def _handle_drop(self, event) -> bool:
+        if not getattr(self.widget, "_drop_replace_enabled", True):
+            self._set_drop_active(False)
+            return False
         if self.widget._internal_drag_active:
             self._set_drop_active(False)
             return False

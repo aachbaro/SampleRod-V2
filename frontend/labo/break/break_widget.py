@@ -41,6 +41,8 @@ class BreakWidget(QWidget):
         self.app_context = app_context
         self._break_service = app_context.drum_analysis
         self._current_path: str | None = None
+        self._drop_replace_enabled = True
+        self._pending_restored_markers: list[float] | None = None
         self._waveform_widget = None
         self._drop_active = False
         self._analysis_result = None
@@ -120,6 +122,80 @@ class BreakWidget(QWidget):
 
     def open_file(self, path: str) -> bool:
         return self.loader.open_file(path)
+
+    def current_path(self) -> str | None:
+        return self._current_path
+
+    def set_drop_replace_enabled(self, enabled: bool) -> None:
+        """Active/desactive le drop-remplacement interne du BreakWidget."""
+        self._drop_replace_enabled = bool(enabled)
+        self.setAcceptDrops(self._drop_replace_enabled)
+        if hasattr(self, "waveform_host") and self.waveform_host is not None:
+            self.waveform_host.setAcceptDrops(self._drop_replace_enabled)
+        if self._waveform_widget is not None:
+            self._waveform_widget.setAcceptDrops(self._drop_replace_enabled)
+
+    def set_markers(self, markers: list[float]) -> None:
+        """Restaure des marqueurs manuels sur le fichier courant."""
+        normalized: list[float] = []
+        seen: set[float] = set()
+        for marker in markers or []:
+            try:
+                value = float(marker)
+            except (TypeError, ValueError):
+                continue
+            if value < 0.0:
+                continue
+            key = round(value, 6)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(value)
+
+        normalized.sort()
+        self._pending_restored_markers = normalized
+        self._apply_pending_markers()
+
+    def _apply_pending_markers(self) -> None:
+        if self._pending_restored_markers is None or not self._waveform_ready():
+            return
+        markers = list(self._pending_restored_markers)
+        self._pending_restored_markers = None
+        self.markers.set_markers(markers)
+        self._clear_analysis()
+        self.status_label.setText("Marqueurs restaures. Relance l'analyse pour reconstruire les slices.")
+        self._refresh_actions()
+
+    def cleanup(self) -> None:
+        """Arrete les lectures en cours avant fermeture du widget."""
+        try:
+            self._stop_tempo_preview()
+        except Exception:
+            pass
+        generator = getattr(self, "generator_panel", None)
+        stopper = getattr(generator, "_stop_preview", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception:
+                pass
+        clear_cache = getattr(generator, "_clear_preview_cache", None)
+        if callable(clear_cache):
+            try:
+                clear_cache(stop_if_playing=False)
+            except Exception:
+                pass
+        waveform = self._waveform_widget
+        if waveform is None:
+            return
+        try:
+            waveform.stop_audio()
+        except Exception:
+            pass
+        try:
+            waveform.timer.stop()
+        except Exception:
+            pass
 
     def _replace_waveform(self, path: str) -> None:
         self.loader._replace_waveform(path)

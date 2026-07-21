@@ -28,6 +28,7 @@ class BreakLoaderController:
             return False
         if self.widget._current_path == normalized and self.widget._waveform_widget is not None:
             return True
+        self.widget._pending_restored_markers = None
         self.widget._current_path = normalized
         self.widget.file_label.setText(os.path.basename(normalized))
         self.widget._clear_analysis()
@@ -46,7 +47,7 @@ class BreakLoaderController:
     def _replace_waveform(self, path: str) -> None:
         self._destroy_waveform()
         waveform = WaveformWidget(path, self.widget.app_context)
-        waveform.setAcceptDrops(True)
+        waveform.setAcceptDrops(bool(getattr(self.widget, "_drop_replace_enabled", True)))
         waveform.installEventFilter(self.widget)
         self.widget.waveform_layout.addWidget(waveform)
         self.widget._waveform_widget = waveform
@@ -84,6 +85,7 @@ class BreakLoaderController:
                 ),
                 persist=False,
             )
+        self.widget._apply_pending_markers()
         self.widget._refresh_actions()
 
     def _waveform_ready(self) -> bool:

@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
+import uuid
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QEvent, QThread, Signal, QSettings
@@ -86,6 +88,61 @@ class SampleComposerWidget(QWidget):
         self.setAcceptDrops(True)
         logger.info("[Composer] DnD target ready (acceptDrops=True)")
         logger.info("[Composer] Initialisation (ready)")
+
+    def snapshot_composition_state(self) -> dict:
+        """Serialise la composition courante pour la restauration de session."""
+        return {
+            "clips": [self._serialize_clip_state(clip) for clip in self.model.clips],
+        }
+
+    def restore_composition_state(self, state: dict) -> None:
+        """Restaure une composition a partir d'un snapshot persiste."""
+        self._stop_load_threads()
+        self.model.clear()
+
+        restored = 0
+        for raw_clip in (state or {}).get("clips", []):
+            if not isinstance(raw_clip, dict):
+                continue
+            path = self._normalize_restore_path(raw_clip.get("path"))
+            if not path:
+                continue
+            try:
+                audio, sr = self._read_audio_file(path)
+            except Exception as exc:
+                logger.warning("[Composer] Impossible de restaurer %s: %s", path, exc)
+                continue
+
+            label = str(raw_clip.get("label") or os.path.splitext(os.path.basename(path))[0])
+            source = dict(raw_clip.get("source") or {})
+            if not source and raw_clip.get("materialized") is not True:
+                source = {"path": path}
+
+            self.model.add_slice(
+                audio=audio,
+                sample_rate=sr,
+                label=label,
+                source=source,
+            )
+            restored += 1
+
+        self._sync_all()
+        if restored:
+            self.info_label.setText(f"Composition restauree ({restored} clip(s)).")
+
+    def cleanup(self) -> None:
+        """Arrete les lectures et attend la fin des loaders avant destruction."""
+        self._stop_load_threads()
+        waveform = getattr(self, "waveform", None)
+        if waveform is not None:
+            try:
+                waveform.stop_audio()
+            except Exception:
+                pass
+            try:
+                waveform.timer.stop()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------ wiring
     def _wire_events(self) -> None:
@@ -431,6 +488,76 @@ class SampleComposerWidget(QWidget):
         loader.finished.connect(lambda: self._load_threads.pop(sample_id, None))
         self._load_threads[sample_id] = loader
         loader.start()
+
+    def _serialize_clip_state(self, clip) -> dict:
+        source = dict(getattr(clip, "source", {}) or {})
+        path = self._reusable_source_path(source)
+        materialized = False
+        if not path:
+            path = self._write_clip_snapshot(clip.audio, clip.sr, clip.label)
+            materialized = True
+        return {
+            "label": clip.label,
+            "path": path,
+            "source": source,
+            "materialized": materialized,
+        }
+
+    @staticmethod
+    def _normalize_restore_path(path_value) -> str:
+        if not path_value:
+            return ""
+        try:
+            normalized = os.path.normpath(os.path.abspath(str(path_value)))
+        except Exception:
+            return ""
+        return normalized if os.path.isfile(normalized) else ""
+
+    def _reusable_source_path(self, source: dict) -> str:
+        raw_path = source.get("path")
+        path = self._normalize_restore_path(raw_path)
+        if not path:
+            return ""
+
+        has_explicit_range = any(
+            key in source and source.get(key) is not None
+            for key in ("time", "start_time", "end_time")
+        )
+        start_value = source.get("start_time", source.get("time"))
+        end_value = source.get("end_time")
+        if has_explicit_range and (start_value is None or end_value is None):
+            return ""
+        if start_value is not None and end_value is not None:
+            return ""
+        return path
+
+    def _write_clip_snapshot(self, audio, sample_rate: int, label: str) -> str:
+        import soundfile as sf
+
+        folder = os.path.join(tempfile.gettempdir(), "SampleRod", "composer_clips")
+        os.makedirs(folder, exist_ok=True)
+        safe_label = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in label).strip("_")
+        safe_label = safe_label or "clip"
+        filename = f"{safe_label}_{uuid.uuid4().hex[:8]}.wav"
+        path = os.path.join(folder, filename)
+        sf.write(path, audio, int(sample_rate))
+        return path
+
+    @staticmethod
+    def _read_audio_file(path: str):
+        import soundfile as sf
+
+        audio, sr = sf.read(path, dtype="float32", always_2d=True)
+        return audio, int(sr)
+
+    def _stop_load_threads(self) -> None:
+        for loader in list(self._load_threads.values()):
+            try:
+                if loader.isRunning():
+                    loader.wait(5000)
+            except Exception:
+                pass
+        self._load_threads.clear()
 
     # ------------------------------------------------------------------ sync UI
     def _sync_all(self) -> None:
