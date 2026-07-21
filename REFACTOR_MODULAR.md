@@ -298,8 +298,11 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
   dossier, durée, gamme, état → **tooltip** reconstruit au survol. Objets conservés
   comme porteurs de données (aucune casse des contrôleurs). Badge **gamme** masqué par
   défaut, gouverné par le flag QSettings `reserve/show_key_badge`.
-- **Reste** : le **toggle** UI (montrer/masquer la gamme), l'épuration du chrome
-  Réserve, et la refonte de la vue **Indexé** (désuète/incohérente).
+- **Toggle gamme** : bouton œil dans le chrome Réserve (`ReservePrefs` singleton +
+  signal ; les cartes se re-évaluent à la volée). Fix : le label d'état « Normal »
+  qui flottait par-dessus la carte → porteurs de données dans un conteneur masqué.
+- **Reste** : épuration fine du chrome Réserve (déjà bien avancée par Codex) et
+  refonte de la vue **Indexé** (désuète/incohérente).
 
 ### À suivre
 - Polir l'UI de **Break / Compositeur / Artefacts** pour finir d'éliminer les

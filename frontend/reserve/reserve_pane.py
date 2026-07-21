@@ -115,9 +115,22 @@ class ReservePane(QWidget):
         )
         self.batch_analyze_btn.setObjectName("BatchAnalyzeBtn")
 
+        # Toggle : afficher/masquer le badge de gamme sur les cartes analysees.
+        from frontend.reserve.reserve_prefs import prefs as _reserve_prefs
+        self.show_key_toggle = IconButton(
+            "eye" if _reserve_prefs.show_key_badge() else "eye-off",
+            tooltip="Afficher la gamme detectee sur les cartes",
+            size="m",
+        )
+        self.show_key_toggle.setObjectName("ShowKeyToggle")
+        self.show_key_toggle.setCheckable(True)
+        self.show_key_toggle.setChecked(_reserve_prefs.show_key_badge())
+        self.show_key_toggle.toggled.connect(self._on_show_key_toggled)
+
         filters_layout.addWidget(self.search_input, 1)
         filters_layout.addWidget(self.status_filter, 0)
         filters_layout.addWidget(self.batch_analyze_btn, 0)
+        filters_layout.addWidget(self.show_key_toggle, 0)
 
         # Chip de filtre gamme compatible (masquee par defaut)
         self.compat_filter_row = QWidget()
@@ -335,6 +348,13 @@ class ReservePane(QWidget):
         self.indexed_widget.set_compatible_scales_filter(None)
         self.directory_widget.set_compatible_scales_filter(None)
         self.compat_filter_row.setVisible(False)
+
+    def _on_show_key_toggled(self, checked: bool) -> None:
+        """Toggle global : afficher/masquer le badge de gamme sur les cartes."""
+        from frontend.reserve.reserve_prefs import prefs as _reserve_prefs
+
+        _reserve_prefs.set_show_key_badge(bool(checked))
+        self.show_key_toggle.set_icon_name("eye" if checked else "eye-off")
 
     # ------------------------------------------------------------------ styles
 

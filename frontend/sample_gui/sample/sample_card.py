@@ -88,6 +88,10 @@ class SampleCard(QWidget):
         # self.app_context.audio_player.signals.positionChanged.connect(self.updateSlider)
         self.settings.librariesChanged.connect(self.updateLibraryCombo)
         theme.manager.themeChanged.connect(self._on_theme_changed)
+        # Toggle global "afficher la gamme" (import paresseux -> pas de cycle).
+        # Methode liee directe : Qt deconnecte auto quand la carte est detruite.
+        from frontend.reserve.reserve_prefs import prefs as _reserve_prefs
+        _reserve_prefs.showKeyBadgeChanged.connect(self.update_scale_badge)
 
         # ---- UI + Controllers
         self.init_ui()

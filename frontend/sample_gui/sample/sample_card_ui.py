@@ -290,13 +290,20 @@ class SampleCardUIBuilder:
 
         # Elements desormais NON affiches : porteurs de donnees pour le tooltip
         # (date/id/dossier/duree/etat) et pour la logique (move via combobox).
-        # Ils restent crees et mis a jour par les controleurs, mais invisibles.
+        # On les place dans un conteneur MASQUE : meme si un controleur appelle
+        # setVisible(True) dessus (ex: le statut "Normal"), le parent cache les
+        # garde invisibles (sinon ils flottent a (0,0) par-dessus la carte).
+        c._data_holder = QWidget(c)
+        c._data_holder.setObjectName("SampleCardDataHolder")
+        c._data_holder.setVisible(False)
+        _holder_layout = QVBoxLayout(c._data_holder)
+        _holder_layout.setContentsMargins(0, 0, 0, 0)
+        _holder_layout.setSpacing(0)
         for _holder in (
             c.date_label, c.id_label, c.status_label,
             c.length_label, c.change_dir_combobox,
         ):
-            _holder.setParent(c)
-            _holder.setVisible(False)
+            _holder_layout.addWidget(_holder)
 
         # Playback container : on l'anime (maxHeight) en meme temps que le waveform
         # pour eviter l'effet "la card remonte puis redescend".
