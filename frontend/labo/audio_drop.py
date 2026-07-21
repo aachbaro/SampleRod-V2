@@ -38,16 +38,24 @@ from frontend.right_panel.composer.composer_dnd import (
     parse_sample_card_mime,
 )
 
+from .artifact_store import ARTIFACT_MIME
+
 
 def has_supported_audio_drop(mime: QMimeData) -> bool:
     """Vrai si le depot contient des fichiers audio ou une carte de sample."""
-    return has_audio_file_urls(mime) or has_sample_card(mime) or has_slice(mime)
+    return (
+        has_audio_file_urls(mime)
+        or has_sample_card(mime)
+        or has_slice(mime)
+        or mime.hasFormat(ARTIFACT_MIME)
+    )
 
 
 def can_accept_audio_drop(
     mime: QMimeData,
     *,
     sample_path_lookup: Callable[[int], str | None],
+    artifact_path_lookup: Callable[[str], str | None] | None = None,
 ) -> bool:
     """Validation sans effet de bord pour les survols de drag-and-drop.
 
@@ -73,6 +81,12 @@ def can_accept_audio_drop(
         audio = payload.get("audio")
         return getattr(audio, "size", 0) > 0 and int(payload.get("sample_rate", 0) or 0) > 0
 
+    if mime.hasFormat(ARTIFACT_MIME) and artifact_path_lookup is not None:
+        for artifact_id in _artifact_ids_from_mime(mime):
+            path = artifact_path_lookup(artifact_id)
+            if path and os.path.isfile(path):
+                return True
+
     return False
 
 
@@ -80,6 +94,7 @@ def resolve_audio_drop_paths(
     mime: QMimeData,
     *,
     sample_path_lookup: Callable[[int], str | None],
+    artifact_path_lookup: Callable[[str], str | None] | None = None,
 ) -> list[str]:
     """Convertit un depot en liste de chemins audio valides et uniques."""
     paths: list[str] = []
@@ -102,6 +117,12 @@ def resolve_audio_drop_paths(
         if temp_path:
             paths.append(temp_path)
 
+    if not paths and mime.hasFormat(ARTIFACT_MIME) and artifact_path_lookup is not None:
+        for artifact_id in _artifact_ids_from_mime(mime):
+            path = artifact_path_lookup(artifact_id)
+            if path:
+                paths.append(path)
+
     normalized_paths: list[str] = []
     seen: set[str] = set()
     for path in paths:
@@ -113,6 +134,17 @@ def resolve_audio_drop_paths(
         seen.add(normalized)
         normalized_paths.append(normalized)
     return normalized_paths
+
+
+def _artifact_ids_from_mime(mime: QMimeData) -> list[str]:
+    try:
+        raw = bytes(mime.data(ARTIFACT_MIME)).decode("utf-8", errors="ignore")
+    except Exception:
+        return []
+    artifact_id = raw.strip()
+    if not artifact_id:
+        return []
+    return [artifact_id]
 
 
 def _materialize_slice_payload(payload: dict) -> str:

@@ -23,11 +23,19 @@ def has_supported_waveform_drop(mime):
     return has_supported_audio_drop(mime)
 
 
-def can_accept_waveform_drop(mime, *, sample_path_lookup):
+def can_accept_waveform_drop(mime, *, sample_path_lookup, artifact_path_lookup=None):
     """Alias : validation sans creer de fichiers temporaires au survol."""
-    return can_accept_audio_drop(mime, sample_path_lookup=sample_path_lookup)
+    return can_accept_audio_drop(
+        mime,
+        sample_path_lookup=sample_path_lookup,
+        artifact_path_lookup=artifact_path_lookup,
+    )
 
 
-def resolve_waveform_drop_paths(mime, *, sample_path_lookup):
+def resolve_waveform_drop_paths(mime, *, sample_path_lookup, artifact_path_lookup=None):
     """Alias : convertit le depot en liste de chemins audio valides."""
-    return resolve_audio_drop_paths(mime, sample_path_lookup=sample_path_lookup)
+    return resolve_audio_drop_paths(
+        mime,
+        sample_path_lookup=sample_path_lookup,
+        artifact_path_lookup=artifact_path_lookup,
+    )

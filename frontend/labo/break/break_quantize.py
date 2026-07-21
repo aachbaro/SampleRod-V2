@@ -58,6 +58,7 @@ class BreakQuantizeController:
                 duration=float(preview.duration_s),
                 persisted=False,
                 origin="break_quantize_preview",
+                operation="quantize_preview",
                 sample_rate=int(preview.sample_rate),
                 metadata={
                     "target_bpm": preview.target_bpm,

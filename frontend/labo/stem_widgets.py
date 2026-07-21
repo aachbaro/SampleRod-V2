@@ -549,6 +549,7 @@ class StemSessionWidget(QWidget):
             duration=duration,
             persisted=False,
             origin="stem_mixer",
+            operation="stem_mixdown",
             metadata={"workspace_dir": self._stem_dir},
         )
         self.artifactRequested.emit(artifact)

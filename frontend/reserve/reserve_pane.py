@@ -34,10 +34,11 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QTabWidget, QVBoxLayout, QWidget
 
 from backend.models.AppContext import AppContext
 from backend.services.directory_service import DirectoryService
+from frontend.ui import IconButton
 from frontend.reserve import (
     ReserveActions,
     STATUS_ALL,
@@ -107,14 +108,12 @@ class ReservePane(QWidget):
         self.status_filter.addItem("Fichiers manquants", STATUS_MISSING)
 
         # Bouton analyse par lots (gamme) — libelle mis a jour dynamiquement selon l'onglet
-        self.batch_analyze_btn = QPushButton("Analyser ce dossier")
-        self.batch_analyze_btn.setObjectName("BatchAnalyzeBtn")
-        self.batch_analyze_btn.setToolTip(
-            "Lance la detection de gamme sur les samples du dossier courant.\n"
-            "Sur les autres onglets, analyse toute la base de donnees."
+        self.batch_analyze_btn = IconButton(
+            "music",
+            tooltip="Analyser les gammes du contexte courant",
+            size="m",
         )
-        self.batch_analyze_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.batch_analyze_btn.setFixedHeight(32)
+        self.batch_analyze_btn.setObjectName("BatchAnalyzeBtn")
 
         filters_layout.addWidget(self.search_input, 1)
         filters_layout.addWidget(self.status_filter, 0)
@@ -130,11 +129,12 @@ class ReservePane(QWidget):
         self.compat_filter_label = QLabel("")
         self.compat_filter_label.setObjectName("CompatFilterLabel")
 
-        self.compat_filter_clear_btn = QPushButton("x")
+        self.compat_filter_clear_btn = IconButton(
+            "x",
+            tooltip="Effacer le filtre de compatibilite",
+            size="s",
+        )
         self.compat_filter_clear_btn.setObjectName("CompatFilterClearBtn")
-        self.compat_filter_clear_btn.setFixedSize(22, 22)
-        self.compat_filter_clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.compat_filter_clear_btn.setToolTip("Effacer le filtre de compatibilite")
 
         compat_row_layout.addWidget(self.compat_filter_label)
         compat_row_layout.addWidget(self.compat_filter_clear_btn)
@@ -262,14 +262,14 @@ class ReservePane(QWidget):
         """Met a jour le libelle/tooltip du bouton selon le contexte (dossier ou global)."""
         folder = self._current_folder_for_analysis()
         if folder:
-            self.batch_analyze_btn.setText("Analyser ce dossier")
+            self.batch_analyze_btn.set_icon_name("music")
             folder_name = os.path.basename(folder) or folder
             self.batch_analyze_btn.setToolTip(
                 "Detecte la gamme des samples de : " + folder_name + "\n"
                 "Les autres samples de la base ne sont pas relances."
             )
         else:
-            self.batch_analyze_btn.setText("Analyser gammes")
+            self.batch_analyze_btn.set_icon_name("music")
             self.batch_analyze_btn.setToolTip(
                 "Lance la detection de gamme sur tous les samples non encore analyses."
             )
@@ -282,11 +282,13 @@ class ReservePane(QWidget):
         else:
             count = self.app_context.sample_store.batch_analyze_missing()
         if count == 0:
-            self.batch_analyze_btn.setText("Tous analyses v")
+            self.batch_analyze_btn.set_icon_name("check")
+            self.batch_analyze_btn.setToolTip("Tous les samples du contexte sont deja analyses.")
             from PySide6.QtCore import QTimer
             QTimer.singleShot(2000, self._update_batch_btn_label)
         else:
-            self.batch_analyze_btn.setText("Analyse (" + str(count) + ")...")
+            self.batch_analyze_btn.set_icon_name("refresh")
+            self.batch_analyze_btn.setToolTip(f"Analyse de {count} sample(s) en cours.")
             self.batch_analyze_btn.setEnabled(False)
             from PySide6.QtCore import QTimer
             QTimer.singleShot(3000, self._reset_batch_btn)
@@ -294,6 +296,7 @@ class ReservePane(QWidget):
     def _reset_batch_btn(self) -> None:
         """Remet le bouton d'analyse en etat actif apres le delai d'attente."""
         self.batch_analyze_btn.setEnabled(True)
+        self.batch_analyze_btn.set_icon_name("music")
         self._update_batch_btn_label()
 
     # ------------------------------------------------------------------ filtre gamme
@@ -366,22 +369,6 @@ class ReservePane(QWidget):
             "QComboBox#ReserveStatusFilter:focus {"
             "    border-color: " + p.INFO + ";"
             "}"
-            "QPushButton#BatchAnalyzeBtn {"
-            "    background: " + p.BG_MEDIUM + ";"
-            "    color: " + p.TEXT_MUTED + ";"
-            "    border: 1px solid " + p.BORDER + ";"
-            "    border-radius: 8px;"
-            "    padding: 6px 10px;"
-            "    font-size: 12px;"
-            "}"
-            "QPushButton#BatchAnalyzeBtn:hover {"
-            "    border-color: " + p.INFO + ";"
-            "    color: " + p.TEXT + ";"
-            "}"
-            "QPushButton#BatchAnalyzeBtn:disabled {"
-            "    color: " + p.TEXT_MUTED + ";"
-            "    opacity: 0.6;"
-            "}"
             "QWidget#CompatFilterRow {"
             "    background: " + p.BG_MEDIUM + ";"
             "    border: 1px solid " + p.INFO + ";"
@@ -391,16 +378,6 @@ class ReservePane(QWidget):
             "QLabel#CompatFilterLabel {"
             "    color: " + p.INFO + ";"
             "    font-size: 12px;"
-            "}"
-            "QPushButton#CompatFilterClearBtn {"
-            "    background: transparent;"
-            "    color: " + p.INFO + ";"
-            "    border: none;"
-            "    font-size: 14px;"
-            "    font-weight: 700;"
-            "}"
-            "QPushButton#CompatFilterClearBtn:hover {"
-            "    color: " + p.TEXT + ";"
             "}"
             "QTabWidget#ReserveTabs::pane {"
             "    border: none;"

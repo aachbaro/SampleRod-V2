@@ -48,6 +48,8 @@ class LabArtifact:
     duration: float = 0.0
     persisted: bool = False
     origin: str = ""
+    parent_ids: list[str] = field(default_factory=list)
+    operation: str = ""
     sample_rate: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

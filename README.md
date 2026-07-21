@@ -113,6 +113,21 @@ rester plus concret et plus rapide à relire qu'un diff Git.
 
 ### 20 juillet 2026
 
+- Modernisation du socle UI partagé : la barre interne du waveform passe aux
+  icônes Tabler (`frontend/sample_gui/waveform/waveform_ui.py`) et
+  `HoverIconButton` devient un shim de compatibilité sans dépendance directe à
+  `qtawesome`, ce qui garde le classique, le compositeur et les sample cards alignés.
+- Uniformisation visible des contrôles Atelier : coin haut-droit de
+  `frontend/main_window.py`, actions de filtre de `frontend/reserve/reserve_pane.py`
+  et ajout des Bins migrés vers `IconButton`.
+- Les modules modulaires **Break**, **Compositeur** et **Bins** sont maintenant
+  enregistrés dans `frontend/modular/modules_setup.py` et reconnectés au
+  `WindowManager` pour les ponts utiles avec la Réserve.
+- Les artefacts du Labo gagnent une première lignée légère
+  (`parent_ids`, `operation`) dans `frontend/labo/lab_artifact.py`.
+- Le drag and drop d’artefact transporte maintenant un MIME dédié
+  `application/x-samplerod-artifact` en plus du fichier, ce qui prépare les
+  échanges inter-fenêtres sans casser les drops existants.
 - Centralisation du flux d'artefacts du Labo via `frontend/labo/artifact_store.py`
   (`LabArtifactStore`) partagé entre atelier classique et modulaire.
 - Le plateau d'artefacts du Labo classique n'est plus une poche d'état locale :

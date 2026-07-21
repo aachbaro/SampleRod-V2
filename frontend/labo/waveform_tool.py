@@ -246,6 +246,7 @@ class WaveformToolWidget(QWidget):
             duration=float(end_time - start_time),
             persisted=False,
             origin="waveform_selection",
+            operation="slice_selection",
             sample_rate=int(waveform.sample_rate),
         )
         self.info_label.setText(f"Artefact cree: {display_name}")
@@ -276,6 +277,7 @@ class WaveformToolWidget(QWidget):
             duration=duration,
             persisted=False,
             origin="waveform_current_file",
+            operation="capture_current_file",
             sample_rate=int(waveform.sample_rate),
         )
         self.info_label.setText(f"Artefact cree: {display_name}")
@@ -447,7 +449,11 @@ class WaveformToolWidget(QWidget):
         if not has_supported_waveform_drop(mime):
             self._set_drop_active(False)
             return False
-        if not can_accept_waveform_drop(mime, sample_path_lookup=self._path_for_sample_id):
+        if not can_accept_waveform_drop(
+            mime,
+            sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
+        ):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()
@@ -461,7 +467,11 @@ class WaveformToolWidget(QWidget):
         if not has_supported_waveform_drop(mime):
             self._set_drop_active(False)
             return False
-        if not can_accept_waveform_drop(mime, sample_path_lookup=self._path_for_sample_id):
+        if not can_accept_waveform_drop(
+            mime,
+            sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
+        ):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()
@@ -491,6 +501,7 @@ class WaveformToolWidget(QWidget):
         return resolve_waveform_drop_paths(
             mime,
             sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
         )
 
     def _path_for_sample_id(self, sample_id: int) -> str | None:
@@ -498,6 +509,13 @@ class WaveformToolWidget(QWidget):
         sample = next((item for item in samples if int(getattr(item, "id", -1)) == int(sample_id)), None)
         path = getattr(sample, "path", "") if sample is not None else ""
         return str(path or "") or None
+
+    def _path_for_artifact_id(self, artifact_id: str) -> str | None:
+        store = getattr(self.app_context, "lab_artifact_store", None)
+        resolver = getattr(store, "resolve_path", None)
+        if callable(resolver):
+            return resolver(artifact_id)
+        return None
 
     def _set_drop_active(self, active: bool) -> None:
         active = bool(active)

@@ -20,7 +20,7 @@
 # - Rendu d'enveloppe (WaveformRenderer).
 #
 # DEPENDANCES
-# - PySide6, pyqtgraph, qtawesome
+# - PySide6, pyqtgraph
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -36,10 +36,36 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 import pyqtgraph as pg
-import qtawesome as qta
+
+from frontend.ui import IconButton, themed_icon
 
 from ..marker_manager import MarkerListWidget
 from .waveform_plot_helpers import add_plot_item_once
+
+
+_LEGACY_ICON_MAP = {
+    "fa5s.save": "save",
+    "fa5s.undo": "undo",
+    "fa5s.redo": "redo",
+    "fa5s.play": "player-play",
+    "fa5s.pause": "player-pause",
+    "fa5s.stop": "player-stop",
+    "fa5s.sync": "repeat",
+    "fa5s.map-marker-alt": "pin",
+    "fa5s.times": "x",
+    "fa5s.plus": "plus",
+    "fa5s.trash-alt": "trash",
+    "fa5s.check": "check",
+    "fa5s.arrow-down": "chevron-down",
+    "fa5s.times-circle": "x",
+    "fa5s.bolt": "bolt",
+    "mdi.waveform": "wave",
+}
+
+
+def _normalize_icon_name(icon_name: str) -> str:
+    normalized = _LEGACY_ICON_MAP.get(icon_name, icon_name)
+    return normalized or "x"
 
 
 class HoverIconButton(QToolButton):
@@ -68,11 +94,11 @@ class HoverIconButton(QToolButton):
         self.setIconSize(QSize(icon_size, icon_size))
         self.setContentsMargins(0, 0, 0, 0)
         self._radius = size // 2
-        self._icon_name = icon_name
+        self._icon_name = _normalize_icon_name(icon_name)
         self._icon_color_normal = icon_color_normal
         self._icon_color_hover = icon_color_hover
-        self._icon_normal = qta.icon(icon_name, color=self._icon_color_normal)
-        self._icon_hover = qta.icon(icon_name, color=self._icon_color_hover)
+        self._icon_normal = themed_icon(self._icon_name, icon_size, self._icon_color_normal)
+        self._icon_hover = themed_icon(self._icon_name, icon_size, self._icon_color_hover)
         self._border_color_normal = border_color
         self._border_color_hover = border_color_hover
         self._border_color_current = border_color
@@ -103,8 +129,10 @@ class HoverIconButton(QToolButton):
         if icon_color_hover is not None:
             self._icon_color_hover = icon_color_hover
 
-        self._icon_normal = qta.icon(icon_name, color=self._icon_color_normal)
-        self._icon_hover = qta.icon(icon_name, color=self._icon_color_hover)
+        self._icon_name = _normalize_icon_name(icon_name)
+        icon_px = self.iconSize().width() or 16
+        self._icon_normal = themed_icon(self._icon_name, icon_px, self._icon_color_normal)
+        self._icon_hover = themed_icon(self._icon_name, icon_px, self._icon_color_hover)
         self.setIcon(self._icon_hover if self.isChecked() else self._icon_normal)
 
     def enterEvent(self, ev):
@@ -228,37 +256,17 @@ class WaveformUIBuilder:
         toolbar_layout.addStretch()
 
         # Boutons petits pour save / undo / redo
-        # Save
-        w.save_button = HoverIconButton(
-            "fa5s.save",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#E6E6E6",
-            icon_color_hover="#1B1B1B",
-        )
+        w.save_button = IconButton("save", tooltip="Sauvegarder le waveform - Ctrl+S", size="s")
         w.save_button.setToolTip("Save waveform - ctrl + s")
         w.save_button.clicked.connect(w.onSaveClicked)
         toolbar_layout.addWidget(w.save_button)
 
-        # Undo / Redo
-        w.undo_button = HoverIconButton(
-            "fa5s.undo",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#E0E0E0",
-            icon_color_hover="#1B1B1B",
-        )
+        w.undo_button = IconButton("undo", tooltip="Annuler - Ctrl+Z", size="s")
         w.undo_button.setToolTip("Undo - ctrl + z")
         w.undo_button.clicked.connect(w.undo)
         toolbar_layout.addWidget(w.undo_button)
 
-        w.redo_button = HoverIconButton(
-            "fa5s.redo",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#E0E0E0",
-            icon_color_hover="#1B1B1B",
-        )
+        w.redo_button = IconButton("redo", tooltip="Rétablir - Ctrl+Shift+Z", size="s")
         w.redo_button.setToolTip("Redo - ctrl + shift + z")
         w.redo_button.clicked.connect(w.redo)
         toolbar_layout.addWidget(w.redo_button)
@@ -299,48 +307,28 @@ class WaveformUIBuilder:
         play_layout.setSpacing(6)
 
         # Play / Pause / Stop (taille + icones)
-        w.play_button = HoverIconButton(
-            "fa5s.play",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#EDEDED",
-            icon_color_hover="#1B1B1B",
+        w.play_button = IconButton(
+            "player-play",
+            tooltip="Lire depuis le début - Ctrl+Espace",
+            size="s",
+            variant="primary",
         )
-        w.play_button.setProperty("role", "primary")
         w.play_button.clicked.connect(w.play_from_start)
         w.play_button.setToolTip("Play - ctrl + space")
         play_layout.addWidget(w.play_button)
 
-        w.pause_button = HoverIconButton(
-            "fa5s.pause",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#E0E0E0",
-            icon_color_hover="#1B1B1B",
-        )
+        w.pause_button = IconButton("player-pause", tooltip="Pause / reprise - Espace", size="s")
         w.pause_button.clicked.connect(w.pause_or_resume)
         w.pause_button.setToolTip("Pause / Resume - space")
         play_layout.addWidget(w.pause_button)
 
-        w.stop_button = HoverIconButton(
-            "fa5s.stop",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#E0E0E0",
-            icon_color_hover="#1B1B1B",
-        )
+        w.stop_button = IconButton("player-stop", tooltip="Stop et retour au début - Alt+Espace", size="s")
         w.stop_button.clicked.connect(w.stop_and_reset)
         w.stop_button.setToolTip("Stop and Reset - alt + space")
         play_layout.addWidget(w.stop_button)
 
         # Loop: plus logique a cote des boutons de lecture
-        w.loop_button = HoverIconButton(
-            "fa5s.sync",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#D2D2D2",
-            icon_color_hover="#1B1B1B",
-        )
+        w.loop_button = IconButton("repeat", tooltip="Activer / désactiver la boucle - Ctrl+L", size="s")
         w.loop_button.setCheckable(True)
         w.loop_button.setProperty("toggle", True)
         w.loop_button.toggled.connect(w.toggle_loop)
@@ -356,13 +344,7 @@ class WaveformUIBuilder:
         toggles.setSpacing(6)
 
         # Marker Mode
-        w.marker_mode_button = HoverIconButton(
-            "fa5s.map-marker-alt",
-            size=24,
-            icon_size=10,
-            icon_color_normal="#D2D2D2",
-            icon_color_hover="#1B1B1B",
-        )
+        w.marker_mode_button = IconButton("pin", tooltip="Mode marqueurs - Ctrl+G", size="s")
         w.marker_mode_button.setCheckable(True)
         w.marker_mode_button.setProperty("toggle", True)
         w.marker_mode_button.setToolTip("Marker Mode ON/OFF - ctrl + g")

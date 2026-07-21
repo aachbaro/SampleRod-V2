@@ -327,7 +327,11 @@ class StemSeparatorToolWidget(QWidget):
         if not has_supported_audio_drop(mime):
             self._set_drop_active(False)
             return False
-        if not can_accept_audio_drop(mime, sample_path_lookup=self._path_for_sample_id):
+        if not can_accept_audio_drop(
+            mime,
+            sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
+        ):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()
@@ -336,7 +340,9 @@ class StemSeparatorToolWidget(QWidget):
 
     def _handle_drop(self, event) -> bool:
         paths = resolve_audio_drop_paths(
-            event.mimeData(), sample_path_lookup=self._path_for_sample_id
+            event.mimeData(),
+            sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
         )
         self._set_drop_active(False)
         if not paths:
@@ -357,6 +363,13 @@ class StemSeparatorToolWidget(QWidget):
         )
         path = getattr(sample, "path", "") if sample is not None else ""
         return str(path or "") or None
+
+    def _path_for_artifact_id(self, artifact_id: str) -> str | None:
+        store = getattr(self.app_context, "lab_artifact_store", None)
+        resolver = getattr(store, "resolve_path", None)
+        if callable(resolver):
+            return resolver(artifact_id)
+        return None
 
     # -- Etats visuels ------------------------------------------------------
     def _set_drop_active(self, active: bool) -> None:

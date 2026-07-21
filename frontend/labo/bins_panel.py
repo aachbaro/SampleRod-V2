@@ -57,13 +57,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
-    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from backend.services.audio_metadata import is_audio_file, normalize_audio_path
+from frontend.labo.artifact_store import ensure_lab_artifact_store
+from frontend.ui import IconButton
 from frontend.right_panel.composer.composer_dnd import has_sample_card, parse_sample_card_mime
 from frontend.styles import theme
 
@@ -236,10 +237,8 @@ class LaboBinsPanel(QWidget):
         self.title_label.setObjectName("LaboBinsTitle")
         self.title_label.setToolTip("Repartiteur rapide de matiere. Drop = move.")
 
-        self.add_button = QPushButton("+")
+        self.add_button = IconButton("plus", tooltip="Ajouter un bin a partir d'un dossier", size="s")
         self.add_button.setObjectName("LaboBinsAddButton")
-        self.add_button.setFixedSize(24, 24)
-        self.add_button.setToolTip("Ajouter un bin a partir d'un dossier")
         self.add_button.clicked.connect(self._choose_bin_folder)
 
         header.addWidget(self.title_label)
@@ -392,6 +391,21 @@ class LaboBinsPanel(QWidget):
             if changed:
                 return
 
+        artifact_store = ensure_lab_artifact_store(self.app_context, self)
+        artifact_paths = artifact_store.paths_from_mime(mime)
+        if artifact_paths and not mime.hasUrls():
+            for src in artifact_paths:
+                src = normalize_audio_path(src)
+                if not src or not os.path.isfile(src) or not is_audio_file(src):
+                    continue
+                dest = self._unique_target_path(bin_data.path, os.path.basename(src))
+                try:
+                    shutil.move(src, dest)
+                    changed = True
+                    moved_source_paths.append(src)
+                except Exception:
+                    continue
+
         if mime.hasUrls():
             for url in mime.urls():
                 src = normalize_audio_path(url.toLocalFile())
@@ -452,19 +466,6 @@ class LaboBinsPanel(QWidget):
             QLabel#BinBubbleFooter {{
                 color: {p.TEXT_MUTED};
                 font-size: 10px;
-            }}
-            QPushButton#LaboBinsAddButton {{
-                background: {p.BG_CARD};
-                color: {p.TEXT};
-                border: 1px solid {p.BORDER};
-                border-radius: 12px;
-                font-size: 14px;
-                font-weight: 700;
-                padding: 0;
-            }}
-            QPushButton#LaboBinsAddButton:hover {{
-                background: {p.BG_HOVER};
-                border-color: {p.BORDER_LIGHT};
             }}
             QScrollArea#LaboBinsScroll {{
                 background: transparent;

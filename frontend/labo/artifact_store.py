@@ -4,9 +4,11 @@ import os
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Signal
+from PySide6.QtCore import QMimeData, QObject, QSettings, Signal
 
 from .lab_artifact import LabArtifact, artifact_file_path, build_artifact_filename
+
+ARTIFACT_MIME = "application/x-samplerod-artifact"
 
 
 class LabArtifactStore(QObject):
@@ -26,6 +28,13 @@ class LabArtifactStore(QObject):
 
     def artifact(self, artifact_id: str) -> LabArtifact | None:
         return self._artifacts.get(str(artifact_id or ""))
+
+    def resolve_path(self, artifact_id: str) -> str | None:
+        artifact = self.artifact(artifact_id)
+        path = artifact_file_path(artifact) if artifact is not None else ""
+        if path and os.path.isfile(path):
+            return path
+        return None
 
     def upsert(self, artifact: LabArtifact) -> None:
         if artifact is None or not getattr(artifact, "artifact_id", ""):
@@ -85,6 +94,44 @@ class LabArtifactStore(QObject):
         artifact.metadata["saved_path"] = target_path
         self.upsert(artifact)
         return target_path
+
+    def attach_mime_data(self, mime: QMimeData, artifact_id: str) -> bool:
+        artifact_id = str(artifact_id or "").strip()
+        if mime is None or not artifact_id:
+            return False
+        mime.setData(ARTIFACT_MIME, artifact_id.encode("utf-8"))
+        path = self.resolve_path(artifact_id)
+        if path:
+            from PySide6.QtCore import QUrl
+
+            mime.setUrls([QUrl.fromLocalFile(path)])
+        return True
+
+    def artifact_ids_from_mime(self, mime: QMimeData) -> list[str]:
+        if mime is None or not mime.hasFormat(ARTIFACT_MIME):
+            return []
+        try:
+            raw = bytes(mime.data(ARTIFACT_MIME)).decode("utf-8", errors="ignore")
+        except Exception:
+            return []
+        artifact_id = raw.strip()
+        if not artifact_id:
+            return []
+        return [artifact_id]
+
+    def paths_from_mime(self, mime: QMimeData) -> list[str]:
+        paths: list[str] = []
+        seen: set[str] = set()
+        for artifact_id in self.artifact_ids_from_mime(mime):
+            path = self.resolve_path(artifact_id)
+            if not path:
+                continue
+            normalized = os.path.normcase(os.path.normpath(path))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            paths.append(path)
+        return paths
 
     @staticmethod
     def _unique_target_path(folder: str, filename: str) -> str:

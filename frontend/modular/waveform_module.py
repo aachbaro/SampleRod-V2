@@ -106,6 +106,7 @@ class WaveformModule(QWidget):
         if can_accept_audio_drop(
             event.mimeData(),
             sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
         ):
             event.acceptProposedAction()
         else:
@@ -115,6 +116,7 @@ class WaveformModule(QWidget):
         if can_accept_audio_drop(
             event.mimeData(),
             sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
         ):
             event.acceptProposedAction()
         else:
@@ -136,7 +138,11 @@ class WaveformModule(QWidget):
     def _paths_from_mime(self, mime) -> list[str]:
         from frontend.labo.audio_drop import resolve_audio_drop_paths
 
-        return resolve_audio_drop_paths(mime, sample_path_lookup=self._path_for_sample_id)
+        return resolve_audio_drop_paths(
+            mime,
+            sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
+        )
 
     def _path_for_sample_id(self, sample_id: int) -> str | None:
         store = getattr(self.app_context, "sample_store", None)
@@ -148,6 +154,13 @@ class WaveformModule(QWidget):
         )
         path = getattr(sample, "path", "") if sample is not None else ""
         return str(path or "") or None
+
+    def _path_for_artifact_id(self, artifact_id: str) -> str | None:
+        store = getattr(self.app_context, "lab_artifact_store", None)
+        resolver = getattr(store, "resolve_path", None)
+        if callable(resolver):
+            return resolver(artifact_id)
+        return None
 
     def _index_for_path(self, normalized: str) -> int | None:
         for i in range(self._tabs.count()):

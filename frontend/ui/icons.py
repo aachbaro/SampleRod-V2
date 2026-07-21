@@ -37,7 +37,12 @@ _INLINE: dict[str, str] = {
     # --- Actions fenetres / instances ---
     "plus": '<path d="M12 5v14"/><path d="M5 12h14"/>',
     "minus": '<path d="M5 12h14"/>',
+    "check": '<path d="M5 12l4 4L19 6"/>',
     "x": '<path d="M18 6 6 18"/><path d="M6 6l12 12"/>',
+    "trash": '<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/>'
+             '<path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/>'
+             '<path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/>',
+    "bolt": '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/>',
     "eye": '<circle cx="12" cy="12" r="2"/>'
            '<path d="M22 12c-2.667 4.667-6 7-10 7s-7.333-2.333-10-7c2.667-4.667 6-7 10-7s7.333 2.333 10 7"/>',
     "eye-off": '<path d="M3 3l18 18"/>'
@@ -67,11 +72,18 @@ _INLINE: dict[str, str] = {
                 '<path d="M8.7 8.7 20 20"/><path d="M8.7 15.3 20 4"/>',
     "camera": '<path d="M5 8h2l1.5-2h7L17 8h2a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z"/>'
               '<circle cx="12" cy="13" r="3"/>',
+    "bell": '<path d="M10 5a2 2 0 1 1 4 0a5 5 0 0 1 3 4.6V13l1.5 2.5a1 1 0 0 1-.86 1.5H6.36a1 1 0 0 1-.86-1.5L7 13V9.6A5 5 0 0 1 10 5"/>'
+            '<path d="M10 19a2 2 0 0 0 4 0"/>',
     "save": '<path d="M6 4h9l3 3v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>'
             '<path d="M8 4v4h6V4"/><path d="M8 14h8"/>',
     "undo": '<path d="M9 13l-4-4 4-4"/><path d="M5 9h9a5 5 0 0 1 0 10h-1"/>',
     "redo": '<path d="M15 13l4-4-4-4"/><path d="M19 9h-9a5 5 0 0 0 0 10h1"/>',
     "pin": '<path d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/>'
+           '<path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/>'
+           '<path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/>'
+           '<path d="M4.93 19.07l1.41-1.41"/><path d="M17.66 6.34l1.41-1.41"/>',
+    "moon": '<path d="M12 3a7.5 7.5 0 1 0 9 9A9 9 0 1 1 12 3z"/>',
     # --- Categories / modules ---
     "folder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "wave": '<path d="M3 12c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>',

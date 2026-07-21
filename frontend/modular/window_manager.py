@@ -405,6 +405,16 @@ class WindowManager(QObject):
             signal = getattr(widget, "sendToLaboRequested", None)
             if signal is not None:
                 signal.connect(self._open_paths_in_waveform)
+        elif inst.module_type == "bins":
+            open_signal = getattr(widget, "openInReserveRequested", None)
+            if open_signal is not None:
+                open_signal.connect(self._open_directory_in_reserve)
+            refresh_signal = getattr(widget, "reserveRefreshRequested", None)
+            if refresh_signal is not None:
+                refresh_signal.connect(self._refresh_reserve_views)
+            moved_signal = getattr(widget, "sourcePathsMoved", None)
+            if moved_signal is not None:
+                moved_signal.connect(self._remove_paths_from_reserve)
         elif inst.module_type == "waveform":
             signal = getattr(widget, "separationRequested", None)
             if signal is not None:
@@ -465,6 +475,45 @@ class WindowManager(QObject):
                 pass
         self.show_instance(target_id)
         return target_id
+
+    def _open_directory_in_reserve(self, path: str) -> str | None:
+        if not path or not os.path.isdir(str(path)) or not self._registry.has("reserve"):
+            return None
+        target_id = self._pick_target("reserve")
+        if target_id is None:
+            target_id = self.create_instance("reserve")
+        widget = self._windows[target_id].module_widget()
+        opener = getattr(widget, "open_directory_in_folders", None)
+        if callable(opener):
+            try:
+                opener(str(path))
+            except Exception:
+                pass
+        self.show_instance(target_id)
+        return target_id
+
+    def _refresh_reserve_views(self) -> None:
+        for inst in self.instances_for_type("reserve"):
+            widget = self._windows.get(inst.instance_id).module_widget() if self._windows.get(inst.instance_id) else None
+            refresher = getattr(widget, "refresh_current_view", None)
+            if callable(refresher):
+                try:
+                    refresher()
+                except Exception:
+                    pass
+
+    def _remove_paths_from_reserve(self, paths) -> None:
+        normalized = [str(path) for path in (paths or []) if path]
+        if not normalized:
+            return
+        for inst in self.instances_for_type("reserve"):
+            widget = self._windows.get(inst.instance_id).module_widget() if self._windows.get(inst.instance_id) else None
+            remover = getattr(widget, "remove_paths_from_folders_view", None)
+            if callable(remover):
+                try:
+                    remover(normalized)
+                except Exception:
+                    pass
 
     def _pick_target(self, module_type: str) -> str | None:
         """Choisit une instance cible du type : une visible sinon n'importe laquelle."""

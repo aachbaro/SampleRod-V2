@@ -60,9 +60,10 @@ Modèle conceptuel :
   (create / show / hide / rename / duplicate / close + save/restore de session
   en mémoire), fenêtres `ModuleWindow` (hide-on-close + géométrie avec clamp
   multi-écran), fenêtre **Workspace** listant les instances par catégorie.
-- **Modules branchés** : **Réserve**, **Waveform**, **Stem Lab** et
-  **Artefacts** (réutilisent les widgets existants) ; routage Waveform → Stems
-  (envoi au séparateur) et ouverture Artefacts → Waveform.
+- **Modules branchés** : **Réserve**, **Waveform**, **Stem Lab**,
+  **Break**, **Compositeur**, **Bins** et **Artefacts** (réutilisent les
+  widgets existants) ; routage Waveform → Stems, Artefacts → Waveform et
+  Bins → Réserve.
 - **Réserve → Waveform** : « envoyer au labo » **ou glisser-déposer** (depuis la
   Réserve ou un fichier externe) ouvre chaque fichier dans un **onglet** du module
   Waveform (réutilise une fenêtre existante ; le module est cible de drop, même vide).
@@ -88,6 +89,10 @@ Modèle conceptuel :
   maintenant par un même `LabArtifactStore` ; un artefact produit par Waveform
   ou Stem Lab peut apparaître dans le plateau classique et dans une fenêtre
   modulaire `Artefacts`.
+- **Lignée minimale d'artefact** : `LabArtifact` embarque maintenant
+  `parent_ids` + `operation`, et le drag d'artefact diffuse aussi un MIME
+  dédié `application/x-samplerod-artifact` pour préparer les échanges
+  inter-fenêtres.
 - **Stem Lab refondu** (ergonomique) : la file d'attente est remplacée par des
   **onglets** (un par fichier). Chaque onglet montre les **4 pistes séparées**
   (tuiles draggables avec **mini-lecteur** : play/pause + slider de position) et
@@ -149,9 +154,9 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 | Waveform / éditeur de découpe  | ✅ branché |
 | Laboratoire de stems           | ✅ branché (routage Waveform→Stems) |
 | Navigateur d'artefacts         | ✅ branché |
-| Générateur de breaks           | ⬜ |
-| Compositeur                    | ⬜ |
-| Bins d'export                  | ⬜ |
+| Générateur de breaks           | ✅ branché |
+| Compositeur                    | ✅ branché |
+| Bins d'export                  | ✅ branché |
 | Historique / graphe de transformations | ⬜ |
 
 ---
@@ -272,9 +277,24 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
   module → **nouvel onglet** (ou focus si le fichier est déjà ouvert). Le
   comportement classique (remplacer) reste inchangé hors module.
 
+### Checkpoint — uniformisation UI partagée + modules restants branchés
+- **Waveform partagé** : la barre interne de `frontend/sample_gui/waveform/waveform_ui.py`
+  utilise maintenant les icônes Tabler du design-core ; `HoverIconButton` reste
+  disponible comme shim de compatibilité pour le compositeur et les sample cards.
+- **Atelier visible plus cohérent** : coin haut-droit de `MainWindow`,
+  boutons d'action de la `Reserve` et ajout des `Bins` passés en `IconButton`.
+- **Modules restants branchés** : `Break`, `Compositeur` et `Bins` sont
+  enregistrés dans `modules_setup.py` et utilisables depuis le Workspace.
+- **Pont Bins → Réserve** : le `WindowManager` sait maintenant ouvrir un dossier
+  dans une Réserve modulaire et rafraîchir/retirer les paths déplacés.
+- **Artefacts** : `LabArtifactStore` sait attacher/résoudre le MIME
+  `application/x-samplerod-artifact` et la lignée minimale (`operation`) est
+  alimentée par Waveform, Break et Stem Mixer.
+
 ### À suivre
-- Break / Compositeur / Bins en modules.
-- Modèle d'artefact avec **lignée** (`parent_ids`, `operation`) + **drag-and-drop
-  inter-fenêtres** (MIME `application/x-samplerod-artifact`).
+- Polir l'UI de **Break / Compositeur / Artefacts** pour finir d'éliminer les
+  derniers boutons texte et anciens patterns visuels.
+- Enrichir la **lignée d'artefacts** (chaînage parent→enfant réel entre artefacts,
+  pas seulement l'opération de sortie).
 - **Workspaces nommés** multiples.
 - Barre de titre custom / regroupement d'instances en onglets détachables (étape 7).

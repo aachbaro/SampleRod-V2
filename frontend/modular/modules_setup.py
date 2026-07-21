@@ -40,6 +40,25 @@ def _stems_factory(ctx):
     return StemSeparatorToolWidget(ctx.app_context)
 
 
+def _break_factory(ctx):
+    from frontend.labo.break_widget import BreakWidget
+
+    return BreakWidget(ctx.app_context)
+
+
+def _composer_factory(ctx):
+    from frontend.right_panel.composer.composer_widget import SampleComposerWidget
+
+    return SampleComposerWidget(ctx.app_context)
+
+
+def _bins_factory(ctx):
+    from PySide6.QtCore import QSettings
+    from frontend.labo.bins_panel import LaboBinsPanel
+
+    return LaboBinsPanel(ctx.app_context, QSettings("SampleRod", "Main"))
+
+
 def _artifacts_factory(ctx):
     from .artifact_module import ArtifactModule
 
@@ -80,6 +99,39 @@ def build_default_registry() -> ModuleRegistry:
             factory=_stems_factory,
             default_title="Stem Lab",
             multi=True,
+        )
+    )
+    registry.register(
+        ModuleType(
+            type_id="break",
+            label="Break",
+            category="BREAKS",
+            icon="stack",
+            factory=_break_factory,
+            default_title="Break",
+            multi=True,
+        )
+    )
+    registry.register(
+        ModuleType(
+            type_id="composer",
+            label="Compositeur",
+            category="COMPOSITEURS",
+            icon="music",
+            factory=_composer_factory,
+            default_title="Compositeur",
+            multi=True,
+        )
+    )
+    registry.register(
+        ModuleType(
+            type_id="bins",
+            label="Bins",
+            category="BINS",
+            icon="box",
+            factory=_bins_factory,
+            default_title="Bins",
+            multi=False,
         )
     )
     registry.register(

@@ -46,7 +46,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QGroupBox,
     QScrollArea,
 )
@@ -55,8 +54,6 @@ from PySide6.QtGui import QShortcut, QKeySequence
 import json
 import logging
 logger = logging.getLogger("main_window")
-
-import qtawesome as qta
 
 from frontend.record_widget import RecordWidgetWindow
 from frontend.settings_gui.libraries_list import SettingsLibrariesList
@@ -268,15 +265,13 @@ class MainWindow(QMainWindow):
         self.modular_button.clicked.connect(self._enter_modular_mode)
         _corner_layout.addWidget(self.modular_button)
 
-        self.theme_button = QPushButton()
-        self.theme_button.setFixedSize(28, 28)
+        self.theme_button = IconButton("sun", tooltip="Basculer dark / light mode", size="s")
         self.theme_button.setToolTip("Basculer dark / light mode")
         self._update_theme_button_icon()
         self.theme_button.clicked.connect(theme.manager.toggle)
         _corner_layout.addWidget(self.theme_button)
 
-        self.notif_button = QPushButton()
-        self.notif_button.setIcon(qta.icon('fa5s.bell', color='lightgray'))
+        self.notif_button = IconButton("bell", tooltip="Notifications", size="s")
         self.notif_button.setToolTip("Notifications")
         _corner_layout.addWidget(self.notif_button)
 
@@ -471,9 +466,7 @@ class MainWindow(QMainWindow):
         """)
 
     def _update_theme_button_icon(self):
-        icon_name = "fa5s.sun" if theme.manager.is_dark() else "fa5s.moon"
-        color = "lightgray" if theme.manager.is_dark() else "#555555"
-        self.theme_button.setIcon(qta.icon(icon_name, color=color))
+        self.theme_button.set_icon_name("sun" if theme.manager.is_dark() else "moon")
 
     def _on_theme_changed(self, _name: str):
         self._update_theme_button_icon()

@@ -130,13 +130,17 @@ seule classe = look uniforme + mini-lecteur (slider) partout.
 - `frontend/labo/stem_separator_tool.py` — header icônes, onglets, drop restreint.
 - `frontend/labo/waveform_tool.py` — wrapper : slice/capture en icônes, root épuré.
 - `frontend/ui/` — `IconButton`, `icons.py`, `tabs.py`.
+- `frontend/sample_gui/waveform/waveform_ui.py` — barre partagée waveform en
+  `IconButton` Tabler, avec `HoverIconButton` conservé comme shim de compatibilité.
+- `frontend/main_window.py` / `frontend/reserve/reserve_pane.py` /
+  `frontend/labo/bins_panel.py` — premiers points visibles de l'Atelier
+  harmonisés avec le design-core.
 
 ## 9. Candidats suivants (à faire, ex. par Codex)
 
-- **Barre interne de l'éditeur waveform** (`frontend/sample_gui/waveform/waveform_ui.py`) :
-  les `HoverIconButton` (qtawesome) → `IconButton` Tabler pour uniformiser
-  play/pause/stop/loop, save/undo/redo, marqueur. ⚠️ Code **partagé** avec l'app
-  classique — tester les deux.
-- **Break generator**, **Compositeur**, **Bins** : mêmes principes quand ils
-  deviendront des modules.
-- **Réserve** : boutons d'action et barre de filtres.
+- **Break generator**, **Compositeur**, **Artefacts** : finir de retirer les
+  derniers `QPushButton` texte et les aligner sur `IconButton` + tooltips.
+- **Réserve** : continuer le nettoyage des vues internes (`directory_detail`,
+  `library_detail`) quand elles restent visibles hors mode unifié.
+- **Settings / notifications / activity tray** : appliquer le même pattern sur
+  les zones non encore passées au design-core.

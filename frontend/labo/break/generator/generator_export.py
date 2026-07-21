@@ -72,6 +72,7 @@ class BreakGeneratorExportController:
                 duration=float(payload.duration_s),
                 persisted=False,
                 origin="break_generator",
+                operation="render_break_pattern",
                 sample_rate=int(payload.sample_rate),
                 metadata={
                     "target_bpm": payload.target_bpm,

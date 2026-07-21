@@ -64,6 +64,7 @@ from frontend.custom_widgets import CustomSlider
 from backend.services.audio_metadata import get_audio_duration
 from frontend.styles import theme
 
+from .artifact_store import ensure_lab_artifact_store
 from .lab_artifact import (
     LabArtifact,
     artifact_duration_label,
@@ -105,9 +106,10 @@ class ArtifactTrayRow(QWidget):
     seekRequested = Signal(str, float)    # artifact_id, pos_ms
     removeRequested = Signal(str, bool)   # artifact_id, delete_from_disk
 
-    def __init__(self, artifact: LabArtifact, parent=None):
+    def __init__(self, artifact: LabArtifact, app_context, parent=None):
         super().__init__(parent)
         self.artifact = artifact
+        self.app_context = app_context
         self._drag_start_pos: QPoint | None = None
         self._playing = False
         self._build_ui()
@@ -332,7 +334,11 @@ class ArtifactTrayRow(QWidget):
             return
         drag = QDrag(self)
         mime = QMimeData()
-        mime.setUrls([QUrl.fromLocalFile(path)])
+        store = ensure_lab_artifact_store(self.app_context) if self.app_context is not None else None
+        if store is not None:
+            store.attach_mime_data(mime, self.artifact.artifact_id)
+        else:
+            mime.setUrls([QUrl.fromLocalFile(path)])
         drag.setMimeData(mime)
         result = drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
         if result == Qt.DropAction.MoveAction:
@@ -425,7 +431,7 @@ class ArtifactTrayWidget(QWidget):
         row_data = self._rows.get(artifact.artifact_id)
         if row_data is None:
             item = QListWidgetItem(self.list_widget)
-            row = ArtifactTrayRow(artifact, self.list_widget)
+            row = ArtifactTrayRow(artifact, self.app_context, self.list_widget)
             row.previewRequested.connect(self._toggle_preview)
             row.saveRequested.connect(self.saveArtifactRequested.emit)
             row.openRequested.connect(self.openArtifactRequested.emit)
