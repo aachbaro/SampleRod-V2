@@ -31,6 +31,13 @@ from .break_ui import BreakUIBuilder
 from .hit_row import _HitRow
 
 
+# Ecart tolere entre un marqueur de session et le debut de slice correspondant.
+# Les positions sont ecrites/relues en float : il faut une marge, mais assez
+# fine pour qu'un marqueur reellement deplace par l'utilisateur ne passe pas
+# pour identique.
+_MARKER_MATCH_TOLERANCE_S = 0.001
+
+
 class BreakWidget(QWidget):
     """Standalone break analysis tab: drop -> decoupage -> analyse -> hits + quantize."""
 
@@ -41,6 +48,10 @@ class BreakWidget(QWidget):
         self.app_context = app_context
         self._break_service = app_context.drum_analysis
         self._current_path: str | None = None
+        # Chemin reellement analyse. Identique a _current_path tant que la
+        # waveform n'a pas ete editee ; sinon un WAV temporaire qui contient
+        # l'audio AFFICHE (voir _resolve_working_path).
+        self._working_path: str | None = None
         self._drop_replace_enabled = True
         self._pending_restored_markers: list[float] | None = None
         self._waveform_widget = None
@@ -83,6 +94,7 @@ class BreakWidget(QWidget):
         svc.quantizeFailed.connect(self._on_quantize_failed)
         self.generator_panel.artifactCreated.connect(self.artifactCreated.emit)
         self.generator_panel.statusChanged.connect(self.status_label.setText)
+        self.generator_panel.sliceInspectRequested.connect(self._inspect_slice_in_decoupage)
         self._play_btn.clicked.connect(
             lambda: self._waveform_widget and self._waveform_widget.play_from_start()
         )
@@ -98,6 +110,7 @@ class BreakWidget(QWidget):
         self._undo_btn.clicked.connect(
             lambda: self._waveform_widget and self._waveform_widget.undo()
         )
+        self._reset_labels_btn.clicked.connect(self._reset_manual_labels)
         self.split_button.clicked.connect(self._run_auto_split)
         self.analyze_button.clicked.connect(self._run_slice_analysis)
         self._fill_btn.clicked.connect(self._run_fill_markers)
@@ -108,11 +121,32 @@ class BreakWidget(QWidget):
     def _on_tab_clicked(self, idx: int) -> None:
         self.ui._on_tab_clicked(idx)
 
+    def _inspect_slice_in_decoupage(self, hit_index: int) -> None:
+        """Depuis le generateur : ouvrir Decoupage sur la slice d'un step.
+
+        Sert a corriger une classification douteuse entendue dans le pattern :
+        on bascule d'onglet, la slice est selectionnee (waveform recadree et
+        jouee) et sa ligne est amenee dans le champ de vision.
+        """
+        self.hits_table._inspect_slice(int(hit_index))
+
     def _update_header_meta(self) -> None:
         self.ui._update_header_meta()
 
     def _update_slices_label(self) -> None:
         self.ui._update_slices_label()
+
+    def _refresh_manual_label_action(self) -> None:
+        self.ui._refresh_manual_label_action()
+
+    def _reset_manual_labels(self) -> None:
+        self.hits_table._reset_manual_labels()
+
+    def _on_marker_added(self, position_s: float) -> None:
+        self.hits_table._on_marker_added(position_s)
+
+    def _on_marker_moved(self, from_s: float, to_s: float) -> None:
+        self.hits_table._on_marker_moved(from_s, to_s)
 
     def _stop_tempo_preview(self) -> None:
         self.playback._stop_tempo_preview()
@@ -157,14 +191,38 @@ class BreakWidget(QWidget):
         self._apply_pending_markers()
 
     def _apply_pending_markers(self) -> None:
+        """Repose les marqueurs memorises en session, une fois la waveform prete.
+
+        Poser des marqueurs invalide les slices : on efface donc l'analyse et
+        on demande une re-analyse. MAIS au demarrage, les marqueurs de session
+        sont exactement le decoupage de l'analyse restauree depuis le cache —
+        les effacer faisait perdre la liste des slices et leur classification a
+        chaque relancement de l'application. Dans ce cas, ils sont deja poses :
+        il n'y a rien a faire.
+        """
         if self._pending_restored_markers is None or not self._waveform_ready():
             return
         markers = list(self._pending_restored_markers)
         self._pending_restored_markers = None
+        if self._markers_match_analysis(markers):
+            self._refresh_actions()
+            return
         self.markers.set_markers(markers)
         self._clear_analysis()
         self.status_label.setText("Marqueurs restaures. Relance l'analyse pour reconstruire les slices.")
         self._refresh_actions()
+
+    def _markers_match_analysis(self, markers: list[float]) -> bool:
+        """Ces marqueurs sont-ils le decoupage de l'analyse deja en place ?"""
+        result = self._analysis_result
+        slices = tuple(getattr(result, "slices", ()) or ()) if result is not None else ()
+        if not slices or len(markers) != len(slices):
+            return False
+        slice_starts = sorted(float(drum_slice.start_s) for drum_slice in slices)
+        return all(
+            abs(marker - start) <= _MARKER_MATCH_TOLERANCE_S
+            for marker, start in zip(sorted(markers), slice_starts)
+        )
 
     def cleanup(self) -> None:
         """Arrete les lectures en cours avant fermeture du widget."""

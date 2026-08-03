@@ -24,10 +24,13 @@
 # -----------------------------------------------------------------------------
 
 import json
+import logging
 import os
+from time import perf_counter
 
-from PySide6.QtWidgets import QWidget, QSizePolicy
-from PySide6.QtCore import Signal, Slot, QSettings
+from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QMenu, QSizePolicy, QSlider, QWidget
+from PySide6.QtCore import Qt, Signal, Slot, QSettings
+from PySide6.QtGui import QKeySequence, QShortcut
 
 from backend.models.AppContext import AppContext
 from backend.services.sample_service import SampleService
@@ -47,6 +50,9 @@ from frontend.sample_gui.sample.sample_list_import import SampleListImport
 from frontend.sample_gui.sample.sample_list_normalize import SampleListNormalize
 from frontend.sample_gui.sample.sample_list_service import SampleListServiceActions
 from frontend.sample_gui.sample.sample_list_cards import SampleListCards
+from frontend.sample_gui.sample.sample_card import SampleCard
+
+logger = logging.getLogger("sample_list")
 
 
 class SampleListWidget(QWidget):
@@ -82,6 +88,9 @@ class SampleListWidget(QWidget):
         self._compat_filter_sample_id: int | None = None  # ID reference pour filtre gamme
         self._compat_filter_scales: set[str] = set()       # gammes compatibles du sample ref
         self._current_sample_id: int | None = None
+        self._pending_focus_sample_id: int | None = None
+        self._pending_hidden_samples_refresh: list | None = None
+        self._last_render_signature = None
         self._qs = QSettings("SampleRod", "Main")
         self.samples_per_page = self.settings.getSamplesPerPage()
         self.current_page = 1
@@ -128,15 +137,216 @@ class SampleListWidget(QWidget):
         """Construit l'UI (toolbar, scroll, pagination)."""
         self.ui_builder = SampleListUIBuilder(self)
         self.ui_builder.build()
+        self._build_shortcuts()
         theme.manager.themeChanged.connect(self._on_theme_changed)
 
     def _on_theme_changed(self, _name: str):
         SampleListUIBuilder.restyle(self)
 
+    def _build_shortcuts(self) -> None:
+        self._history_shortcuts = []
+        bindings = [
+            ("Up", lambda: self._focus_relative(-1)),
+            ("Down", lambda: self._focus_relative(1)),
+            ("Left", lambda: self._seek_current_preview(-1000)),
+            ("Right", lambda: self._seek_current_preview(1000)),
+            ("Space", self._toggle_current_preview),
+            ("Shift+Space", self._restart_current_preview),
+            ("Ctrl+Right", self._open_current_waveform),
+            ("Ctrl+R", self._rename_current_sample),
+            ("Ctrl+D", self._delete_current_sample),
+            ("Ctrl+Shift+D", self._remove_current_from_history),
+        ]
+        for seq, handler in bindings:
+            shortcut = QShortcut(QKeySequence(seq), self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(handler)
+            self._history_shortcuts.append(shortcut)
+
+    def _should_handle_shortcuts(self) -> bool:
+        focus_widget = QApplication.focusWidget()
+        if focus_widget is None:
+            return True
+        if focus_widget is self:
+            return True
+        if not self.isAncestorOf(focus_widget):
+            return False
+        return not isinstance(focus_widget, (QLineEdit, QComboBox, QSlider, QMenu))
+
+    def _visible_cards_in_order(self) -> list[SampleCard]:
+        cards: list[SampleCard] = []
+        for index in range(self.content_layout.count()):
+            widget = self.content_layout.itemAt(index).widget()
+            if isinstance(widget, SampleCard) and widget.isVisible():
+                cards.append(widget)
+        return cards
+
+    def _current_card(self) -> SampleCard | None:
+        if self._current_sample_id is not None:
+            card = self._card_widgets.get(int(self._current_sample_id))
+            if isinstance(card, SampleCard):
+                return card
+        focus_widget = QApplication.focusWidget()
+        while focus_widget is not None:
+            if isinstance(focus_widget, SampleCard):
+                return focus_widget
+            focus_widget = focus_widget.parentWidget()
+        cards = self._visible_cards_in_order()
+        return cards[0] if cards else None
+
+    def _focus_card(self, card: SampleCard | None) -> bool:
+        if card is None:
+            return False
+        self.set_current_reserve_sample(int(card.sample.id))
+        card.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.scroll_area.ensureWidgetVisible(card, 0, 24)
+        return True
+
+    def _focus_relative(self, delta: int) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        cards = self._visible_cards_in_order()
+        if not cards:
+            return
+        current = self._current_card()
+        if current not in cards:
+            self._focus_card(cards[0] if delta >= 0 else cards[-1])
+            return
+        index = cards.index(current)
+        target = cards[max(0, min(len(cards) - 1, index + delta))]
+        self._focus_card(target)
+
+    def _toggle_current_preview(self) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        card = self._current_card()
+        if card is None:
+            return
+        self._focus_card(card)
+        card.togglePlay()
+
+    def _restart_current_preview(self) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        card = self._current_card()
+        if card is None:
+            return
+        self._focus_card(card)
+        try:
+            self.app_context.audio_player.clear_audio()
+        except Exception:
+            pass
+        is_playing = self.app_context.audio_player.seek_position(
+            card.sample.id,
+            card.sample.path,
+            card.sample.duration,
+            0,
+        )
+        card.playback._apply_state(is_playing)
+        if is_playing:
+            card.playback.update_slider()
+
+    def _seek_current_preview(self, delta_ms: int) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        card = self._current_card()
+        if card is None:
+            return
+        self._focus_card(card)
+        duration_ms = max(
+            0,
+            int(float(getattr(card.sample, "duration", 0.0) or 0.0) * 1000),
+        )
+        if duration_ms <= 0:
+            return
+        player = self.app_context.audio_player
+        current_position = 0
+        if (
+            int(getattr(player, "current_sample_id", -1)) == int(card.sample.id)
+            and os.path.normpath(getattr(player, "current_sample_path", "") or "")
+            == os.path.normpath(card.sample.path or "")
+        ):
+            current_position = max(0, int(player.get_position()))
+        target = max(0, min(duration_ms, current_position + int(delta_ms)))
+        is_playing = player.seek_position(
+            card.sample.id,
+            card.sample.path,
+            card.sample.duration,
+            target,
+        )
+        card.playback._apply_state(is_playing)
+        card.playback.update_slider()
+
+    def _open_current_waveform(self) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        card = self._current_card()
+        if card is None:
+            return
+        self._focus_card(card)
+        card.toggleWaveform()
+
+    def _rename_current_sample(self) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        card = self._current_card()
+        if card is None:
+            return
+        self._focus_card(card)
+        card.startRename()
+
+    def _delete_current_sample(self) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        card = self._current_card()
+        if card is None:
+            return
+        self._focus_card(card)
+        card.confirmDelete()
+
+    def _remove_current_from_history(self) -> None:
+        if not self._should_handle_shortcuts():
+            return
+        card = self._current_card()
+        if card is None:
+            return
+        self._focus_card(card)
+        card.onArchiveClicked()
+
     # ---- Service slots (cache / cards)
     @Slot(list)
     def onSamplesChanged(self, samples: list):
+        start = perf_counter()
+        signature = self._compute_samples_signature(samples)
+        if not self.isVisible():
+            self.samples = list(samples)
+            if signature == self._last_render_signature:
+                self._pending_hidden_samples_refresh = None
+                logger.info(
+                    "[SampleList][Perf] onSamplesChanged skip-hidden-unchanged samples=%s visible=%s total=%.1fms",
+                    len(samples),
+                    self.isVisible(),
+                    (perf_counter() - start) * 1000.0,
+                )
+                return
+            self._pending_hidden_samples_refresh = list(samples)
+            logger.info(
+                "[SampleList][Perf] onSamplesChanged deferred-hidden samples=%s visible=%s total=%.1fms",
+                len(samples),
+                self.isVisible(),
+                (perf_counter() - start) * 1000.0,
+            )
+            return
+        self._pending_hidden_samples_refresh = None
         self.cards.on_samples_changed(samples)
+        logger.info(
+            "[SampleList][Perf] onSamplesChanged samples=%s filtered=%s cards=%s visible=%s total=%.1fms",
+            len(samples),
+            len(self.filtered_samples),
+            len(self._card_widgets),
+            self.isVisible(),
+            (perf_counter() - start) * 1000.0,
+        )
 
     def set_reserve_query(self, query: str) -> None:
         query = (query or "").strip()
@@ -329,7 +539,45 @@ class SampleListWidget(QWidget):
 
     @Slot(int)
     def onSampleDeleted(self, sample_id: int):
+        start = perf_counter()
         self.cards.on_sample_deleted(sample_id)
+        logger.info(
+            "[SampleList][Perf] onSampleDeleted sample=%s cards=%s total=%.1fms",
+            sample_id,
+            len(self._card_widgets),
+            (perf_counter() - start) * 1000.0,
+        )
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        if self._pending_hidden_samples_refresh is None:
+            return
+        pending = list(self._pending_hidden_samples_refresh)
+        self._pending_hidden_samples_refresh = None
+        if self._compute_samples_signature(pending) == self._last_render_signature:
+            logger.info(
+                "[SampleList][Perf] showEvent skip-pending-unchanged samples=%s",
+                len(pending),
+            )
+            return
+        self.cards.on_samples_changed(pending)
+
+    @staticmethod
+    def _compute_samples_signature(samples: list) -> tuple:
+        return tuple(
+            (
+                int(getattr(sample, "id", -1) or -1),
+                str(getattr(sample, "path", "") or ""),
+                str(getattr(sample, "name", "") or ""),
+                float(getattr(sample, "duration", 0.0) or 0.0),
+                bool(getattr(sample, "missing", False)),
+                getattr(sample, "dominant_note", None),
+                getattr(sample, "detected_scale_label", None),
+                getattr(sample, "detected_scale_kind", None),
+                getattr(sample, "compatible_scales", None),
+            )
+            for sample in samples
+        )
 
     @Slot(int, str, str)
     def onSampleRenamed(self, sample_id: int, old_path: str, new_path: str):

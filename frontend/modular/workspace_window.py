@@ -195,6 +195,12 @@ class WorkspaceWindow(QWidget):
         )
         self._backdrop_btn.setCheckable(True)
         self._backdrop_btn.clicked.connect(self._on_backdrop_toggled)
+        self._settings_btn = IconButton(
+            "settings",
+            tooltip="Ouvrir les parametres",
+            size="s",
+        )
+        self._settings_btn.clicked.connect(self._open_settings_module)
         self._exit_btn = IconButton(
             "window",
             tooltip="Revenir a l'affichage classique",
@@ -203,6 +209,7 @@ class WorkspaceWindow(QWidget):
         self._exit_btn.clicked.connect(self.exitRequested.emit)
         h.addWidget(self._brand, 1)
         h.addWidget(self._backdrop_btn, 0)
+        h.addWidget(self._settings_btn, 0)
         h.addWidget(self._exit_btn, 0)
         root.addWidget(header)
 
@@ -222,6 +229,10 @@ class WorkspaceWindow(QWidget):
 
         root.addWidget(self._scroll, 1)
         self._apply_styles()
+
+    def _open_settings_module(self) -> None:
+        if self._wm.registry.has("settings"):
+            self._wm.create_instance("settings")
 
     # -- Construction du contenu -------------------------------------------
     def _clear_body(self) -> None:

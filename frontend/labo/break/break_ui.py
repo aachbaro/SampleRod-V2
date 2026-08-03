@@ -147,6 +147,12 @@ class BreakUIBuilder:
             "(selectionne d'abord une slice ou clique sur un marqueur)",
         )
         self.widget._undo_btn = _icon_btn("↩", "BreakIconBtn", "Annuler")
+        self.widget._reset_labels_btn = _icon_btn(
+            "⟲",
+            "BreakIconBtn",
+            "Oublier mes corrections de classe pour ce fichier\n"
+            "(elles sont sinon reappliquees a chaque analyse)",
+        )
 
         self.widget._slices_label = QLabel("")
         self.widget._slices_label.setObjectName("BreakSlicesCount")
@@ -161,6 +167,7 @@ class BreakUIBuilder:
         tb_l.addWidget(self.widget._fill_btn)
         tb_l.addWidget(_vline())
         tb_l.addWidget(self.widget._undo_btn)
+        tb_l.addWidget(self.widget._reset_labels_btn)
         tb_l.addStretch(1)
         tb_l.addWidget(self.widget._slices_label)
 
@@ -371,6 +378,7 @@ class BreakUIBuilder:
             bool(self.widget._current_path) and bool(self.widget._get_current_markers())
         )
         self.widget._fill_btn.setEnabled(self.widget._has_valid_fill_interval())
+        self._refresh_manual_label_action()
         self.widget._tp_play_btn.setEnabled(can_quantize)
         self.widget._tp_stop_btn.setEnabled(can_quantize)
         self.widget.bpm_spin.setEnabled(analyzed)
@@ -378,6 +386,20 @@ class BreakUIBuilder:
         self.widget.strength_slider.setEnabled(analyzed)
         self.widget.quantize_preview_button.setEnabled(can_quantize)
         self.widget.quantize_button.setEnabled(can_quantize)
+
+    def _refresh_manual_label_action(self) -> None:
+        """Le bouton d'oubli n'a de sens que si des corrections existent."""
+        path = self.widget._current_path
+        count = (
+            len(self.widget._break_service.load_manual_labels(path)) if path else 0
+        )
+        self.widget._reset_labels_btn.setVisible(count > 0)
+        self.widget._reset_labels_btn.setEnabled(count > 0)
+        if count:
+            self.widget._reset_labels_btn.setToolTip(
+                f"Oublier mes {count} correction(s) de classe pour ce fichier\n"
+                "(elles sont sinon reappliquees a chaque analyse)"
+            )
 
     def _apply_styles(self) -> None:
         p = theme.manager.p

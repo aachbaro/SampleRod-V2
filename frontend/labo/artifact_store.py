@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 import shutil
+import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QMimeData, QObject, QSettings, Signal
+
+from backend.services.audio_metadata import get_audio_duration
 
 from .lab_artifact import LabArtifact, artifact_file_path, build_artifact_filename
 
@@ -16,12 +19,17 @@ class LabArtifactStore(QObject):
 
     artifactUpserted = Signal(object)
     artifactRemoved = Signal(str)
+    artifactFileRenamed = Signal(str, str, str)
 
     def __init__(self, app_context, parent=None):
         super().__init__(parent)
         self.app_context = app_context
         self._settings = QSettings("SampleRod", "Main")
         self._artifacts: dict[str, LabArtifact] = {}
+        sample_store = getattr(self.app_context, "sample_store", None)
+        renamed_signal = getattr(sample_store, "sampleRenamed", None)
+        if renamed_signal is not None:
+            renamed_signal.connect(self._on_sample_renamed)
 
     def all_artifacts(self) -> list[LabArtifact]:
         return list(self._artifacts.values())
@@ -41,6 +49,77 @@ class LabArtifactStore(QObject):
             return
         self._artifacts[artifact.artifact_id] = artifact
         self.artifactUpserted.emit(artifact)
+
+    def import_paths(self, paths: list[str], *, origin: str = "manual_drop") -> list[LabArtifact]:
+        imported: list[LabArtifact] = []
+        for raw_path in paths:
+            path = os.path.normpath(os.path.abspath(str(raw_path or "")))
+            if not path or not os.path.isfile(path):
+                continue
+
+            existing = self._find_artifact_by_path(path)
+            if existing is not None:
+                imported.append(existing)
+                self.upsert(existing)
+                continue
+
+            try:
+                duration = float(get_audio_duration(path))
+            except Exception:
+                duration = 0.0
+
+            artifact = LabArtifact(
+                artifact_id=uuid.uuid4().hex,
+                kind="current_file",
+                display_name=os.path.splitext(os.path.basename(path))[0] or os.path.basename(path),
+                source_path=path,
+                duration=duration,
+                persisted=True,
+                origin=origin,
+                operation="manual_drop",
+            )
+            imported.append(artifact)
+            self.upsert(artifact)
+        return imported
+
+    def rename_artifact(self, artifact_id: str, new_name: str) -> bool:
+        artifact = self.artifact(artifact_id)
+        if artifact is None:
+            return False
+
+        new_name = str(new_name or "").strip()
+        if not new_name:
+            return False
+        if new_name == artifact.display_name:
+            return True
+
+        active_path = artifact_file_path(artifact)
+        old_active_path = active_path
+        self._stop_preview_if_needed(artifact)
+
+        if artifact.temp_path and os.path.isfile(artifact.temp_path):
+            new_path = self._rename_filesystem_path(artifact.temp_path, new_name)
+            if not new_path:
+                return False
+            artifact.temp_path = new_path
+        elif active_path and os.path.isfile(active_path):
+            success, _error = self.app_context.sample_store.rename_by_path(active_path, new_name)
+            if not success:
+                return False
+            base_dir = os.path.dirname(active_path)
+            ext = os.path.splitext(active_path)[1]
+            artifact.source_path = os.path.normpath(os.path.join(base_dir, f"{new_name}{ext}"))
+
+        artifact.display_name = new_name
+        saved_path = str(artifact.metadata.get("saved_path", "") or "")
+        if saved_path and old_active_path and os.path.normcase(os.path.normpath(saved_path)) == os.path.normcase(os.path.normpath(old_active_path)):
+            artifact.metadata["saved_path"] = artifact_file_path(artifact)
+
+        self.upsert(artifact)
+        new_active_path = artifact_file_path(artifact)
+        if old_active_path and new_active_path and old_active_path != new_active_path:
+            self.artifactFileRenamed.emit(artifact.artifact_id, old_active_path, new_active_path)
+        return True
 
     def remove(self, artifact_id: str, delete_from_disk: bool = False) -> bool:
         artifact = self._artifacts.pop(str(artifact_id or ""), None)
@@ -175,6 +254,47 @@ class LabArtifactStore(QObject):
             candidate.unlink()
         except OSError:
             pass
+
+    def _find_artifact_by_path(self, path: str) -> LabArtifact | None:
+        normalized_target = os.path.normcase(os.path.normpath(path))
+        for artifact in self._artifacts.values():
+            current_path = artifact_file_path(artifact)
+            if not current_path:
+                continue
+            if os.path.normcase(os.path.normpath(current_path)) == normalized_target:
+                return artifact
+        return None
+
+    @staticmethod
+    def _rename_filesystem_path(path: str, new_name: str) -> str | None:
+        path = os.path.normpath(os.path.abspath(str(path or "")))
+        if not path or not os.path.isfile(path):
+            return None
+        folder = os.path.dirname(path)
+        ext = os.path.splitext(path)[1]
+        new_path = os.path.normpath(os.path.join(folder, f"{new_name}{ext}"))
+        if os.path.normcase(new_path) == os.path.normcase(path):
+            return path
+        os.rename(path, new_path)
+        return new_path
+
+    def _on_sample_renamed(self, _sample_id: int, old_path: str, new_path: str) -> None:
+        old_norm = os.path.normcase(os.path.normpath(str(old_path or "")))
+        if not old_norm:
+            return
+        new_path = os.path.normpath(os.path.abspath(str(new_path or "")))
+        for artifact in self._artifacts.values():
+            changed = False
+            source_path = str(getattr(artifact, "source_path", "") or "")
+            if source_path and os.path.normcase(os.path.normpath(source_path)) == old_norm:
+                artifact.source_path = new_path
+                changed = True
+            saved_path = str(artifact.metadata.get("saved_path", "") or "")
+            if saved_path and os.path.normcase(os.path.normpath(saved_path)) == old_norm:
+                artifact.metadata["saved_path"] = new_path
+                changed = True
+            if changed:
+                self.upsert(artifact)
 
 
 def ensure_lab_artifact_store(app_context, parent=None) -> LabArtifactStore:

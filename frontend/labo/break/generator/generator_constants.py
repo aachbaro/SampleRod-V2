@@ -54,6 +54,19 @@ PITCH_NOTE_NAMES: tuple[str, ...] = (
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 )
 
+# --- Grille du pattern -------------------------------------------------------
+# 3 lignes seulement (Anchor / Lock / Event) : velocite, source et FX sont
+# lisibles en tooltip sur la case Event, ce qui garde la grille carree.
+PATTERN_ROW_LABELS: tuple[str, ...] = ("Anc", "Lock", "Hit")
+PATTERN_CELL_SIZE = 34
+PATTERN_ROW_HEIGHT = 26
+# Place a reserver sous les lignes pour la barre de defilement horizontale.
+# Sans elle, un pattern de 2 bars (32 steps) etait coupe net a droite : la
+# barre n'avait pas la hauteur pour s'afficher.
+PATTERN_HSCROLL_HEIGHT = 18
+# 3 lignes + l'en-tete horizontal + la bordure du cadre + le defilement.
+PATTERN_TABLE_HEIGHT = PATTERN_ROW_HEIGHT * 3 + 32 + PATTERN_HSCROLL_HEIGHT
+
 STEP_SHORT_LABELS: dict[str, str] = {
     "kick": "K",
     "kick_ghost": "Kg",
@@ -113,6 +126,25 @@ GENERATOR_STEP_ANCHOR_LABELS: dict[str | None, str] = {
     "hat": "hat",
     "ghost": "ghost",
     "other": "other",
+    "silence": "silence",
+}
+
+# Le vocabulaire des ancres est plus grossier que celui des labels de step
+# (`hat` couvre closed_hat et open_hat, `ghost` couvre les fantomes...).
+# Cette table dit sur quelle famille d'ancre figer un step existant.
+STEP_LABEL_TO_ANCHOR: dict[str, str] = {
+    "kick": "kick",
+    "kick_ghost": "ghost",
+    "snare": "snare",
+    "snare_ghost": "ghost",
+    "snare_ruff": "snare",
+    "clap": "clap",
+    "closed_hat": "hat",
+    "open_hat": "hat",
+    "crash": "other",
+    "ride": "other",
+    "tom": "other",
+    "perc": "other",
     "silence": "silence",
 }
 

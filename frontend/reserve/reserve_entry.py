@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 from dataclasses import dataclass, field
@@ -95,6 +96,7 @@ class ReserveEntry:
     display_name: str = ""
     root_path: str | None = None
     folder_path: str | None = None
+    created_at: dt.datetime | None = None
     duration: float | None = None
     rms_level: float | None = None
     status: str = STATUS_NORMAL
@@ -245,6 +247,7 @@ def reserve_entry_from_sample(
         display_name=str(getattr(sample, "name", os.path.splitext(os.path.basename(path))[0])),
         root_path=root_path,
         folder_path=folder_path or os.path.dirname(path),
+        created_at=getattr(sample, "created_at", None),
         duration=float(getattr(sample, "duration", 0.0) or 0.0),
         rms_level=(
             float(getattr(sample, "rms_level", 0.0))
@@ -276,6 +279,7 @@ def reserve_entry_from_directory(entry: DirectoryAudioEntry) -> ReserveEntry:
         sample_id=entry.sample_id,
         display_name=entry.name,
         folder_path=os.path.dirname(entry.path),
+        created_at=entry.created_at,
         duration=entry.duration,
         rms_level=entry.rms_level,
         status=resolve_reserve_status(

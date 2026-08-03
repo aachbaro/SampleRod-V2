@@ -28,10 +28,10 @@ from PySide6.QtWidgets import (
     QMenu,
     QLabel,
 )
-import qtawesome as qta
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from frontend.styles import theme
+from frontend.ui import themed_icon
 
 class SampleListUIBuilder:
     """Constructeur d'UI pour SampleListWidget (toolbar + scroll + pagination)."""
@@ -68,15 +68,10 @@ class SampleListUIBuilder:
         w.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         panel_layout.addWidget(w.toolbar)
 
-        w.add_files_btn = self._make_round_btn(
-            "fa5s.folder-open",
-            "Ajouter un ou plusieurs fichiers audio",
-        )
-        w.add_files_btn.clicked.connect(w.onAddFiles)
-        w.toolbar.addWidget(w.add_files_btn)
+        w.add_files_btn = None
 
-        w.select_all_btn = self._make_round_btn("fa5s.check-double", "Tout cocher")
-        w.deselect_all_btn = self._make_round_btn("fa5s.times-circle", "Tout decocher")
+        w.select_all_btn = self._make_round_btn("check", "Tout cocher")
+        w.deselect_all_btn = self._make_round_btn("x", "Tout decocher")
         w.select_all_btn.clicked.connect(w.onSelectAll)
         w.deselect_all_btn.clicked.connect(w.onDeselectAll)
         w.toolbar.addWidget(w.select_all_btn)
@@ -85,22 +80,34 @@ class SampleListUIBuilder:
         w.toolbar.addSeparator()
 
         w.bulk_archive_act = QAction(
-            qta.icon("fa5s.times-circle", color="#bdbdbd"),
+            themed_icon("x", size=16, color="#bdbdbd"),
             "Retirer de l'historique",
             w,
         )
         w.bulk_archive_act.setEnabled(False)
         w.bulk_archive_act.triggered.connect(w.bulkRemoveFromHistory)
 
-        w.bulk_delete_act = QAction(qta.icon("fa5s.trash-alt", color="#c06a6a"), "Supprimer", w)
+        w.bulk_delete_act = QAction(
+            themed_icon("trash", size=16, color="#c06a6a"),
+            "Supprimer",
+            w,
+        )
         w.bulk_delete_act.setEnabled(False)
         w.bulk_delete_act.triggered.connect(w.bulkDelete)
 
-        w.bulk_move_act = QAction(qta.icon("fa5s.folder", color="#bdbdbd"), "Deplacer...", w)
+        w.bulk_move_act = QAction(
+            themed_icon("folder", size=16, color="#bdbdbd"),
+            "Deplacer...",
+            w,
+        )
         w.bulk_move_act.setEnabled(False)
         w.bulk_move_act.triggered.connect(w.bulkMove)
 
-        w.bulk_normalize_act = QAction(qta.icon("fa5s.bolt", color="#c9a75a"), "Normaliser", w)
+        w.bulk_normalize_act = QAction(
+            themed_icon("bolt", size=16, color="#c9a75a"),
+            "Normaliser",
+            w,
+        )
         w.bulk_normalize_act.setEnabled(False)
         w.bulk_normalize_act.triggered.connect(w.bulkNormalize)
 
@@ -110,10 +117,11 @@ class SampleListUIBuilder:
         w.actions_menu.addAction(w.bulk_move_act)
         w.actions_menu.addAction(w.bulk_normalize_act)
 
-        w.actions_btn = self._make_round_btn("fa5s.list", "Actions selection")
+        w.actions_btn = self._make_round_btn("dots-vertical", "Actions selection")
         w.actions_btn.setMenu(w.actions_menu)
         w.actions_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         w.toolbar.addWidget(w.actions_btn)
+        w.toolbar.setVisible(False)
 
         # ---- Drag & drop enabled
         w.setAcceptDrops(True)
@@ -137,8 +145,8 @@ class SampleListUIBuilder:
         w.pagination_label = QLabel("0 - 0 / 0")
         w.pagination_label.setObjectName("PaginationLabel")
 
-        w.prev_button = self._make_round_btn("fa5s.chevron-left", "Page precedente")
-        w.next_button = self._make_round_btn("fa5s.chevron-right", "Page suivante")
+        w.prev_button = self._make_round_btn("chevron-left", "Page precedente")
+        w.next_button = self._make_round_btn("chevron-right", "Page suivante")
         w.prev_button.clicked.connect(w._prev_page)
         w.next_button.clicked.connect(w._next_page)
 
@@ -236,12 +244,15 @@ class SampleListUIBuilder:
         border = p.BG_CARD
         neutral = p.TEXT_MUTED
         icon_hover = "#111111"
-        for btn in [
-            widget.add_files_btn,
-            widget.select_all_btn,
-            widget.deselect_all_btn,
-            widget.actions_btn,
-            widget.prev_button,
-            widget.next_button,
-        ]:
+        for btn in filter(
+            None,
+            [
+                widget.add_files_btn,
+                widget.select_all_btn,
+                widget.deselect_all_btn,
+                widget.actions_btn,
+                widget.prev_button,
+                widget.next_button,
+            ],
+        ):
             btn.update_colors(neutral, icon_hover, border)

@@ -351,6 +351,20 @@ class WaveformUIBuilder:
         w.marker_mode_button.toggled.connect(w.toggle_marker_mode)
         toggles.addWidget(w.marker_mode_button)
 
+        # Decoupage au tempo : pose une grille de marqueurs reguliers depuis
+        # un point de depart, pour recouper un morceau en patterns.
+        w.grid_button = IconButton(
+            "grid",
+            tooltip=(
+                "Decouper au tempo\n"
+                "Pose des marqueurs reguliers depuis le point de depart\n"
+                "(marqueur selectionne, sinon debut de la selection)"
+            ),
+            size="s",
+        )
+        w.grid_button.clicked.connect(w.open_grid_panel)
+        toggles.addWidget(w.grid_button)
+
         controls_layout.addLayout(toggles)
         editor_layout.addLayout(controls_layout)
 

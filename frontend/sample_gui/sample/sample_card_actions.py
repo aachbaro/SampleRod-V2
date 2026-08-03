@@ -20,9 +20,10 @@
 from __future__ import annotations
 
 import os
-import qtawesome as qta
 
 from PySide6.QtWidgets import QMessageBox
+
+from frontend.ui import themed_icon
 
 
 class SampleCardHeaderActions:
@@ -102,12 +103,14 @@ class SampleCardHeaderActions:
                 c.app_context.audio_player.clear_audio()
                 if hasattr(c.play_button, "set_icon_pair"):
                     c.play_button.set_icon_pair(
-                        "fa5s.play",
+                        "player-play",
                         icon_color_normal="#cfcfcf",
                         icon_color_hover="#121212",
                     )
                 else:
-                    c.play_button.setIcon(qta.icon("fa5s.play", color="lightgray"))
+                    c.play_button.setIcon(
+                        themed_icon("player-play", size=14, color="#cfcfcf")
+                    )
             except Exception:
                 pass
         c.deleteSample.emit(c.sample.id)
@@ -123,12 +126,14 @@ class SampleCardHeaderActions:
                 c.app_context.audio_player.clear_audio()
                 if hasattr(c.play_button, "set_icon_pair"):
                     c.play_button.set_icon_pair(
-                        "fa5s.play",
+                        "player-play",
                         icon_color_normal="#cfcfcf",
                         icon_color_hover="#121212",
                     )
                 else:
-                    c.play_button.setIcon(qta.icon("fa5s.play", color="lightgray"))
+                    c.play_button.setIcon(
+                        themed_icon("player-play", size=14, color="#cfcfcf")
+                    )
             except Exception:
                 pass
         c.removeFromHistory.emit(c.sample.id)

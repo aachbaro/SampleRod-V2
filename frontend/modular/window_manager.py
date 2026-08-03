@@ -58,6 +58,11 @@ class WindowManager(QObject):
         self._windows: dict[str, ModuleWindow] = {}
         self._counters: dict[str, int] = {}
         self._companions: list[QWidget] = []  # fenetres hors-module (Workspace)
+        # Ordre d'empilement des instances, du DESSOUS vers le DESSUS.
+        # Sans lui, raise_group() re-empilait le groupe dans l'ordre de
+        # CREATION : la premiere instance creee (la Reserve, en pratique)
+        # repassait sous toutes les autres a chaque clic sur une fenetre.
+        self._stack_order: list[str] = []
         self._raising = False                 # garde anti-recursion group raise
         self._backdrop = None                 # fond global optionnel
         self._backdrop_enabled = False
@@ -187,6 +192,8 @@ class WindowManager(QObject):
             return
         inst = self._instances.pop(instance_id, None)
         win = self._windows.pop(instance_id, None)
+        if instance_id in self._stack_order:
+            self._stack_order.remove(instance_id)
         if win is not None:
             win.windowHidden.disconnect(self._on_window_hidden)
             widget = win.module_widget()
@@ -277,6 +284,19 @@ class WindowManager(QObject):
         if window not in self._companions:
             self._companions.append(window)
 
+    def _touch_stack(self, instance_id: str) -> None:
+        """Marque cette instance comme la plus recemment mise au premier plan."""
+        if instance_id in self._stack_order:
+            self._stack_order.remove(instance_id)
+        self._stack_order.append(instance_id)
+
+    def _stack_rank(self, instance_id: str) -> int:
+        """Rang d'empilement : plus grand = plus haut. Inconnu = tout en haut."""
+        try:
+            return self._stack_order.index(instance_id)
+        except ValueError:
+            return len(self._stack_order)
+
     def raise_group(self, active_window: QWidget | None = None) -> None:
         """Remonte toutes les fenetres visibles ensemble (comme une seule).
 
@@ -284,6 +304,11 @@ class WindowManager(QObject):
         fenetres tout en passant au-dessus des autres applications. La fenetre
         active est remontee en dernier. Un verrou evite toute recursion via les
         evenements d'activation.
+
+        Les modules sont remontes dans l'ordre d'empilement MEMORISE (le plus
+        ancien au premier plan d'abord) et non dans leur ordre de creation :
+        sinon la plus vieille instance — la Reserve — repassait derriere tout
+        le monde des qu'on cliquait sur une autre fenetre.
         """
         if self._raising:
             return
@@ -292,10 +317,11 @@ class WindowManager(QObject):
             if self._backdrop is not None and self._backdrop.isVisible():
                 self._backdrop.raise_()
             group: list[QWidget] = []
-            for inst in self._instances.values():
+            for instance_id in sorted(self._instances, key=self._stack_rank):
+                inst = self._instances[instance_id]
                 if not inst.visible:
                     continue
-                win = self._windows.get(inst.instance_id)
+                win = self._windows.get(instance_id)
                 if win is not None and win.isVisible():
                     group.append(win)
             group.extend(c for c in self._companions if c.isVisible())
@@ -349,6 +375,7 @@ class WindowManager(QObject):
             self.set_backdrop_enabled(True)
 
     def _on_window_activated(self, instance_id: str) -> None:
+        self._touch_stack(instance_id)
         self.raise_group(active_window=self._windows.get(instance_id))
 
     # -- Interne ------------------------------------------------------------
@@ -383,6 +410,8 @@ class WindowManager(QObject):
         win.raise_()
         win.activateWindow()
         inst.visible = True
+        # Une fenetre qu'on vient d'afficher est la plus haute du groupe.
+        self._touch_stack(inst.instance_id)
 
     def _on_window_hidden(self, instance_id: str) -> None:
         # La croix a masque la fenetre : on met a jour l'etat.

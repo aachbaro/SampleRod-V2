@@ -19,13 +19,23 @@
 
 from __future__ import annotations
 
+import os
 import pickle
 
 import logging
 
-from PySide6.QtCore import Qt, QEvent, QMimeData, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QEvent, QMimeData, QPropertyAnimation, QEasingCurve, QUrl
 from PySide6.QtGui import QDrag
-from PySide6.QtWidgets import QApplication, QGraphicsOpacityEffect
+from PySide6.QtWidgets import (
+    QApplication,
+    QAbstractButton,
+    QComboBox,
+    QGraphicsOpacityEffect,
+    QLineEdit,
+    QMenu,
+    QSlider,
+    QWidget,
+)
 
 logger = logging.getLogger("sample_card_dnd")
 
@@ -36,34 +46,63 @@ class SampleCardInteractions:
     def __init__(self, card):
         self.card = card
         self._drag_start_pos = None
+        self._drag_source = None
+
+    @staticmethod
+    def _event_point(event):
+        if hasattr(event, "globalPosition"):
+            return event.globalPosition().toPoint()
+        if hasattr(event, "position"):
+            return event.position().toPoint()
+        if hasattr(event, "pos"):
+            return event.pos()
+        return None
+
+    @staticmethod
+    def _is_passive_drag_source(widget: QWidget | None) -> bool:
+        return not isinstance(
+            widget,
+            (QAbstractButton, QSlider, QLineEdit, QComboBox, QMenu),
+        )
 
     # ---- Mouse / Drag
     def mouse_press(self, event):
         """Enregistre la position de depart du drag et donne le focus a la carte."""
         if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start_pos = event.position().toPoint()
+            self._drag_start_pos = self._event_point(event)
+            self._drag_source = self.card
         self.card.setFocus()
 
     def mouse_move(self, event) -> bool:
         """Demarre un QDrag si le deplacement depasse QApplication.startDragDistance()."""
+        current_pos = self._event_point(event)
         if (
             event.buttons() & Qt.MouseButton.LeftButton
             and self._drag_start_pos is not None
+            and current_pos is not None
         ):
-            if (
-                event.position().toPoint() - self._drag_start_pos
-            ).manhattanLength() >= QApplication.startDragDistance():
+            if (current_pos - self._drag_start_pos).manhattanLength() >= QApplication.startDragDistance():
                 self._start_drag()
                 self._drag_start_pos = None
+                self._drag_source = None
                 return True
         return False
 
     def _start_drag(self):
-        """Cree et execute un QDrag avec payload pickle {"sample_id": id}."""
+        """Cree un drag mixte : fichier copiable a l'exterieur + MIME interne.
+
+        - `text/uri-list` permet de deposer le sample vers le bureau ou
+          l'explorateur Windows en mode copie.
+        - `application/x-sample-card` conserve le comportement interne vers
+          le Compositeur / Labo.
+        """
         sample_id = getattr(self.card.sample, "id", None)
         logger.info("[SampleCard] drag start (sample_id=%s)", sample_id)
         drag = QDrag(self.card)
         mime = QMimeData()
+        file_path = str(getattr(self.card.sample, "path", "") or "").strip()
+        if file_path and os.path.isfile(file_path):
+            mime.setUrls([QUrl.fromLocalFile(file_path)])
         payload = {"sample_id": self.card.sample.id}
         mime.setData(
             "application/x-sample-card",
@@ -106,4 +145,23 @@ class SampleCardInteractions:
     def event_filter(self, watched, event) -> bool:
         if event.type() == QEvent.MouseButtonPress:
             self.card.setFocus()
+            if (
+                event.button() == Qt.MouseButton.LeftButton
+                and self._is_passive_drag_source(watched)
+            ):
+                self._drag_start_pos = self._event_point(event)
+                self._drag_source = watched
+        elif (
+            event.type() == QEvent.MouseMove
+            and watched is self._drag_source
+            and self._is_passive_drag_source(watched)
+            and self.mouse_move(event)
+        ):
+            return True
+        elif event.type() in (
+            QEvent.MouseButtonRelease,
+            QEvent.Leave,
+        ):
+            self._drag_start_pos = None
+            self._drag_source = None
         return False

@@ -25,8 +25,15 @@ from PySide6.QtWidgets import QMenu
 import pyqtgraph as pg
 
 
-def add_plot_item_once(plot, item) -> None:
-    """Ajoute un item au plot seulement s'il n'y est pas deja."""
+def add_plot_item_once(plot, item, ignore_bounds: bool = False) -> None:
+    """Ajoute un item au plot seulement s'il n'y est pas deja.
+
+    `ignore_bounds=True` exclut l'item du calcul d'auto-range de la vue. C'est
+    ce qu'il faut pour les lignes de marqueurs : verticales et infinies, elles
+    n'ont aucune etendue a cadrer. Sans ce drapeau, pyqtgraph reparcourt les
+    bornes de TOUS les items a chaque ajout — poser 200 marqueurs devenait
+    quadratique et gelait l'interface plusieurs secondes.
+    """
     if plot is None or item is None:
         return
     plot_item = getattr(plot, "plotItem", plot)
@@ -36,6 +43,13 @@ def add_plot_item_once(plot, item) -> None:
             return
     except Exception:
         pass
+    if ignore_bounds:
+        try:
+            plot.addItem(item, ignoreBounds=True)
+            return
+        except TypeError:
+            # Backend sans ce parametre : on retombe sur l'ajout simple.
+            pass
     plot.addItem(item)
 
 

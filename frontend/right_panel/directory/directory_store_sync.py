@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import logging
+from time import perf_counter
 from typing import Any
 
 from PySide6.QtCore import QObject, QTimer
@@ -79,11 +80,19 @@ class DirectoryStoreSync(QObject):
 
     def on_sample_deleted(self, sample_id: int):
         """Slot : supprime la ligne correspondante de la liste."""
+        start = perf_counter()
         try:
             self._w._remove_row(sample_id)
             self._schedule_status_refresh()
         except Exception:
             pass
+        logger.info(
+            "[DirectoryStoreSync][Perf] on_sample_deleted sample=%s current_dir=%s rows=%s total=%.1fms",
+            sample_id,
+            getattr(self._w, "current_dir", ""),
+            getattr(getattr(self._w, "list_widget", None), "count", lambda: -1)(),
+            (perf_counter() - start) * 1000.0,
+        )
 
     def on_sample_moved(self, sample_id: int, target_folder: str):
         """Slot : ajoute la ligne si le sample arrive dans ce dossier, la retire sinon."""

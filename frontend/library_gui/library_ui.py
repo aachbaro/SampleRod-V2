@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from frontend.styles import theme
+from frontend.ui import IconButton
 
 
 def build_library_widget_ui(widget) -> None:
@@ -38,7 +39,7 @@ def build_library_widget_ui(widget) -> None:
     - Header : titre, compteur, barre de recherche, filtre de statut.
     - Splitter horizontal :
         - Panneau de navigation (QTreeWidget) a gauche.
-        - Tableau de samples (QTableWidget, 6 colonnes) au centre.
+        - Tableau de samples (QTableWidget, 8 colonnes) au centre.
         - Detail du sample (LibraryDetailWidget) a droite.
 
     Les attributs crees (tree, table, search_input, etc.) sont directement
@@ -58,6 +59,8 @@ def build_library_widget_ui(widget) -> None:
     widget.title_label = QLabel("Bibliotheque")
     widget.title_label.setObjectName("LibraryTitle")
 
+    widget.nav_toggle_button = IconButton("chevron-left", tooltip="Masquer la navigation", size="s")
+
     widget.count_label = QLabel("0 sample")
     widget.count_label.setObjectName("LibraryCount")
 
@@ -73,11 +76,18 @@ def build_library_widget_ui(widget) -> None:
     widget.status_filter.addItem("A analyser", "needs_analysis")
     widget.status_filter.addItem("Fichiers manquants", "missing")
 
+    widget.scale_filter = QComboBox()
+    widget.scale_filter.setObjectName("LibraryScaleFilter")
+    widget.scale_filter.setMinimumWidth(190)
+    widget.scale_filter.addItem("Toutes les gammes", "__all__")
+
     header.addWidget(widget.title_label)
+    header.addWidget(widget.nav_toggle_button)
     header.addStretch(1)
     header.addWidget(widget.count_label)
     header.addWidget(widget.search_input, 1)
     header.addWidget(widget.status_filter)
+    header.addWidget(widget.scale_filter)
 
     main_layout.addLayout(header)
 
@@ -107,9 +117,9 @@ def build_library_widget_ui(widget) -> None:
 
     widget.table_title = QLabel("Samples indexes")
     widget.table_title.setObjectName("LibrarySectionTitle")
-    widget.table = QTableWidget(0, 6)
+    widget.table = QTableWidget(0, 8)
     widget.table.setObjectName("LibraryTable")
-    widget.table.setHorizontalHeaderLabels(["Nom", "Dossier", "Racine", "Duree", "RMS", "Statut"])
+    widget.table.setHorizontalHeaderLabels(["Nom", "Gamme", "Dossier", "Racine", "Date", "Duree", "Poids", "Statut"])
     widget.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     widget.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
     widget.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -121,10 +131,22 @@ def build_library_widget_ui(widget) -> None:
     table_layout.addWidget(widget.table_title)
     table_layout.addWidget(widget.table, 1)
 
+    # Le detail passe SOUS la table plutot qu'a sa droite : en colonne il
+    # mangeait la moitie de la largeur alors qu'il ne sert qu'a lire le sample
+    # selectionne. La table recupere toute la place, le detail se reduit a une
+    # bande compacte (quelques infos + la carte de lecture).
+    widget.content_splitter = QSplitter(Qt.Orientation.Vertical)
+    widget.content_splitter.setObjectName("LibraryContentSplitter")
+    widget.content_splitter.setChildrenCollapsible(False)
+    widget.content_splitter.addWidget(widget.table_panel)
+    widget.content_splitter.addWidget(widget.detail_widget)
+    widget.content_splitter.setStretchFactor(0, 1)
+    widget.content_splitter.setStretchFactor(1, 0)
+    widget.content_splitter.setSizes([700, 170])
+
     widget.splitter.addWidget(widget.nav_panel)
-    widget.splitter.addWidget(widget.table_panel)
-    widget.splitter.addWidget(widget.detail_widget)
-    widget.splitter.setSizes([220, 520, 460])
+    widget.splitter.addWidget(widget.content_splitter)
+    widget.splitter.setSizes([220, 900])
 
     main_layout.addWidget(widget.splitter, 1)
 
@@ -155,7 +177,8 @@ def apply_styles(widget) -> None:
             font-weight: 600;
         }}
         QLineEdit#LibrarySearch,
-        QComboBox#LibraryStatusFilter {{
+        QComboBox#LibraryStatusFilter,
+        QComboBox#LibraryScaleFilter {{
             background: {palette.BG_MEDIUM};
             color: {palette.TEXT};
             border: 1px solid {palette.BORDER};
@@ -178,7 +201,7 @@ def apply_styles(widget) -> None:
         }}
         QTreeWidget#LibraryTree::item,
         QTableWidget#LibraryTable::item {{
-            padding: 6px 4px;
+            padding: 4px 6px;
             border: none;
         }}
         QTreeWidget#LibraryTree::item:selected,
@@ -197,6 +220,14 @@ def apply_styles(widget) -> None:
             border-bottom: 1px solid {palette.BORDER};
             padding: 6px 8px;
             font-weight: 600;
+        }}
+        QLabel#LibraryDetailPath {{
+            color: {palette.TEXT};
+            font-size: 11px;
+        }}
+        QLabel#LibraryDetailMeta {{
+            color: {palette.TEXT_MUTED};
+            font-size: 11px;
         }}
         """
     )

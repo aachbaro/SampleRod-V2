@@ -44,11 +44,12 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QPoint, QMimeData, QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QMimeData, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QDrag
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -64,6 +65,7 @@ from frontend.custom_widgets import CustomSlider
 from backend.services.audio_metadata import get_audio_duration
 from frontend.styles import theme
 
+from .audio_drop import can_accept_audio_drop, has_supported_audio_drop, resolve_audio_drop_paths
 from .artifact_store import ensure_lab_artifact_store
 from .lab_artifact import (
     LabArtifact,
@@ -142,6 +144,9 @@ class ArtifactTrayRow(QWidget):
         self.name_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.name_label.setMinimumWidth(50)
         self.name_label.setMaximumWidth(200)
+        self.name_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.name_label.setToolTip("Double-clique pour renommer l'artefact")
+        self.name_label.mouseDoubleClickEvent = self._on_name_double_click  # type: ignore[assignment]
 
         # ── Slider de lecture (même logique que les sample cards) ─────────
         self.slider = CustomSlider(Qt.Orientation.Horizontal)
@@ -298,6 +303,7 @@ class ArtifactTrayRow(QWidget):
         preview_label = "Stopper l'écoute" if self._playing else "Lire"
         preview_action = menu.addAction(preview_label)
         open_action = menu.addAction("Ouvrir dans Waveform")
+        rename_action = menu.addAction("Renommer…")
         save_action = menu.addAction("Sauvegarder sous…")
         reveal_action = menu.addAction("Ouvrir le dossier")
         menu.addSeparator()
@@ -314,12 +320,39 @@ class ArtifactTrayRow(QWidget):
             self.previewRequested.emit(self.artifact.artifact_id)
         elif action is open_action:
             self.openRequested.emit(self.artifact.artifact_id)
+        elif action is rename_action:
+            self._prompt_rename()
         elif action is save_action:
             self.saveRequested.emit(self.artifact.artifact_id)
         elif action is reveal_action and path:
             QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(path)))
         elif action is delete_action:
             self.removeRequested.emit(self.artifact.artifact_id, True)
+
+    def _on_name_double_click(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._prompt_rename()
+            event.accept()
+            return
+        event.ignore()
+
+    def _prompt_rename(self) -> None:
+        current_name = str(self.artifact.display_name or "").strip()
+        new_name, accepted = QInputDialog.getText(
+            self,
+            "Renommer l'artefact",
+            "Nouveau nom :",
+            text=current_name,
+        )
+        if not accepted:
+            return
+        new_name = str(new_name or "").strip()
+        if not new_name or new_name == current_name:
+            return
+        store = ensure_lab_artifact_store(self.app_context) if self.app_context is not None else None
+        if store is None:
+            return
+        store.rename_artifact(self.artifact.artifact_id, new_name)
 
     def _start_drag(self) -> None:
         """Demarre le glisser-deposer du fichier de l'artefact.
@@ -376,6 +409,7 @@ class ArtifactTrayWidget(QWidget):
     def _build_ui(self) -> None:
         self.setObjectName("ArtifactTrayRoot")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAcceptDrops(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 7, 10, 8)
@@ -409,11 +443,40 @@ class ArtifactTrayWidget(QWidget):
         self.list_widget.setObjectName("ArtifactTrayList")
         self.list_widget.setSpacing(3)
         self.list_widget.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.list_widget.setAcceptDrops(True)
+        self.list_widget.viewport().setAcceptDrops(True)
+        self.list_widget.installEventFilter(self)
+        self.list_widget.viewport().installEventFilter(self)
 
         layout.addLayout(header)
         layout.addWidget(self.list_widget, 1)
 
         self._apply_styles()
+
+    def eventFilter(self, watched, event):
+        if watched in {self.list_widget, self.list_widget.viewport()}:
+            if event.type() == QEvent.Type.DragEnter:
+                return self._handle_drag_enter(event)
+            if event.type() == QEvent.Type.DragMove:
+                return self._handle_drag_move(event)
+            if event.type() == QEvent.Type.Drop:
+                return self._handle_drop(event)
+        return super().eventFilter(watched, event)
+
+    def dragEnterEvent(self, event) -> None:
+        if self._handle_drag_enter(event):
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        if self._handle_drag_move(event):
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        if self._handle_drop(event):
+            return
+        super().dropEvent(event)
 
     # ------------------------------------------------------------------
     # Collapse / expand
@@ -478,6 +541,52 @@ class ArtifactTrayWidget(QWidget):
     def _on_remove_requested(self, artifact_id: str, delete_from_disk: bool) -> None:
         """Relaye la suppression vers l'orchestrateur / le store central."""
         self.removeArtifactRequested.emit(artifact_id, delete_from_disk)
+
+    def _handle_drag_enter(self, event) -> bool:
+        mime = event.mimeData()
+        if not has_supported_audio_drop(mime):
+            return False
+        if not can_accept_audio_drop(
+            mime,
+            sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
+        ):
+            return False
+        event.acceptProposedAction()
+        return True
+
+    def _handle_drag_move(self, event) -> bool:
+        return self._handle_drag_enter(event)
+
+    def _handle_drop(self, event) -> bool:
+        paths = self._paths_from_mime(event.mimeData())
+        if not paths:
+            return False
+        store = ensure_lab_artifact_store(self.app_context) if self.app_context is not None else None
+        if store is None:
+            return False
+        imported = store.import_paths(paths, origin="artifact_tray_drop")
+        if not imported:
+            return False
+        event.acceptProposedAction()
+        return True
+
+    def _paths_from_mime(self, mime) -> list[str]:
+        return resolve_audio_drop_paths(
+            mime,
+            sample_path_lookup=self._path_for_sample_id,
+            artifact_path_lookup=self._path_for_artifact_id,
+        )
+
+    def _path_for_sample_id(self, sample_id: int) -> str | None:
+        samples = self.app_context.sample_store.get_cached()
+        sample = next((item for item in samples if int(getattr(item, "id", -1)) == int(sample_id)), None)
+        path = getattr(sample, "path", "") if sample is not None else ""
+        return str(path or "") or None
+
+    def _path_for_artifact_id(self, artifact_id: str) -> str | None:
+        store = ensure_lab_artifact_store(self.app_context) if self.app_context is not None else None
+        return store.resolve_path(artifact_id) if store is not None else None
 
     # ------------------------------------------------------------------
     # Lecture

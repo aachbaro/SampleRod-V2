@@ -430,6 +430,63 @@ def detect_drum_from_markers(
     )
 
 
+def classify_segment(
+    audio: np.ndarray,
+    sample_rate: int,
+    start_s: float,
+    end_s: float,
+    *,
+    index: int = 1,
+) -> TransientHit:
+    """Classe UN seul segment, sans refaire la detection complete.
+
+    Sert aux editions manuelles de la liste de hits : poser un marqueur coupe
+    une slice en deux, et seules ces deux moities ont besoin d'etre reclassees.
+    Le chemin de mesure est exactement celui de `_detect_transient_hits` pour
+    un segment manuel (`keep_low_energy_segments=True`), afin que le resultat
+    soit coherent avec une analyse complete.
+
+    Note : la resolution contextuelle (`_resolve_contextual_hits`) n'a qu'un
+    seul hit sous les yeux, donc pas de voisinage. Le label vient du score
+    propre du segment — c'est le compromis assume d'une classification locale.
+    """
+    signal = _prepare_audio(audio)
+    duration_s = float(signal.size) / float(sample_rate)
+    start_s = float(max(0.0, min(start_s, duration_s)))
+    end_s = float(max(start_s, min(end_s, duration_s)))
+
+    start_index = int(start_s * sample_rate)
+    end_index = max(start_index + 1, int(end_s * sample_rate))
+    segment = signal[start_index:end_index]
+    if segment.size == 0:
+        raise ValueError("Segment vide : impossible de classer ce hit")
+
+    attack_end_index = max(start_index + 1, min(end_index, start_index + int(sample_rate * 0.08)))
+    body_features = _extract_features(segment, sample_rate)
+    attack_features = _extract_features(signal[start_index:attack_end_index], sample_rate)
+    profile = _measure_transient_profile(signal, sample_rate, start_s)
+
+    analysis = _HitAnalysis(
+        index=int(index),
+        start_s=round(start_s, 4),
+        end_s=round(end_s, 4),
+        body=body_features,
+        attack=attack_features,
+        hint=None,
+        profile=profile,
+        scores=_score_hit_candidates(
+            body_features,
+            attack_features,
+            hint=None,
+            profile=profile,
+        ),
+    )
+    hits = _resolve_contextual_hits([analysis])
+    if not hits:
+        raise ValueError("Segment non classable (trop faible ?)")
+    return hits[0]
+
+
 def requantize_detection_result(
     result: DrumDetectionResult,
     *,

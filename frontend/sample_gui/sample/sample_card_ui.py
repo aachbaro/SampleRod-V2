@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from frontend.styles import theme
-from frontend.ui import IconButton
+from frontend.ui import IconButton, themed_icon
 
 # Cle QSettings globale : afficher le badge gamme sur toutes les cartes analysees.
 SHOW_KEY_BADGE_KEY = "reserve/show_key_badge"
@@ -92,7 +92,7 @@ class SampleCardUIBuilder:
         c.rename_input.returnPressed.connect(c.submitRename)
 
         c.check_button = self._make_round_btn(
-            "fa5s.check",
+            "check",
             "Valider le renommage",
             color_normal=p.SUCCESS,
             color_hover=icon_hover,
@@ -102,7 +102,7 @@ class SampleCardUIBuilder:
         c.check_button.clicked.connect(c.submitRename)
 
         c.cancel_button = self._make_round_btn(
-            "fa5s.times",
+            "x",
             "Annuler le renommage",
             color_normal=icon_normal,
             color_hover=icon_hover,
@@ -112,7 +112,7 @@ class SampleCardUIBuilder:
         c.cancel_button.clicked.connect(c.cancelRename)
 
         c.concat_button = self._make_round_btn(
-            "fa5s.arrow-down",
+            "chevron-down",
             "Concatener avec le sample precedent",
             color_normal=p.RETRO,
             color_hover=icon_hover,
@@ -123,7 +123,7 @@ class SampleCardUIBuilder:
         c.concat_button.setVisible(False)
 
         c.concat_cancel_button = self._make_round_btn(
-            "fa5s.times",
+            "x",
             "Garder separe (ne pas concatener)",
             color_normal=p.ERROR,
             color_hover=icon_hover,
@@ -134,7 +134,7 @@ class SampleCardUIBuilder:
         c.concat_cancel_button.setVisible(False)
 
         c.delete_button = self._make_round_btn(
-            "fa5s.trash-alt",
+            "trash",
             "Supprimer",
             color_normal=p.ERROR,
             color_hover=icon_hover,
@@ -142,9 +142,10 @@ class SampleCardUIBuilder:
             icon_size=btn_icon,
         )
         c.delete_button.clicked.connect(c.confirmDelete)
+        c.delete_button.setVisible(False)
 
         c.archive_button = self._make_round_btn(
-            "fa5s.times-circle",
+            "x",
             "Retirer de l'historique",
             color_normal=icon_normal,
             color_hover=icon_hover,
@@ -152,9 +153,10 @@ class SampleCardUIBuilder:
             icon_size=btn_icon,
         )
         c.archive_button.clicked.connect(c.onArchiveClicked)
+        c.archive_button.setVisible(False)
 
         c.normalize_button = self._make_round_btn(
-            "fa5s.bolt",
+            "bolt",
             "Normaliser le sample",
             color_normal=p.WARNING,
             color_hover=icon_hover,
@@ -162,16 +164,18 @@ class SampleCardUIBuilder:
             icon_size=btn_icon,
         )
         c.normalize_button.clicked.connect(c.onNormalizeButtonClicked)
+        c.normalize_button.setVisible(False)
 
         c.waveform_button = self._make_round_btn(
-            "mdi.waveform",
-            "Afficher le waveform",
+            "wave",
+            "Ouvrir dans la waveform",
             color_normal=icon_normal,
             color_hover=icon_hover,
             size=btn_size,
             icon_size=btn_icon,
         )
         c.waveform_button.clicked.connect(c.toggleWaveform)
+        c.waveform_button.setVisible(False)
 
         # Details
         c.change_dir_combobox = QComboBox()
@@ -221,7 +225,7 @@ class SampleCardUIBuilder:
 
         # Playback
         c.play_button = self._make_round_btn(
-            "fa5s.play",
+            "player-play",
             "Lire",
             color_normal=icon_normal,
             color_hover=icon_hover,
@@ -314,7 +318,7 @@ class SampleCardUIBuilder:
         )
         playback_layout = QHBoxLayout(c.playback_container)
         playback_layout.setContentsMargins(0, 0, 0, 0)
-        playback_layout.setSpacing(0)
+        playback_layout.setSpacing(8)
         playback_layout.addWidget(c.play_button)
 
         # Timeline : slider pleine largeur + time overlay a droite.
@@ -418,16 +422,31 @@ class SampleCardUIBuilder:
 
     def _build_options_menu(self, c) -> QMenu:
         menu = QMenu(c)
-        menu.addAction("Normaliser").triggered.connect(c.onNormalizeButtonClicked)
-        menu.addAction("Afficher le waveform").triggered.connect(c.toggleWaveform)
-        menu.addAction("Renommer").triggered.connect(
+        menu.addAction(
+            themed_icon("bolt", size=16, color=theme.manager.p.WARNING),
+            "Normaliser",
+        ).triggered.connect(c.onNormalizeButtonClicked)
+        menu.addAction(
+            themed_icon("wave", size=16, color=theme.manager.p.TEXT_MUTED),
+            "Ouvrir dans la waveform\tCtrl+Right",
+        ).triggered.connect(c.toggleWaveform)
+        menu.addAction(
+            themed_icon("pencil", size=16, color=theme.manager.p.TEXT_MUTED),
+            "Renommer\tCtrl+R",
+        ).triggered.connect(
             lambda: c.header_actions.start_rename()
         )
         c._move_menu = menu.addMenu("Déplacer vers")
         menu.aboutToShow.connect(lambda: self._populate_move_menu(c))
         menu.addSeparator()
-        menu.addAction("Retirer de l'historique").triggered.connect(c.onArchiveClicked)
-        menu.addAction("Supprimer").triggered.connect(c.confirmDelete)
+        menu.addAction(
+            themed_icon("x", size=16, color=theme.manager.p.TEXT_MUTED),
+            "Retirer de l'historique\tCtrl+Shift+D",
+        ).triggered.connect(c.onArchiveClicked)
+        menu.addAction(
+            themed_icon("trash", size=16, color=theme.manager.p.ERROR),
+            "Supprimer\tCtrl+D",
+        ).triggered.connect(c.confirmDelete)
         return menu
 
     @staticmethod

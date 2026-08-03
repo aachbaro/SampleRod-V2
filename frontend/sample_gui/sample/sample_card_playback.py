@@ -22,7 +22,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer
-import qtawesome as qta
+
+from frontend.ui import themed_icon
 
 
 class SampleCardPlayback:
@@ -110,7 +111,7 @@ class SampleCardPlayback:
         """Bascule l'icone du bouton entre play et pause selon l'etat courant."""
         if not self._alive:
             return
-        icon_name = "fa5s.pause" if is_playing else "fa5s.play"
+        icon_name = "player-pause" if is_playing else "player-play"
         try:
             if hasattr(self.card.play_button, "set_icon_pair"):
                 self.card.play_button.set_icon_pair(
@@ -119,7 +120,9 @@ class SampleCardPlayback:
                     icon_color_hover="#121212",
                 )
             else:
-                self.card.play_button.setIcon(qta.icon(icon_name, color="lightgray"))
+                self.card.play_button.setIcon(
+                    themed_icon(icon_name, size=14, color="#cfcfcf")
+                )
         except RuntimeError:
             # Objet Qt deja detruit (deleteLater), on ignore.
             self._alive = False

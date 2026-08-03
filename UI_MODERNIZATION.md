@@ -18,6 +18,8 @@ But : **uniformiser et épurer** toute l'interface de SampleRod avec le design-c
 | `themed_icon(name, size, color)` | `QIcon` recoloré par le thème (cache auto). |
 | `add_tab_close_button(tabs, index, on_close)` | croix d'onglet propre (IconButton « x ») au lieu du bouton Qt par défaut. |
 | `install_fast_tooltips(app)` | tooltips rapides (~250 ms) sur toute l'app. |
+| `make_flow_container(widget)` | installe un `FlowLayout` (retour a la ligne facon flex wrap) et regle la politique de taille qui va avec. |
+| `icon_qss_url(name, size, color)` | rend `url("...")` pour une icone du registre, a utiliser dans une feuille de style (`image:`). |
 | `icons.py` (`_INLINE`) | registre d'icônes Tabler-style. `available_names()` liste les noms. |
 
 Import type : `from frontend.ui import IconButton, add_tab_close_button`.
@@ -111,6 +113,65 @@ seule classe = look uniforme + mini-lecteur (slider) partout.
 
 ---
 
+## 5 bis. Combos et spins — garder les fleches, garder la molette
+
+Deux pieges systematiques des qu'on style un `QComboBox` / `QSpinBox` en QSS :
+
+**1. Les fleches disparaissent.** Styler le widget desactive les indicateurs
+natifs, et le truc du triangle CSS (`border-left/right: transparent`) ne rend
+pas un triangle sous Qt 6 — on obtient un rectangle plein. Il faut une image :
+
+```python
+chevron_down = icon_qss_url("chevron-down", 12, p.TEXT_MUTED) or "none"
+```
+```css
+QComboBox#X::drop-down  { subcontrol-position: center right; width: 16px; border: none; }
+QComboBox#X::down-arrow { image: {chevron_down}; width: 11px; height: 11px; }
+QSpinBox#X::up-button   { subcontrol-origin: border; subcontrol-position: top right; width: 16px; }
+QSpinBox#X::up-arrow    { image: {chevron_up}; width: 10px; height: 10px; }
+```
+`icon_qss_url` materialise l'icone du theme dans un cache disque (QSS ne sait
+lire que des fichiers) et ecrit aussi la variante `@2x` pour le HiDPI.
+
+**2. La largeur.** Les fleches mangent ~16 px. Un spin de 52 px n'affiche plus
+ni sa valeur ni ses fleches : prevoir la valeur maximale **plus** 20 px
+(ex. BPM `300.0` → 88 px).
+
+**3. La molette.** Ne desactiver `wheelEvent` que si le controle est dans un
+`QScrollArea` (sinon le scroll de page change les valeurs par accident).
+Hors scroll, la molette doit marcher : c'est le geste attendu pour regler un
+BPM ou passer d'une option a l'autre. Les `KnobWidget`, eux, restent
+volontairement insensibles a la molette.
+
+## 6 bis. Listes adaptatives — `FlowLayout`
+
+Un module doit rendre la meme liste en **colonne** quand sa fenetre est etroite
+et en **lignes / grille** quand elle s'elargit, sans code de bascule (effet
+`flex-wrap` du CSS). Recette :
+
+```python
+from frontend.ui import make_flow_container
+
+self.content = QWidget()
+self.content_layout = make_flow_container(self.content, h_spacing=8, v_spacing=8)
+scroll.setWidget(self.content)
+scroll.setWidgetResizable(True)
+scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+```
+
+Trois pieges verifies sur les bins :
+
+- les enfants doivent avoir un **sizeHint stable** (`setFixedSize`) : c'est lui
+  qui determine le nombre de colonnes ;
+- `make_flow_container` pose `sizePolicy.setHeightForWidth(True)` — sans ce
+  flag `QScrollArea` ignore `heightForWidth()` et le scroll n'apparait jamais ;
+- la politique verticale doit etre `Preferred`, **pas** `Minimum` : `Minimum`
+  interdit au conteneur de retrecir sous son `sizeHint`, donc la hauteur
+  calculee en mode colonne restait figee au retour en mode lignes.
+
+Ne pas fixer de `setMaximumWidth()` sur le panneau lui-meme : c'est l'hote
+(colonne du Labo classique, ou fenetre du module) qui borne la largeur.
+
 ## 7. Checklist par module
 
 - [ ] Boutons texte → `IconButton` + tooltip explicite.
@@ -118,6 +179,14 @@ seule classe = look uniforme + mini-lecteur (slider) partout.
 - [ ] QSS des anciens boutons supprimé ; imports inutiles retirés.
 - [ ] Root sans bordure (le cadre vient de la fenêtre/onglet) ; bordures subtiles ailleurs.
 - [ ] Onglets fermables → `add_tab_close_button`.
+- [ ] Listes d'items → `make_flow_container` (colonne ↔ grille selon la largeur).
+- [ ] Combos / spins : fleches en `icon_qss_url`, largeur suffisante, molette active.
+- [ ] Panneau de detail : sous la liste, pas a cote — et pas de bouton qui
+      double une entree du menu contextuel.
+- [ ] Tableaux : garder les colonnes lisibles a l'ecran, pousser le detail
+      (valeurs secondaires) en tooltip plutot qu'en lignes supplementaires.
+- [ ] Un seul texte par item : pas de titre generique repete, pas de legende
+      qui duplique le nom. Le detail va dans le tooltip.
 - [ ] Sliders → fond transparent + groove fin.
 - [ ] Couleurs via `theme.manager.p` + réaction à `themeChanged`.
 - [ ] `py_compile` OK + smoke test offscreen (construction).
@@ -135,6 +204,15 @@ seule classe = look uniforme + mini-lecteur (slider) partout.
 - `frontend/main_window.py` / `frontend/reserve/reserve_pane.py` /
   `frontend/labo/bins_panel.py` — premiers points visibles de l'Atelier
   harmonisés avec le design-core.
+- `frontend/labo/bins_panel.py` — `BinChip` (un seul texte, elide) pose dans un
+  `FlowLayout` : reference du pattern « liste adaptative » ci-dessus.
+- `frontend/ui/flow_layout.py` — `FlowLayout` / `make_flow_container`.
+- `frontend/library_gui/library_detail.py` — bande de detail compacte sous la
+  table (identite + chemin + meta elides, puis la card de lecture), sans
+  boutons qui doublonnent le menu contextuel.
+- `frontend/labo/break/generator/` — grille du pattern compactee (3 lignes,
+  cellules carrees, detail en tooltip), fleches de combos/spins en
+  `icon_qss_url`, menu clic-droit qui renvoie vers la slice source.
 - `frontend/modular/break_module.py` / `frontend/modular/composer_module.py` —
   coques à onglets cohérentes avec `WaveformModule` (croix `IconButton`,
   bouton `+`, logique de session au niveau module).

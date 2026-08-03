@@ -38,11 +38,13 @@ from __future__ import annotations
 import os
 import logging
 import bisect
+import pickle
 import numpy as np
 import pyqtgraph as pg
 import soundfile as sf
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import QMimeData, Qt
+from PySide6.QtGui import QDrag
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .waveform_plot_helpers import add_plot_item_once
 
@@ -303,6 +305,68 @@ class WaveformRegionController:
                 mm.refresh_selection_row()
             except Exception:
                 pass
+
+    def arm_selection_drag(self, scene_pos) -> None:
+        """Prepare un drag de la selection qui vient d'etre creee.
+
+        Apres un Ctrl+double-clic, si l'utilisateur garde le bouton enfonce et
+        deplace la souris, on part en drag de la slice — le meme geste que
+        depuis la liste de marqueurs, sans avoir a y retourner.
+        """
+        self.widget._selection_drag_armed = True
+        self.widget._selection_drag_origin = scene_pos
+
+    def disarm_selection_drag(self) -> None:
+        self.widget._selection_drag_armed = False
+        self.widget._selection_drag_origin = None
+
+    def maybe_start_selection_drag(self, scene_pos) -> bool:
+        """Demarre le drag si le curseur a assez bouge depuis l'armement."""
+        w = self.widget
+        if not getattr(w, "_selection_drag_armed", False):
+            return False
+        origin = getattr(w, "_selection_drag_origin", None)
+        if origin is None:
+            return False
+        moved = (scene_pos - origin).manhattanLength()
+        if moved < QApplication.startDragDistance():
+            return False
+        self.disarm_selection_drag()
+        return self.start_selection_drag()
+
+    def start_selection_drag(self) -> bool:
+        """Lance le QDrag de la selection courante (MIME slice du Labo)."""
+        w = self.widget
+        manager = getattr(w, "marker_manager", None)
+        if manager is None:
+            return False
+        payload = manager.selection_payload()
+        if payload is None:
+            return False
+        audio = payload.get("audio_data")
+        if audio is None or getattr(audio, "size", 0) == 0:
+            return False
+
+        mime = QMimeData()
+        mime.setData(
+            "application/x-sample-slice-data",
+            pickle.dumps(
+                {
+                    "audio_data": audio,
+                    "sample_rate": payload.get("sample_rate"),
+                    "name": payload.get("name"),
+                }
+            ),
+        )
+        drag = QDrag(w)
+        drag.setMimeData(mime)
+        logger.info(
+            "Drag de selection depuis la waveform : %.3fs -> %.3fs",
+            float(payload.get("time") or 0.0),
+            float(payload.get("end_time") or 0.0),
+        )
+        drag.exec(Qt.DropAction.CopyAction)
+        return True
 
     def _set_play_start_cursor(self, x: float):
         """Place un curseur visuel de depart (annule la region si besoin)."""

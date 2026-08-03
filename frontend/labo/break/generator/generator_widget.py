@@ -49,7 +49,7 @@ from .generator_constants import (
     STEP_SHORT_LABELS,
 )
 from .generator_export import BreakGeneratorExportController
-from .generator_pattern import BreakGeneratorPatternController
+from .generator_pattern import BreakGeneratorPatternController, PatternHeaderSelector
 from .generator_playback import BreakGeneratorPlaybackController
 from .generator_ui import BreakGeneratorUIBuilder
 
@@ -59,6 +59,9 @@ class BreakGeneratorPanel(QWidget):
 
     artifactCreated = Signal(object)
     statusChanged = Signal(str)
+    #: Index de la slice a inspecter dans l'onglet Decoupage (clic droit sur
+    #: un step du pattern quand sa classification semble fausse).
+    sliceInspectRequested = Signal(int)
 
     def __init__(self, app_context, break_service, parent=None):
         super().__init__(parent)
@@ -78,6 +81,17 @@ class BreakGeneratorPanel(QWidget):
         self._active_preview_path = ""
         self._active_preview_looping = False
         self._preview_request: dict[str, Any] | None = None
+        # Ce qui joue actuellement : sert a relancer le MEME extrait apres un
+        # re-rendu declenche par un changement de BPM en cours de lecture.
+        self._active_preview_request: dict[str, Any] | None = None
+        self._live_bpm_pending = False
+        # Plage de steps a extraire quand le rendu en cours est un export de
+        # selection (clic droit sur les numeros du pattern).
+        self._artifact_range: tuple[int, int] | None = None
+        # Playhead : step illumine + pinceaux d'origine de sa cellule.
+        self._playhead_step: int | None = None
+        self._playhead_backup: tuple[int, Any, Any] | None = None
+        self._active_preview_clip_duration = 0.0
         self._pattern_step_anchors: dict[int, str] = {}
         self._pattern_locked_steps: set[int] = set()
         self._pattern_loop_range: tuple[int, int] | None = None
@@ -102,6 +116,20 @@ class BreakGeneratorPanel(QWidget):
         self._preview_refresh_timer.setInterval(250)
         self._preview_refresh_timer.timeout.connect(self._refresh_preview_button)
         self._preview_refresh_timer.start()
+
+        # BPM en direct : on ne re-rend pas a chaque cran de la molette, on
+        # attend une courte pause. Le clip en cours continue de tourner
+        # pendant le calcul, la bascule se fait quand le nouveau est pret.
+        self._live_bpm_timer = QTimer(self)
+        self._live_bpm_timer.setSingleShot(True)
+        self._live_bpm_timer.setInterval(200)
+        self._live_bpm_timer.timeout.connect(self._apply_live_bpm)
+
+        # Playhead : ~25 images/s suffisent pour lire un sequenceur, et on ne
+        # repeint que les deux cellules concernees.
+        self._playhead_timer = QTimer(self)
+        self._playhead_timer.setInterval(40)
+        self._playhead_timer.timeout.connect(self._refresh_playhead)
 
     def _build_ui(self) -> None:
         self.ui._build_ui()
@@ -172,6 +200,10 @@ class BreakGeneratorPanel(QWidget):
         )
         for widget in preview_controls:
             self._connect_change_signal(widget, self._on_preview_settings_changed)
+        # Le BPM suit la lecture en cours ; les autres reglages de rendu
+        # attendent le prochain Preview (les toucher pendant la boucle est
+        # rare, et un re-rendu par cran serait du gachis).
+        self.target_bpm_spin.valueChanged.connect(self._schedule_live_bpm_refresh)
 
         self.motif_add_button.clicked.connect(self._add_motif)
         self.motif_length_spin.valueChanged.connect(self._refresh_motif_step_buttons)
@@ -185,9 +217,13 @@ class BreakGeneratorPanel(QWidget):
         self._service.patternRendered.connect(self._on_pattern_rendered)
         self._service.patternRenderFailed.connect(self._on_pattern_render_failed)
         self.pattern_table.cellClicked.connect(self._on_pattern_table_cell_clicked)
-        self.pattern_table.horizontalHeader().sectionClicked.connect(
-            self._on_pattern_header_clicked
-        )
+        self.pattern_table.customContextMenuRequested.connect(self._on_pattern_context_menu)
+        # Selection d'une plage par glissement sur les numeros de step. On
+        # remplace `sectionClicked` : en filtrant press/move/release on obtient
+        # le glissement, et le clic simple garde son role (jouer depuis la).
+        header = self.pattern_table.horizontalHeader()
+        self._header_selector = PatternHeaderSelector(self.pattern, header)
+        header.viewport().installEventFilter(self._header_selector)
 
     def set_analysis_result(self, result: DrumAnalysisResult | None) -> None:
         self.pattern.set_analysis_result(result)
@@ -209,6 +245,21 @@ class BreakGeneratorPanel(QWidget):
 
     def _preview_pattern_loop_range(self, start_step: int, end_step: int) -> None:
         self.playback._preview_pattern_loop_range(start_step, end_step)
+
+    def _schedule_live_bpm_refresh(self, *_args) -> None:
+        self.playback._schedule_live_bpm_refresh()
+
+    def _apply_live_bpm(self) -> None:
+        self.playback._apply_live_bpm()
+
+    def _resume_pending_live_bpm(self) -> None:
+        self.playback._resume_pending_live_bpm()
+
+    def _render_range_artifact(self, start_step: int, end_step: int) -> None:
+        self.export._render_range_artifact(start_step, end_step)
+
+    def _refresh_playhead(self) -> None:
+        self.playback._refresh_playhead()
 
     def _render_pattern_artifact(self) -> None:
         self.export._render_pattern_artifact()
@@ -269,6 +320,9 @@ class BreakGeneratorPanel(QWidget):
 
     def _on_pattern_header_clicked(self, column: int) -> None:
         self.pattern._on_pattern_header_clicked(column)
+
+    def _on_pattern_context_menu(self, pos) -> None:
+        self.pattern._on_pattern_context_menu(pos)
 
     def _step_label(self, step: Any) -> str:
         return self.pattern._step_label(step)

@@ -8,7 +8,13 @@ import unittest
 from PySide6.QtCore import QMimeData, QSettings, QUrl
 from PySide6.QtWidgets import QApplication
 
-from frontend.labo.bins_panel import LaboBin, LaboBinsPanel, _compact_label, _has_supported_bin_drop
+from frontend.labo.bins_panel import (
+    LaboBin,
+    LaboBinsPanel,
+    _compact_label,
+    _dropped_folders,
+    _has_supported_bin_drop,
+)
 
 
 class _DummySampleStore:
@@ -77,6 +83,39 @@ class LaboBinsTests(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(dst_dir, "kick.wav")))
             self.assertEqual(moved_payloads, [[os.path.abspath(src_path)]])
             self.assertEqual(refresh_events, [])
+
+
+    def test_folder_drop_is_detected_for_bin_creation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mime = QMimeData()
+            mime.setUrls([QUrl.fromLocalFile(tmpdir)])
+            self.assertEqual(_dropped_folders(mime), [os.path.normpath(tmpdir)])
+            # Un dossier n'est pas un depot "matiere" : il ne doit pas
+            # declencher un deplacement sur un chip.
+            self.assertFalse(_has_supported_bin_drop(mime))
+
+    def test_chips_reflow_from_column_to_rows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            settings = QSettings(os.path.join(tmpdir, "bins.ini"), QSettings.Format.IniFormat)
+            panel = LaboBinsPanel(_DummyAppContext(), settings)
+            panel._bins = [
+                LaboBin(bin_id=f"bin-{index}", label=label, path=tmpdir)
+                for index, label in enumerate(["drums", "voices", "synth", "archive"])
+            ]
+            panel._rebuild()
+            panel.show()
+
+            def columns_at(width: int) -> int:
+                panel.resize(width, 320)
+                self._app.processEvents()
+                rows: dict[int, int] = {}
+                for chip in panel._chip_widgets.values():
+                    rows[chip.y()] = rows.get(chip.y(), 0) + 1
+                return max(rows.values())
+
+            self.assertEqual(columns_at(144), 1)
+            self.assertGreater(columns_at(560), 1)
+            panel.hide()
 
 
 if __name__ == "__main__":

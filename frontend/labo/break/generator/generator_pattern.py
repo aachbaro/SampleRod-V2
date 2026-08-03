@@ -15,9 +15,15 @@ import os
 import uuid
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QPushButton, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QMenu,
+    QPushButton,
+    QTableWidgetItem,
+)
 
 from .generator_constants import (
     GENERATOR_MODE_CLASSIC,
@@ -25,16 +31,77 @@ from .generator_constants import (
     GENERATOR_STEP_ANCHOR_LABELS,
     GENERATOR_STEP_ANCHOR_ORDER,
     GENERATOR_STEP_ANCHOR_SHORT_LABELS,
+    PATTERN_CELL_SIZE,
+    PATTERN_ROW_HEIGHT,
+    PATTERN_ROW_LABELS,
     STEP_COLORS,
+    STEP_LABEL_TO_ANCHOR,
     STEP_SHORT_LABELS,
 )
 
 _PATTERN_ROW_ANCHOR = 0
 _PATTERN_ROW_LOCK = 1
 _PATTERN_ROW_EVENT = 2
-_PATTERN_ROW_VEL = 3
-_PATTERN_ROW_SRC = 4
-_PATTERN_ROW_FX = 5
+
+
+class PatternHeaderSelector(QObject):
+    """Selection d'une plage de steps par cliquer-glisser sur les numeros.
+
+    Remplace le `sectionClicked` de QHeaderView : en gerant nous-memes
+    press / move / release, on obtient le glissement, et le clic simple garde
+    son role (jouer a partir de ce step).
+    """
+
+    def __init__(self, controller, header):
+        super().__init__(header)
+        self._controller = controller
+        self._header = header
+        self._anchor_step: int | None = None
+        self._current_step: int | None = None
+        self._dragged = False
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 (API Qt)
+        kind = event.type()
+        if kind == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.RightButton:
+                self._controller._on_header_context_menu(self._step_at(event), event)
+                return True
+            if event.button() == Qt.MouseButton.LeftButton:
+                step = self._step_at(event)
+                if step is None:
+                    return False
+                self._anchor_step = step
+                self._current_step = step
+                self._dragged = False
+                self._controller._preview_selection_range(step, step)
+                return True
+            return False
+
+        if kind == QEvent.Type.MouseMove and self._anchor_step is not None:
+            step = self._step_at(event)
+            if step is None or step == self._current_step:
+                return True
+            self._current_step = step
+            self._dragged = True
+            self._controller._preview_selection_range(self._anchor_step, step)
+            return True
+
+        if kind == QEvent.Type.MouseButtonRelease and self._anchor_step is not None:
+            step = self._step_at(event) or self._current_step or self._anchor_step
+            anchor = self._anchor_step
+            dragged = self._dragged
+            self._anchor_step = None
+            self._current_step = None
+            self._dragged = False
+            self._controller._commit_selection_range(anchor, step, dragged=dragged)
+            return True
+
+        return False
+
+    def _step_at(self, event) -> int | None:
+        position = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        index = self._header.logicalIndexAt(position.x())
+        return int(index) + 1 if index >= 0 else None
 
 
 class BreakGeneratorPatternController:
@@ -190,6 +257,17 @@ class BreakGeneratorPatternController:
             self.widget._pattern_dirty = True
         self._refresh_actions()
 
+    def _mark_generation_constraint_changed(self) -> None:
+        """Ancre / verrou pose : contrainte pour le PROCHAIN Generate.
+
+        Contrairement aux knobs, ca ne change pas le pattern actuel — ni son
+        audio, ni la signature de rendu. Le marquer "dirty" bloquerait preview
+        et export alors qu'ils restent parfaitement valides (et c'est
+        exactement ce qu'on veut pouvoir enchainer : figer une plage, puis
+        l'exporter).
+        """
+        self._refresh_actions()
+
     def _on_pattern_generation_started(self, source_path: str) -> None:
         if not self._matches_path(source_path):
             return
@@ -239,15 +317,11 @@ class BreakGeneratorPatternController:
         table.setColumnCount(step_count)
         table.setHorizontalHeaderLabels([str(i) for i in range(1, step_count + 1)])
         for column in range(step_count):
-            table.setColumnWidth(column, 60)
-        table.setRowCount(6)
-        table.setVerticalHeaderLabels(("Anchor", "Lock", "Event", "Vel", "Src", "FX"))
-        table.setRowHeight(_PATTERN_ROW_ANCHOR, 34)
-        table.setRowHeight(_PATTERN_ROW_LOCK, 34)
-        table.setRowHeight(_PATTERN_ROW_EVENT, 34)
-        table.setRowHeight(_PATTERN_ROW_VEL, 28)
-        table.setRowHeight(_PATTERN_ROW_SRC, 28)
-        table.setRowHeight(_PATTERN_ROW_FX, 40)
+            table.setColumnWidth(column, PATTERN_CELL_SIZE)
+        table.setRowCount(3)
+        table.setVerticalHeaderLabels(PATTERN_ROW_LABELS)
+        for row in range(3):
+            table.setRowHeight(row, PATTERN_ROW_HEIGHT)
 
         steps = list(getattr(pattern, "steps", ()) or ()) if pattern is not None else []
         for column in range(step_count):
@@ -255,23 +329,10 @@ class BreakGeneratorPatternController:
             table.setCellWidget(_PATTERN_ROW_ANCHOR, column, self._build_anchor_button(step_index))
             table.setCellWidget(_PATTERN_ROW_LOCK, column, self._build_lock_button(step_index))
             step = steps[column] if column < len(steps) else None
-            if step is None:
-                values = ("-", "-", "-", "-")
-            else:
-                values = (
-                    self._step_label(step),
-                    "-"
-                    if getattr(step, "label", "silence") == "silence"
-                    else str(int(getattr(step, "velocity", 0) or 0)),
-                    "-"
-                    if getattr(step, "source_hit_index", None) is None
-                    else str(int(getattr(step, "source_hit_index", 0) or 0)),
-                    self._step_fx_text(step),
-                )
-            for row_offset, value in enumerate(values, start=2):
-                item = QTableWidgetItem(value)
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                table.setItem(row_offset, column, item)
+            item = QTableWidgetItem("-" if step is None else self._step_label(step))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            item.setToolTip(self._step_tooltip(step, step_index))
+            table.setItem(_PATTERN_ROW_EVENT, column, item)
 
         if pattern is None:
             self.widget.pattern_summary.setText("Aucun pattern genere.")
@@ -295,6 +356,37 @@ class BreakGeneratorPatternController:
     def _step_label(self, step: Any) -> str:
         label = str(getattr(step, "label", "silence") or "silence")
         return STEP_SHORT_LABELS.get(label, label[:3].title())
+
+    def _step_source_hit_index(self, step: Any) -> int | None:
+        """Index de la slice d'origine (celle du Decoupage), si connue."""
+        if step is None:
+            return None
+        raw = getattr(step, "source_hit_index", None)
+        if raw is None:
+            return None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    def _step_tooltip(self, step: Any, step_index: int) -> str:
+        """Detail d'un step : ce qui n'est plus affiche en ligne dans la table."""
+        if step is None:
+            return f"Step {step_index} - vide"
+        label = str(getattr(step, "label", "silence") or "silence")
+        if label == "silence":
+            return f"Step {step_index} - silence"
+        lines = [f"Step {step_index} - {label.replace('_', ' ')}"]
+        lines.append(f"Velocite : {int(getattr(step, 'velocity', 0) or 0)}")
+        source_index = self._step_source_hit_index(step)
+        lines.append(f"Slice source : {source_index if source_index is not None else 'inconnue'}")
+        fx_text = self._step_fx_text(step)
+        if fx_text != "-":
+            lines.append(f"FX : {fx_text}")
+        lines.append("")
+        lines.append("Clic = jouer ce coup seul | Clic droit = voir la slice dans Decoupage")
+        return "\n".join(lines)
 
     def _step_fx_text(self, step: Any) -> str:
         tags = {str(tag) for tag in (getattr(step, "tags", ()) or ())}
@@ -388,18 +480,17 @@ class BreakGeneratorPatternController:
         return f"Boucle: steps {start_step}-{end_step}"
 
     def _refresh_pattern_interaction_label(self, *, step_count: int | None = None) -> None:
+        """N'affiche plus que l'ETAT ; le mode d'emploi vit dans le tooltip
+        de la table, ce qui economise une ligne de texte a l'ecran."""
         step_count = int(step_count or 0)
-        hint = (
-            "Header = play from step | Shift+header = loop range | Anchor = type | "
-            "Lock = keep step | Event = one-shot"
+        if step_count <= 0:
+            self.widget.pattern_interaction_label.setText("")
+            return
+        self.widget.pattern_interaction_label.setText(
+            f"{self._anchor_summary_text(step_count=step_count)} | "
+            f"{self._lock_summary_text(step_count=step_count)} | "
+            f"{self._loop_summary_text()}"
         )
-        if step_count > 0:
-            hint = (
-                f"{hint} | {self._anchor_summary_text(step_count=step_count)} | "
-                f"{self._lock_summary_text(step_count=step_count)} | "
-                f"{self._loop_summary_text()}."
-            )
-        self.widget.pattern_interaction_label.setText(hint)
 
     def _sanitize_pattern_state(self, step_count: int) -> None:
         self.widget._pattern_step_anchors = {
@@ -505,7 +596,7 @@ class BreakGeneratorPatternController:
             self.widget._pattern_step_anchors[int(step_index)] = str(next_anchor)
         self.widget._pattern_loop_anchor_step = int(step_index)
         self.widget._pattern_loop_range = None
-        self._mark_pattern_dirty()
+        self._mark_generation_constraint_changed()
         self._refresh_pattern_anchor_button(step_index)
         self._refresh_pattern_visual_state(self.widget._generated_pattern)
         self._refresh_pattern_interaction_label(step_count=self.widget.pattern_table.columnCount())
@@ -524,13 +615,191 @@ class BreakGeneratorPatternController:
             state = "on"
         self.widget._pattern_loop_anchor_step = step_index
         self.widget._pattern_loop_range = None
-        self._mark_pattern_dirty()
+        self._mark_generation_constraint_changed()
         self._refresh_pattern_lock_button(step_index)
         self._refresh_pattern_visual_state(self.widget._generated_pattern)
         self._refresh_pattern_interaction_label(step_count=self.widget.pattern_table.columnCount())
         self.widget.statusChanged.emit(
             f"Lock step {step_index}: {state}. Le prochain Generate {'gardera' if state == 'on' else 'pourra modifier'} ce step."
         )
+
+    # ---------------------------------------------------------------------- #
+    # Playhead : le step en cours de lecture s'illumine, facon sequenceur.
+    # Cout : on ne repeint que les DEUX colonnes qui changent (celle qu'on
+    # quitte, celle qu'on eclaire), en restaurant les pinceaux d'origine —
+    # pas de recalcul de toute la grille a chaque tick.
+    # ---------------------------------------------------------------------- #
+    def set_playhead_step(self, step_index: int | None) -> None:
+        if step_index == self.widget._playhead_step:
+            return
+        self._restore_playhead_cell()
+        self.widget._playhead_step = step_index
+        if step_index is None:
+            return
+        item = self._playhead_item(step_index)
+        if item is None:
+            return
+        self.widget._playhead_backup = (
+            int(step_index),
+            item.background(),
+            item.foreground(),
+        )
+        item.setBackground(QColor("#f0c05a"))
+        item.setForeground(QColor("#1a1e25"))
+        self._keep_playhead_visible(step_index)
+
+    def _playhead_item(self, step_index: int):
+        table = self.widget.pattern_table
+        column = int(step_index) - 1
+        if column < 0 or column >= table.columnCount():
+            return None
+        return table.item(_PATTERN_ROW_EVENT, column)
+
+    def _restore_playhead_cell(self) -> None:
+        backup = self.widget._playhead_backup
+        self.widget._playhead_backup = None
+        if backup is None:
+            return
+        step_index, background, foreground = backup
+        item = self._playhead_item(step_index)
+        if item is None:
+            return
+        item.setBackground(background)
+        item.setForeground(foreground)
+
+    def _keep_playhead_visible(self, step_index: int) -> None:
+        """Fait defiler la grille pour garder le step joue sous les yeux."""
+        table = self.widget.pattern_table
+        column = int(step_index) - 1
+        if 0 <= column < table.columnCount():
+            table.scrollToItem(
+                table.item(_PATTERN_ROW_EVENT, column),
+                QAbstractItemView.ScrollHint.EnsureVisible,
+            )
+
+    # ---------------------------------------------------------------------- #
+    # Selection d'une plage de steps par glissement sur les numeros
+    # ---------------------------------------------------------------------- #
+    def _preview_selection_range(self, anchor_step: int, step: int) -> None:
+        """Met a jour le surlignage pendant le glissement (sans jouer)."""
+        start_step = int(min(anchor_step, step))
+        end_step = int(max(anchor_step, step))
+        self.widget._pattern_loop_anchor_step = int(anchor_step)
+        self.widget._pattern_loop_range = (start_step, end_step)
+        self._refresh_pattern_visual_state(self.widget._generated_pattern)
+        self._refresh_pattern_interaction_label(step_count=self.widget.pattern_table.columnCount())
+
+    def _commit_selection_range(self, anchor_step: int, step: int, *, dragged: bool) -> None:
+        """Relachement : un simple clic joue depuis le step, un glissement
+        boucle sur la plage selectionnee."""
+        if not dragged and int(anchor_step) == int(step):
+            self.widget._pattern_loop_range = None
+            self.widget._pattern_loop_anchor_step = int(step)
+            self._refresh_pattern_visual_state(self.widget._generated_pattern)
+            self._refresh_pattern_interaction_label(
+                step_count=self.widget.pattern_table.columnCount()
+            )
+            self.widget._preview_pattern_from_step(int(step))
+            return
+        start_step = int(min(anchor_step, step))
+        end_step = int(max(anchor_step, step))
+        self._preview_selection_range(start_step, end_step)
+        self.widget._preview_pattern_loop_range(start_step, end_step)
+
+    def _selected_step_range(self, fallback_step: int | None = None) -> tuple[int, int] | None:
+        loop_range = self.widget._pattern_loop_range
+        if loop_range is not None:
+            return loop_range
+        if fallback_step is not None:
+            return int(fallback_step), int(fallback_step)
+        return None
+
+    def _on_header_context_menu(self, step: int | None, event) -> None:
+        """Menu clic-droit sur les numeros : figer ou exporter la selection."""
+        if self.widget._generated_pattern is None:
+            return
+        step_range = self._selected_step_range(step)
+        if step_range is None:
+            return
+        start_step, end_step = step_range
+        # Clic droit hors de la selection : on recadre dessus d'abord.
+        if step is not None and not (start_step <= step <= end_step):
+            start_step = end_step = int(step)
+            self._preview_selection_range(start_step, end_step)
+
+        steps = range(start_step, end_step + 1)
+        span = f"step {start_step}" if start_step == end_step else f"steps {start_step}-{end_step}"
+        all_locked = all(s in self.widget._pattern_locked_steps for s in steps)
+        any_anchor = any(s in self.widget._pattern_step_anchors for s in steps)
+
+        menu = QMenu(self.widget.pattern_table)
+        play_action = menu.addAction(f"Jouer {span} en boucle")
+        menu.addSeparator()
+        lock_action = menu.addAction(
+            f"Deverrouiller {span}" if all_locked else f"Verrouiller {span} (garde le contenu)"
+        )
+        anchor_action = menu.addAction(
+            f"Retirer les ancres de {span}" if any_anchor else f"Ancrer {span} sur son type"
+        )
+        menu.addSeparator()
+        export_action = menu.addAction(f"Exporter {span} en artefact")
+
+        chosen = menu.exec(event.globalPosition().toPoint() if hasattr(event, "globalPosition") else event.globalPos())
+        if chosen is None:
+            return
+        if chosen is play_action:
+            self.widget._preview_pattern_loop_range(start_step, end_step)
+        elif chosen is lock_action:
+            self._set_range_locked(start_step, end_step, not all_locked)
+        elif chosen is anchor_action:
+            self._set_range_anchored(start_step, end_step, not any_anchor)
+        elif chosen is export_action:
+            self.widget._render_range_artifact(start_step, end_step)
+
+    def _set_range_locked(self, start_step: int, end_step: int, locked: bool) -> None:
+        """Verrouille/deverrouille une plage : le contenu exact est conserve
+        au prochain Generate."""
+        for step in range(int(start_step), int(end_step) + 1):
+            if locked:
+                self.widget._pattern_locked_steps.add(step)
+            else:
+                self.widget._pattern_locked_steps.discard(step)
+        self._mark_generation_constraint_changed()
+        self._refresh_pattern_visual_state(self.widget._generated_pattern)
+        self._refresh_pattern_interaction_label(step_count=self.widget.pattern_table.columnCount())
+        state = "verrouilles" if locked else "deverrouilles"
+        self.widget.statusChanged.emit(f"Steps {start_step}-{end_step} {state}.")
+
+    def _set_range_anchored(self, start_step: int, end_step: int, anchored: bool) -> None:
+        """Pose (ou retire) une ancre de TYPE sur chaque step de la plage.
+
+        L'ancre reprend le type actuellement en place : le prochain Generate
+        pourra changer la source du coup mais pas sa famille.
+        """
+        steps = tuple(getattr(self.widget._generated_pattern, "steps", ()) or ())
+        applied = 0
+        for step_index in range(int(start_step), int(end_step) + 1):
+            if not anchored:
+                self.widget._pattern_step_anchors.pop(step_index, None)
+                continue
+            position = step_index - 1
+            if not (0 <= position < len(steps)):
+                continue
+            label = str(getattr(steps[position], "label", "") or "")
+            anchor = STEP_LABEL_TO_ANCHOR.get(label)
+            if anchor is None or anchor not in GENERATOR_STEP_ANCHOR_LABELS:
+                continue
+            self.widget._pattern_step_anchors[step_index] = anchor
+            applied += 1
+        self._mark_generation_constraint_changed()
+        self._refresh_pattern_visual_state(self.widget._generated_pattern)
+        self._refresh_pattern_interaction_label(step_count=self.widget.pattern_table.columnCount())
+        if anchored:
+            self.widget.statusChanged.emit(
+                f"{applied} step(s) ancre(s) sur leur type. Regenerer pour l'appliquer."
+            )
+        else:
+            self.widget.statusChanged.emit(f"Ancres retirees des steps {start_step}-{end_step}.")
 
     def _on_pattern_header_clicked(self, column: int) -> None:
         step_index = int(column) + 1
@@ -564,6 +833,60 @@ class BreakGeneratorPatternController:
         self._refresh_pattern_visual_state(self.widget._generated_pattern)
         self._refresh_pattern_interaction_label(step_count=self.widget.pattern_table.columnCount())
 
+    def _step_at(self, step_index: int) -> Any:
+        steps = tuple(getattr(self.widget._generated_pattern, "steps", ()) or ())
+        column = int(step_index) - 1
+        return steps[column] if 0 <= column < len(steps) else None
+
+    def _event_step_at_pos(self, pos) -> int | None:
+        """Numero du step sous le curseur, seulement sur la ligne des hits."""
+        item = self.widget.pattern_table.itemAt(pos)
+        if item is None or item.row() != _PATTERN_ROW_EVENT:
+            return None
+        return int(item.column()) + 1
+
+    def _inspect_step_source(self, step_index: int) -> bool:
+        """Demande l'ouverture de la slice d'origine de ce step dans Decoupage.
+
+        Le cas d'usage : on entend qu'un hit est mal classe dans le pattern,
+        on saute directement sur sa slice pour corriger sa classe, puis on
+        regenere. Retourne False si le step n'a pas de slice identifiable.
+        """
+        source_index = self._step_source_hit_index(self._step_at(step_index))
+        if source_index is None:
+            return False
+        self.widget.sliceInspectRequested.emit(int(source_index))
+        return True
+
+    def _on_pattern_context_menu(self, pos) -> None:
+        """Menu clic-droit d'un step : jouer, ou remonter a la slice source."""
+        step_index = self._event_step_at_pos(pos)
+        if step_index is None:
+            return
+        step = self._step_at(step_index)
+        source_index = self._step_source_hit_index(step)
+        table = self.widget.pattern_table
+
+        menu = QMenu(table)
+        play_action = menu.addAction("Jouer ce coup")
+        play_action.setEnabled(step is not None)
+        play_action.triggered.connect(
+            lambda _checked=False, index=step_index: self.widget._preview_pattern_step(index)
+        )
+        menu.addSeparator()
+        if source_index is None:
+            inspect_action = menu.addAction("Voir la slice dans Decoupage")
+            inspect_action.setEnabled(False)
+        else:
+            label = str(getattr(step, "label", "") or "").replace("_", " ")
+            inspect_action = menu.addAction(
+                f"Voir la slice {source_index} dans Decoupage" + (f"  ({label})" if label else "")
+            )
+            inspect_action.triggered.connect(
+                lambda _checked=False, index=step_index: self._inspect_step_source(index)
+            )
+        menu.exec(table.viewport().mapToGlobal(pos))
+
     def _refresh_pattern_visual_state(self, pattern: Any) -> None:
         table = self.widget.pattern_table
         steps = list(getattr(pattern, "steps", ()) or ()) if pattern is not None else []
@@ -586,11 +909,9 @@ class BreakGeneratorPatternController:
                 header_item.setForeground(base_header_fg)
 
             step = steps[column] if column < len(steps) else None
-            for row in range(2, table.rowCount()):
-                item = table.item(row, column)
-                if item is None:
-                    continue
-                if row == _PATTERN_ROW_EVENT and step is not None:
+            item = table.item(_PATTERN_ROW_EVENT, column)
+            if item is not None:
+                if step is not None:
                     color_hex = STEP_COLORS.get(str(getattr(step, "label", "") or ""))
                     background = QColor(f"{color_hex}33") if color_hex else QColor("#1a1e25")
                     foreground = QColor(color_hex) if color_hex else QColor("#d6d9de")
@@ -598,14 +919,17 @@ class BreakGeneratorPatternController:
                     background = QColor("#1a1e25")
                     foreground = QColor("#d6d9de")
                 if loop_range is not None and loop_range[0] <= step_index <= loop_range[1]:
-                    overlay = QColor("#244857") if row != _PATTERN_ROW_EVENT else QColor("#1e5b72")
-                    background = self._blend_color(background, overlay, 0.35)
-                    foreground = QColor("#eefaff") if row != _PATTERN_ROW_EVENT else foreground
+                    background = self._blend_color(background, QColor("#1e5b72"), 0.35)
                 item.setBackground(background)
                 item.setForeground(foreground)
 
             self._refresh_pattern_anchor_button(step_index)
             self._refresh_pattern_lock_button(step_index)
+
+        # Les pinceaux viennent d'etre reecrits : le playhead memorise des
+        # couleurs perimees. On le repose au prochain tick.
+        self.widget._playhead_backup = None
+        self.widget._playhead_step = None
 
     @staticmethod
     def _blend_color(base: QColor, overlay: QColor, alpha: float) -> QColor:

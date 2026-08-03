@@ -81,6 +81,8 @@ class WaveformWidget(QWidget):
     waveformSaved     = Signal(str)
     positionUpdated   = Signal(float)
     separationRequested = Signal(str)   # chemin temp d'une selection → stem separator
+    markerAdded       = Signal(float)   # marqueur pose a la main (pas les batchs)
+    markerMoved       = Signal(float, float)  # marqueur deplace : (avant, apres)
 
 # -- Construction & état (core)
 # ———————————————————————————————————————————————————— Initialisation ————————————————————————————————————————————————————
@@ -109,6 +111,9 @@ class WaveformWidget(QWidget):
         self._shifting = False            # mode “déplacement” activé
         self._shift_press_x = 0.0         # position d’appui en secondes
         self._orig_region = (0.0, 0.0)    # bornes initiales de la région
+        # Ctrl+double-clic puis glisser = drag de la slice selectionnee
+        self._selection_drag_armed = False
+        self._selection_drag_origin = None
 
         # → marqueurs (clic en mode marker)
         self.marker_mode = False
@@ -252,6 +257,67 @@ class WaveformWidget(QWidget):
 
     def remove_marker(self, t: float):
         self.marker_controller.remove_marker(t)
+
+    # -- Decoupage au tempo (waveform_grid.py)
+
+    def open_grid_panel(self):
+        """Ouvre la table de commande du decoupage au tempo.
+
+        La grille se pose immediatement et se regle en direct : on voit ce
+        qu'on fait au lieu de valider a l'aveugle.
+        """
+        if self.waveform_data is None or not self.duration:
+            return
+        if getattr(self, "_grid_panel", None) is None:
+            from .waveform.waveform_grid_panel import WaveformGridPanel
+
+            self._grid_panel = WaveformGridPanel(self)
+            self._grid_panel.settingsChanged.connect(self._on_grid_settings_changed)
+            self._grid_panel.committed.connect(self._on_grid_committed)
+            self._grid_panel.cancelled.connect(self._on_grid_cancelled)
+
+        panel = self._grid_panel
+        panel.set_live(False)
+        panel.prepare(
+            origin_s=self.marker_controller.grid_origin_s(),
+            duration_s=float(self.duration or 0.0),
+            selection_s=self._current_selection_span(),
+        )
+        button = self.grid_button
+        panel.adjustSize()
+        panel.move(button.mapToGlobal(button.rect().bottomLeft()))
+        panel.show()
+        # Pose initiale, puis on ouvre le direct.
+        self.marker_controller.start_grid_session(panel.settings())
+        panel.set_live(True)
+
+    def _current_selection_span(self) -> float:
+        """Duree de la region selectionnee, 0 s'il n'y en a pas."""
+        region = getattr(self, "region", None)
+        if region is None:
+            return 0.0
+        try:
+            start, end = region.getRegion()
+        except Exception:
+            return 0.0
+        return max(0.0, float(end) - float(start))
+
+    def _on_grid_settings_changed(self, settings):
+        return self.marker_controller.update_grid_session(settings)
+
+    def _on_grid_committed(self):
+        return self.marker_controller.commit_grid_session()
+
+    def _on_grid_cancelled(self):
+        self.marker_controller.cancel_grid_session()
+
+    def apply_tempo_grid(self, bpm: float, steps_per_slice: int):
+        added = self.marker_controller.apply_tempo_grid(bpm, steps_per_slice)
+        logger.info(
+            "Grille au tempo: %s marqueur(s) ajoute(s) (%.2f BPM, %s steps)",
+            added, float(bpm), int(steps_per_slice),
+        )
+        return added
 
     def on_marker_list_clicked(self, item):
         self.marker_controller.on_marker_list_clicked(item)

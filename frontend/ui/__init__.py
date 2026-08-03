@@ -9,17 +9,22 @@
 # - icons.py        : registre d'icones + themed_icon()
 # - icon_button.py  : IconButton (rond, hover fill, theme-aware)
 # - fast_tooltip.py : install_fast_tooltips() (delai reduit)
+# - flow_layout.py  : FlowLayout (retour a la ligne facon flex wrap)
 # -----------------------------------------------------------------------------
 
 from .icon_button import IconButton
-from .icons import available_names, clear_cache, render_pixmap, themed_icon
+from .icons import available_names, clear_cache, icon_qss_url, render_pixmap, themed_icon
 from .fast_tooltip import FastTooltipStyle, install_fast_tooltips
+from .flow_layout import FlowLayout, make_flow_container
 from .tabs import add_tab_close_button
 
 __all__ = [
     "IconButton",
+    "FlowLayout",
+    "make_flow_container",
     "themed_icon",
     "render_pixmap",
+    "icon_qss_url",
     "available_names",
     "clear_cache",
     "FastTooltipStyle",

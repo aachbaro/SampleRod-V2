@@ -111,7 +111,194 @@ produit, d'UI ou de service central, **mettre à jour cette section dans le
 README le jour même**. Ce journal sert de mémoire courte du projet ; il doit
 rester plus concret et plus rapide à relire qu'un diff Git.
 
+### 27 juillet 2026
+
+- Le design-core gagne une brique de mise en page : `frontend/ui/flow_layout.py`
+  (`FlowLayout` / `make_flow_container`) reproduit l'effet `flex-wrap` du CSS —
+  une liste passe seule de la colonne à la grille selon la largeur disponible.
+- Les **Bins** sont refondus dessus : les bulles rondes répétitives (titre
+  « BIN » + nom affiché deux fois) deviennent des chips minimalistes portant un
+  seul texte, et le panneau se réorganise en lignes dès que la fenêtre du module
+  s'élargit. Ajout du double-clic → Réserve et du drop de dossier → nouveau bin.
+  Détail dans [REFACTOR_MODULAR.md](REFACTOR_MODULAR.md) et
+  [UI_MODERNIZATION.md](UI_MODERNIZATION.md) (§6 bis).
+- Le **générateur de break** perd sa grille de pattern à 6 lignes : vélocité,
+  slice source et FX passent en tooltip de la case du hit, la grille devient
+  carrée et compacte (34 px par step, 3 lignes au lieu de 6). Clic gauche sur
+  un hit = le jouer seul, clic droit = ouvrir sa slice dans l'onglet
+  `Découpage` pour corriger une classification douteuse avant de regénérer.
+- Les combos et spins du générateur retrouvent des flèches visibles (rendues
+  depuis le registre d'icônes via le nouveau `icon_qss_url`) et acceptent de
+  nouveau la **molette** ; les champs BPM / bars sont élargis pour ne plus
+  rogner leur valeur.
+- **L'analyse d'un break est de nouveau restaurée au démarrage.** Le cache
+  disque fonctionnait, mais `BreakModule.restore_state` reposait les marqueurs
+  de session juste après — et poser des marqueurs déclenche `_clear_analysis()`
+  (« Marqueurs restaurés. Relance l'analyse… »). Les marqueurs sauvegardés
+  *sont* le découpage de l'analyse restaurée : quand ils correspondent, ils
+  sont déjà posés et on ne touche plus à l'analyse. Un marqueur réellement
+  déplacé invalide toujours les slices, comme avant.
+- **Focus groupé : la Réserve ne retombe plus derrière tout le monde.**
+  `raise_group()` réempilait les fenêtres dans leur ordre de **création**, donc
+  la plus ancienne instance — la Réserve, toujours créée en premier — repassait
+  au fond à chaque clic ailleurs. Le `WindowManager` mémorise désormais un
+  ordre d'empilement mis à jour à chaque activation. Aucun comportement
+  spécifique à la Réserve : elle était juste la plus vieille.
+- **Défilement latéral proportionnel au zoom.** Shift+molette avançait d'un
+  dixième de la durée du *fichier*, quel que soit le zoom : une fois zoomé sur
+  une fenêtre de 0,5 s dans un fichier de 30 s, chaque cran sautait 3 s, soit
+  six fenêtres d'un coup. Le pas suit maintenant la fenêtre visible (un
+  dixième), donc la même sensation à tous les niveaux de zoom.
+- **Grille au tempo réglable en direct.** Le point de départ est un point
+  d'**ancrage**, pas un début : la grille rayonne des deux côtés et découpe
+  tout le fichier. On peut donc se caler sur un passage franc en plein milieu
+  du morceau, au lieu d'avoir à identifier le tout premier temps — justement
+  l'endroit le moins lisible d'un enregistrement. Le panneau pose la grille
+  tout de suite, puis se règle sous les yeux : un slider décale **toute** la
+  grille d'un bloc, la longueur de tranche se change à la volée, et
+  « Caler sur la sélection » déduit le BPM d'un passage dont on affirme le
+  nombre de steps. Valider fige, Annuler retire tout. La pose de 213 marqueurs
+  est passée de **7,0 s à 0,22 s** ; un décalage coûte 26 ms, d'où le direct.
+- **Ménage des fichiers de travail temporaires** (`backend/services/temp_workspace.py`).
+  Chaque rendu de pattern, aperçu, segment de preview et waveform éditée
+  écrivait un WAV nommé par UUID que **rien ne supprimait jamais** : 602
+  fichiers dans `break_pattern`, 286 dans `break_pattern_segments`, 381 Mo au
+  total sur une machine de dev. Un balayage au démarrage ne garde que les plus
+  récents de chaque dossier (plus une purge au-delà de 7 jours), et les
+  chemins d'écriture les plus chauds s'élaguent au passage. Le fichier en
+  cours de lecture est protégé.
+- **Découpage au tempo dans l'éditeur waveform.** Nouveau bouton `▦` : on pose
+  un marqueur sur le premier temps, on choisit un **BPM** et une **longueur de
+  tranche en steps** (1 step = une double-croche, 16 = une mesure — mêmes
+  conventions que le générateur de break), et la grille de marqueurs est
+  extrapolée jusqu'à la fin. Le popup annonce le nombre de marqueurs et la
+  durée d'une tranche **avant** de poser quoi que ce soit. Objectif : recouper
+  un morceau à tempo stable en patterns, puis les recomposer dans le
+  Compositeur. Les marqueurs existants sont conservés (fusion sans doublon) et
+  toute la grille s'annule en un seul `Ctrl+Z`.
+- **Playhead façon séquenceur dans le générateur.** Le step en cours de lecture
+  s'illumine pendant la preview, et la grille défile pour le garder visible. Le
+  coût est négligeable : un timer à 25 im/s qui ne repeint que les deux
+  cellules concernées (celle qu'on quitte, celle qu'on éclaire), en restaurant
+  les pinceaux d'origine — aucun recalcul de la grille. L'origine suit le clip
+  réellement joué (pattern entier, plage bouclée, lecture depuis un step).
+- **La grille du pattern n'est plus coupée à droite.** Un pattern de 2 bars
+  (32 steps) dépassait la largeur de la fenêtre sans que la barre de défilement
+  puisse s'afficher, faute de hauteur. La table réserve désormais sa place.
+- **Sélection d'une plage de steps au glisser sur les numéros du pattern.**
+  Glisser sur l'en-tête sélectionne une portion du break et la joue en boucle
+  (le clic simple garde son rôle : jouer depuis ce step). Clic droit sur la
+  sélection → **verrouiller** (garde le contenu exact au prochain `Generer`),
+  **ancrer sur le type** (fige la famille du coup, pas la source), ou
+  **exporter la plage en artefact**. Effet de bord corrigé au passage : poser
+  un verrou ou une ancre ne marque plus le pattern « à regénérer » — ça ne
+  change pas son audio, et ça bloquait l'enchaînement figer → exporter.
+- **Ctrl+double-clic puis glisser = drag de la slice, depuis la waveform.**
+  Le geste sélectionnait déjà la zone entre deux marqueurs ; garder le bouton
+  enfoncé et bouger part maintenant en drag, exactement comme depuis la liste
+  de marqueurs. Le payload MIME `application/x-sample-slice-data` est construit
+  par un `selection_payload()` désormais partagé entre les deux chemins, donc
+  les deux gestes produisent la même slice au bit près.
+- **Le BPM du générateur suit la preview en cours de lecture.** Le tempo est
+  *cuit* dans le rendu : rejouer le même fichier plus vite pitcherait tout le
+  break et ne correspondrait plus à ce que « Rendre artefact » produit. Le
+  changement de BPM déclenche donc un **re-rendu court** (debounce 200 ms), la
+  boucle en cours continuant de tourner jusqu'à ce que le nouveau clip soit
+  prêt — et il relance exactement le même extrait (pattern entier, plage de
+  boucle, hit isolé). Le rendu d'artefact reste prioritaire et annule un
+  re-rendu de preview en attente.
+- **Vue `Indexe` : le détail passe sous la table.** Il occupait une colonne de
+  droite de ~460 px pour ne servir qu'à écouter le sample sélectionné. La table
+  récupère toute la largeur ; en dessous, une bande compacte = nom + statut,
+  chemin, une ligne de métadonnées (les deux élidées avec le texte complet en
+  tooltip), puis la `SampleCard` avec son slider. Les deux boutons « Ouvrir le
+  dossier source » / « Ouvrir dans la waveform » sont retirés : ils doublonnent
+  le menu contextuel de la table et le double-clic.
+- **Le Break analyse enfin la waveform affichée, pas le fichier d'origine.**
+  Les éditions de waveform (coupe…) ne vivent qu'en mémoire, alors que
+  l'analyse, la quantize, le rendu de pattern et le drag d'une slice relisent
+  tous l'audio depuis le chemin source — couper la moitié d'un break sortait
+  donc des slices hors de ce qu'on voit. La waveform éditée est désormais
+  **matérialisée** dans `%TEMP%/SampleRod/break_edits/` (en float32, pour ne
+  pas dégrader la matière exportée) et sert de source de travail à toute la
+  chaîne. Le fichier ouvert reste l'identité affichée et sauvegardée en session.
+- **La liste de slices s'édite sans re-analyse complète.** Supprimer une slice
+  la **fusionne** avec la précédente, qui reprend son territoire et garde sa
+  classe (fini le trou). Poser un marqueur **coupe la slice concernée en deux
+  et détecte le type de chaque moitié**, à sa place dans la liste. Déplacer un
+  marqueur **recale les deux frontières voisines** et reclasse les slices
+  touchées, donc la sélection jouée depuis la liste suit le nouveau découpage.
+  Ces trois gestes s'appuient sur un nouveau point d'entrée
+  `analyzer.classify_segment()` qui mesure un segment isolé.
+- **Les corrections de classe des hits sont maintenant persistantes.** Une
+  analyse (ou un simple redécoupage) re-classait tous les hits et écrasait le
+  travail manuel : `DrumAnalysisService` mémorise désormais ces corrections à
+  part du cache d'analyse, dans `~/.samplerod/break_labels/`, **indexées par la
+  position du hit** et non par son index — elles survivent donc au
+  renumérotage, aux re-analyses et aux sessions. Un bouton `⟲` dans la barre
+  `Découpage` (visible seulement s'il y a des corrections) permet de revenir à
+  la classification automatique.
+
+### 23 juillet 2026
+
+- Les déplacements de samples suivis en base passent maintenant par un chemin
+  asynchrone dans `backend/services/sample_service.py` : le `move()` ne bloque
+  plus le thread UI pendant le `shutil.move`, ce qui doit lisser les glisser-
+  déposer depuis la vue `Indexe`, les bins et les autres outils de la Réserve.
+- Correctif de démarrage : `frontend/labo/artifact_tray.py` importe maintenant
+  explicitement `QEvent`, ce qui supprime le crash qui empêchait l’ouverture de
+  la première fenêtre de l’Atelier au lancement.
+- La vue `Indexe` expose maintenant une vraie colonne `Date`, alimentée par
+  `created_at`, avec tri chronologique natif via l’en-tête pour passer du plus
+  récent au plus vieux sans quitter la bibliothèque indexée.
+- La vue `Indexe` traite maintenant aussi les ajouts, changements de durée et
+  fins d’analyse en **mode incrémental**, et décale le rebuild de navigation en
+  debounce. Le but est de supprimer les freezes visibles lors des enregistrements
+  ou des mises à jour simples pendant que l’index est ouvert.
+
 ### 21 juillet 2026
+
+- Ergonomie de la vue `Historique` renforcée : le header de `SampleListWidget`
+  perd son bouton d'import parasite, les contrôles passent sur les icônes
+  Tabler et le menu `...` des cartes expose maintenant les raccourcis utiles
+  (`Ctrl+R`, `Ctrl+D`, `Ctrl+Shift+D`, `Ctrl+Right`).
+- La navigation clavier de l'historique devient pilotable sans souris :
+  flèches haut/bas pour changer le focus, flèches gauche/droite pour seek de
+  1 seconde, `Space` pour play/stop, `Shift+Space` pour relancer depuis le
+  début, `Ctrl+Right` pour ouvrir dans la waveform du Labo.
+- Le header visuel de l'historique est maintenant masqué dans la Réserve :
+  plus de mini-boutons parasites au-dessus des cartes, et après suppression
+  d'un sample le focus repart automatiquement sur l'entrée suivante pour garder
+  un flux de navigation continu.
+- Les anciennes actions flottantes des `SampleCard` historiques sont désormais
+  masquées explicitement pour éviter toute icône empilée.
+- La vue `Indexe` converge maintenant vers `Historique` : preview clavier
+  identique (haut/bas, gauche/droite, `Space`, `Shift+Space`), menu contextuel
+  avec raccourcis visibles, actions de détail simplifiées autour de la
+  waveform, et preview card compacte avec un vrai espace entre bouton play et
+  slider.
+- La vue `Indexe` expose maintenant une vraie colonne `Gamme` et un filtre de
+  gamme dédié, alimenté dynamiquement par les samples visibles du scope
+  courant, avec accès rapide `Filtrer par ...` depuis le menu contextuel.
+- La vue `Indexe` affiche maintenant le poids de chaque sample et un cumul
+  `visible` / `total indexé`, calculés en arrière-plan pour garder une
+  navigation fluide même sur une grosse librairie.
+- La suppression clavier (`Ctrl+D`) dans la vue `Indexe` passe maintenant par
+  un chemin direct côté `LibraryWidget` avec arrêt audio explicite et refresh
+  de sélection moins réentrant, pour éviter les gels au moment du delete.
+- La vue `Indexe` supprime maintenant une ligne de façon optimiste puis
+  diffère/coalesce le rebuild complet (navigation + table + détail), pour
+  éviter le gros freeze que provoquait un refresh synchrone après delete.
+- Le chemin de suppression de la Réserve est maintenant instrumenté avec des
+  logs de perf (`SampleService`, `Indexe`, `Historique`, `Dossiers`) pour
+  localiser plus vite les freezes restants après delete.
+- Les `SampleCard` de l'historique exportent maintenant aussi une URL fichier
+  dans leur drag : un glisser vers le bureau ou l'explorateur Windows copie
+  donc le sample, sans perdre le MIME interne déjà utilisé par le Labo.
+- Les réglages sont maintenant extraits dans `frontend/settings_gui/settings_panel.py`
+  pour être réutilisés à la fois dans l'onglet classique et comme vrai module
+  `Paramètres` du workspace modulaire ; le bouton du `Workspace` ouvre donc
+  désormais un module fermable, au lieu de renvoyer vers l'ancienne fenêtre.
 
 - Les modules modulaires **Break** et **Compositeur** ne sont plus de simples
   widgets bruts : `frontend/modular/break_module.py` et
@@ -238,6 +425,7 @@ samplerod/
 │   ├── ui/                         # design-core partagé du refactor modulaire
 │   │   ├── icons.py
 │   │   ├── icon_button.py
+│   │   ├── flow_layout.py          # FlowLayout (colonne <-> grille, flex wrap)
 │   │   └── fast_tooltip.py
 │   ├── library_gui/                # gestion des bibliothèques
 │   │   ├── library_widget.py
@@ -324,6 +512,10 @@ Légende : [x] opérationnel · [~] partiel · [ ] à faire
       déclencher analyse depuis marqueurs sans découpe auto)
 - [x] `labo/break_generator_panel.py` : générateur de patterns (4 onglets :
       Groove / Variations / Pitch / Rendu, knobs, preview en boucle)
+- [x] Corrections manuelles de classification persistantes
+      (`~/.samplerod/break_labels/`, réappliquées après chaque analyse)
+- [x] Édition incrémentale du découpage (fusion / split / déplacement de
+      frontière) sans re-analyse complète
 - [x] `labo/bins_panel.py` : rangement et lecture des slices par type (kick / snare / hat…)
 - [x] `labo/artifact_tray.py` : barre d'artefacts produits par le Labo
 - [ ] Export one-shots individuel vers la Réserve (UI non finalisée)
@@ -484,6 +676,10 @@ Bugs et petites features à traiter :
 
 **Dette tech**
 
+- Le renderer de waveform plante sur un fichier **mono**
+  (`waveform_data[i0:i1, idx]` avec `idx=1` sur un seul canal) — repéré en
+  passant, non corrigé.
+
 - Mettre en place Alembic (migrations versionnées) — obligatoire avant
   d'ajouter de nouvelles colonnes DNA
 - Ajouter `bpm` et `sample_type` au modèle Sample (avec migration Alembic)
@@ -506,6 +702,10 @@ Bugs et petites features à traiter :
 - KnobWidget personnalisé (potentiomètres sans scroll molette) ✓
 - Générateur de patterns Break (4 onglets, preview en boucle) ✓
 - `record_widget` refactorisé (UI / logique séparées) ✓
+- Drag & drop externe des `SampleCard` vers Windows/Explorateur (historique + index) ✓
+- Indexe: toggle persistant de la navigation + renommage allégé sans rebuild complet ✓
+- Labo: renommage du fichier courant depuis Waveform + drop manuel et renommage des artefacts ✓
+- Indexe: colonne RMS retirée, poids affiché en Mo pour une lecture plus dense ✓
 
 ---
 
@@ -548,4 +748,4 @@ est le point d'entrée ; les suivants entrent dans les détails d'implémentatio
 
 ---
 
-_Dernière mise à jour : 20 juillet 2026 — version courante : voir `VERSION`._
+_Dernière mise à jour : 27 juillet 2026 — version courante : voir `VERSION`._

@@ -105,6 +105,7 @@ class SampleCard(QWidget):
         self.selection = SampleCardSelection(self)
         self.status = SampleCardStatus(self)
         self._build_shortcuts()
+        self._set_waveform_shortcuts_enabled(True)
         self.update_scale_badge()
 
     def init_ui(self):
@@ -120,8 +121,13 @@ class SampleCard(QWidget):
 
     def _build_shortcuts(self):
         """Raccourcis actifs seulement quand la carte (ou un enfant) a le focus."""
-        for seq, handler in [
+        self._general_shortcuts = []
+        self._waveform_shortcuts = []
+
+        general_bindings = [
             ("Ctrl+R", lambda: self.startRename()),
+        ]
+        waveform_bindings = [
             ("Ctrl+X", lambda: self._with_wave(lambda w: w._on_cut_shortcut())),
             ("Ctrl+Z", lambda: self._with_wave(lambda w: w.undo())),
             ("Ctrl+Shift+Z", lambda: self._with_wave(lambda w: w.redo())),
@@ -132,11 +138,21 @@ class SampleCard(QWidget):
             ("Ctrl+Space", lambda: self._with_wave(lambda w: w.play_from_start())),
             ("Ctrl+E", lambda: self._with_wave(lambda w: w._on_export_shortcut())),
             ("Ctrl+Shift+G", lambda: self._with_wave(lambda w: w.add_markers_to_region())),
-            # ajoute ici d'autres raccourcis si besoin...
-        ]:
-            sc = QShortcut(QKeySequence(seq), self)
-            sc.setContext(Qt.WidgetWithChildrenShortcut)
-            sc.activated.connect(handler)
+        ]
+
+        for bindings, bucket in (
+            (general_bindings, self._general_shortcuts),
+            (waveform_bindings, self._waveform_shortcuts),
+        ):
+            for seq, handler in bindings:
+                sc = QShortcut(QKeySequence(seq), self)
+                sc.setContext(Qt.WidgetWithChildrenShortcut)
+                sc.activated.connect(handler)
+                bucket.append(sc)
+
+    def _set_waveform_shortcuts_enabled(self, enabled: bool) -> None:
+        for shortcut in getattr(self, "_waveform_shortcuts", []):
+            shortcut.setEnabled(enabled)
 
     def _with_wave(self, fn):
         """Helper : si le waveform est ouvert, appelle fn(wave_edition_widget)."""
@@ -236,6 +252,7 @@ class SampleCard(QWidget):
 
     def set_external_waveform_handler(self, handler):
         self.external_waveform_handler = handler
+        self._set_waveform_shortcuts_enabled(not callable(handler))
         if hasattr(self, "waveform_button"):
             self.waveform_button.setToolTip(
                 "Ouvrir dans le labo" if callable(handler) else "Afficher le waveform"

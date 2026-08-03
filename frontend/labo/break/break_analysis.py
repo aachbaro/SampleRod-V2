@@ -12,9 +12,13 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 from PySide6.QtCore import QSettings as _QS
+
+from backend.services.temp_workspace import prune_temp_dir, temp_dir
 
 from backend.services.drum_analysis_service import (
     DEFAULT_SPLIT_DENSITY,
@@ -29,6 +33,86 @@ class BreakAnalysisController:
     def __init__(self, widget):
         self.widget = widget
 
+    # ---------------------------------------------------------------------- #
+    # Source analysee
+    # Les editions de waveform (coupe, coller...) ne vivent qu'EN MEMOIRE : le
+    # fichier sur disque reste l'original. Or l'analyse, la quantize, le rendu
+    # du pattern et le drag d'une slice relisent tous l'audio depuis le chemin
+    # source. Sans materialisation, couper la moitie d'un break sortait donc
+    # des slices situees hors de ce qu'on voit.
+    # ---------------------------------------------------------------------- #
+    def _resolve_working_path(self) -> str:
+        """Chemin a analyser : le fichier courant, ou un WAV temporaire qui
+        contient exactement l'audio affiche si la waveform a ete editee."""
+        current = self.widget._current_path or ""
+        working = self.widget._working_path or current
+        if not current:
+            return ""
+        buffer_info = self._waveform_buffer()
+        if buffer_info is None:
+            return working
+        audio, sample_rate = buffer_info
+        if self._path_matches_buffer(working, audio, sample_rate):
+            return working
+        materialized = self._write_edited_source(audio, sample_rate)
+        if materialized:
+            self.widget._working_path = materialized
+            return materialized
+        return working
+
+    def _waveform_buffer(self) -> tuple[np.ndarray, int] | None:
+        """Audio actuellement affiche, et son taux d'echantillonnage.
+
+        `WaveformWidget.set_waveform_data` range deja les donnees en
+        (n_samples,) ou (n_samples, channels) — c'est exactement ce que
+        soundfile attend, il n'y a rien a transposer.
+        """
+        w = self.widget._waveform_widget
+        data = getattr(w, "waveform_data", None) if w is not None else None
+        sample_rate = int(getattr(w, "sample_rate", 0) or 0) if w is not None else 0
+        if data is None or sample_rate <= 0 or getattr(data, "size", 0) == 0:
+            return None
+        return data, sample_rate
+
+    @staticmethod
+    def _path_matches_buffer(path: str, audio: np.ndarray, sample_rate: int) -> bool:
+        """Le fichier contient-il deja exactement cet audio ?"""
+        if not path or not os.path.isfile(path):
+            return False
+        try:
+            info = sf.info(path)
+        except Exception:
+            return False
+        frames = int(audio.shape[0])
+        channels = int(audio.shape[1]) if audio.ndim > 1 else 1
+        return (
+            int(info.frames) == frames
+            and int(info.samplerate) == int(sample_rate)
+            and int(info.channels) == channels
+        )
+
+    def _write_edited_source(self, audio: np.ndarray, sample_rate: int) -> str:
+        """Ecrit l'audio affiche dans un WAV temporaire reutilisable."""
+        source = self.widget._current_path or "break"
+        root = temp_dir("break_edits")
+        prune_temp_dir("break_edits", keep_recent=10, protect=(self.widget._working_path,))
+        stem = Path(source).stem or "break"
+        safe_stem = "".join(c if (c.isalnum() or c in "-_") else "_" for c in stem)[:40]
+        frames = int(audio.shape[0])
+        target = root / f"{safe_stem}__{frames}_{int(sample_rate)}.wav"
+        try:
+            # float32 explicite : ce fichier n'est pas qu'un intermediaire
+            # d'analyse, il alimente aussi la quantize, le rendu du pattern et
+            # le drag des slices. Le defaut WAV (16 bits) degraderait la
+            # matiere que l'utilisateur exporte ensuite.
+            sf.write(str(target), audio, int(sample_rate), subtype="FLOAT")
+        except Exception:
+            self.widget.status_label.setText(
+                "Impossible de materialiser la waveform editee : analyse sur le fichier d'origine."
+            )
+            return ""
+        return str(target)
+
     def _run_auto_split(self) -> None:
         if not self.widget._current_path:
             self.widget.status_label.setText("Charge un fichier avant de lancer le decoupage.")
@@ -37,11 +121,14 @@ class BreakAnalysisController:
         if error:
             self.widget.status_label.setText(f"Analyse indisponible: {error}")
             return
+        working = self._resolve_working_path()
+        if not working:
+            return
         self.widget.split_button.setEnabled(False)
         self.widget.analyze_button.setEnabled(False)
         self.widget.status_label.setText("Detection des transients et estimation du BPM...")
         self.widget._break_service.analyze_file(
-            self.widget._current_path,
+            working,
             split_density=DEFAULT_SPLIT_DENSITY,
         )
 
@@ -53,20 +140,27 @@ class BreakAnalysisController:
         if not self.widget._current_path or not os.path.isfile(self.widget._current_path):
             self.widget.status_label.setText("Aucun fichier charge.")
             return
+        working = self._resolve_working_path()
+        if not working:
+            return
         self.widget.analyze_button.setEnabled(False)
         self.widget.status_label.setText("Classification des hits depuis les marqueurs...")
 
         result = self.widget._analysis_result
+        if result is not None and not self.widget._matches_path(result.source_path):
+            # La waveform vient d'etre editee : le resultat precedent decrit un
+            # autre audio, on repart d'une coquille sur la nouvelle source.
+            result = None
         if result is None:
             try:
-                info = sf.info(self.widget._current_path)
+                info = sf.info(working)
                 duration_s = float(info.duration)
                 sample_rate = int(info.samplerate)
             except Exception:
                 duration_s = 0.0
                 sample_rate = 44100
             result = DrumAnalysisResult(
-                source_path=self.widget._current_path,
+                source_path=working,
                 label="unknown",
                 family="unknown",
                 form="unknown",
@@ -167,6 +261,10 @@ class BreakAnalysisController:
         status_message: str | None = None,
         persist: bool,
     ) -> None:
+        # Une analyse re-classe tous les hits : on repose par-dessus les
+        # corrections de classe faites a la main sur ce fichier, sinon chaque
+        # redecoupage les effacerait.
+        result = self.widget._break_service.apply_manual_labels(result)
         self.widget._analysis_result = result
         if result.tempo_bpm > 1.0:
             self.widget.bpm_spin.blockSignals(True)
@@ -189,11 +287,29 @@ class BreakAnalysisController:
             return
         self._apply_analysis_result(result, persist=True)
         bpm_str = f" — BPM {result.tempo_bpm:.1f}" if result.tempo_bpm > 1.0 else ""
+        restored = self._restored_manual_label_count(result)
+        restored_str = (
+            f" {restored} correction(s) de classe restauree(s)." if restored else ""
+        )
         self.widget.status_label.setText(
-            f"{result.onset_count} slices{bpm_str}. "
+            f"{result.onset_count} slices{bpm_str}.{restored_str} "
             f"Ajuste les marqueurs si besoin, puis clique sur Analyser les slices."
         )
         self.widget._refresh_actions()
+
+    def _restored_manual_label_count(self, analysed: DrumAnalysisResult) -> int:
+        """Combien de hits portent une classe corrigee a la main, apres analyse."""
+        overrides = self.widget._break_service.load_manual_labels(analysed.source_path)
+        if not overrides:
+            return 0
+        applied = self.widget._analysis_result
+        if applied is None:
+            return 0
+        return sum(
+            1
+            for original, patched in zip(analysed.slices, applied.slices)
+            if original.label != patched.label
+        )
 
     def _on_analysis_failed(self, path: str, message: str) -> None:
         if path and not self.widget._matches_path(path):

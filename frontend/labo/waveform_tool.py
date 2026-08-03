@@ -49,6 +49,7 @@ from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QSizePolicy,
@@ -83,6 +84,11 @@ class WaveformToolWidget(QWidget):
         # onglet plutot que d'ecraser l'onglet courant).
         self._drop_replace_enabled = True
         self._build_ui()
+        self.app_context.sample_store.sampleRenamed.connect(self._on_sample_renamed)
+        artifact_store = getattr(self.app_context, "lab_artifact_store", None)
+        renamed_signal = getattr(artifact_store, "artifactFileRenamed", None)
+        if renamed_signal is not None:
+            renamed_signal.connect(self._on_artifact_file_renamed)
         theme.manager.themeChanged.connect(lambda *_args: self._apply_styles())
 
     def _build_ui(self) -> None:
@@ -118,6 +124,9 @@ class WaveformToolWidget(QWidget):
             self.current_file_label.sizePolicy().horizontalPolicy(),
             self.current_file_label.sizePolicy().verticalPolicy(),
         )
+        self.current_file_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.current_file_label.setToolTip("Double-clique pour renommer le fichier courant")
+        self.current_file_label.mouseDoubleClickEvent = self._on_current_file_label_double_click  # type: ignore[assignment]
 
         self.slice_button = IconButton(
             "scissors", tooltip="Créer une slice de la sélection", size="s"
@@ -188,6 +197,63 @@ class WaveformToolWidget(QWidget):
 
     def current_path(self) -> str | None:
         return self._current_path
+
+    def _on_current_file_label_double_click(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._prompt_rename_current_file()
+            event.accept()
+            return
+        event.ignore()
+
+    def _prompt_rename_current_file(self) -> None:
+        current_path = str(self._current_path or "").strip()
+        if not current_path or not os.path.isfile(current_path):
+            self._show_warning("Aucun fichier charge a renommer.")
+            return
+
+        current_name = os.path.splitext(os.path.basename(current_path))[0]
+        new_name, accepted = QInputDialog.getText(
+            self,
+            "Renommer le fichier courant",
+            "Nouveau nom :",
+            text=current_name,
+        )
+        if not accepted:
+            return
+
+        new_name = str(new_name or "").strip()
+        if not new_name or new_name == current_name:
+            return
+
+        success, error = self.app_context.sample_store.rename_by_path(current_path, new_name)
+        if not success:
+            self._show_warning(error or "Impossible de renommer le fichier.")
+            return
+
+        new_path = os.path.join(
+            os.path.dirname(current_path),
+            f"{new_name}{os.path.splitext(current_path)[1]}",
+        )
+        self._apply_renamed_current_file_path(current_path, new_path)
+        self.info_label.setText(f"Fichier renomme : {new_name}")
+
+    def _apply_renamed_current_file_path(self, old_path: str, new_path: str) -> None:
+        old_norm = os.path.normcase(os.path.normpath(str(old_path or "")))
+        current_norm = os.path.normcase(os.path.normpath(str(self._current_path or "")))
+        if not old_norm or old_norm != current_norm:
+            return
+        normalized_new = os.path.normpath(os.path.abspath(str(new_path or "")))
+        self._current_path = normalized_new
+        if self._waveform_widget is not None:
+            self._waveform_widget.audio_file_path = normalized_new
+        self._refresh_info_message()
+        self._refresh_actions()
+
+    def _on_sample_renamed(self, _sample_id: int, old_path: str, new_path: str) -> None:
+        self._apply_renamed_current_file_path(old_path, new_path)
+
+    def _on_artifact_file_renamed(self, _artifact_id: str, old_path: str, new_path: str) -> None:
+        self._apply_renamed_current_file_path(old_path, new_path)
 
     def save_state(self) -> dict:
         """Etat persistable pour la restauration de session (atelier modulaire)."""

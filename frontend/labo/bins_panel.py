@@ -1,39 +1,51 @@
 # -----------------------------------------------------------------------------
 # ROLE DANS L'ARCHITECTURE
-# - Le panneau des BINS (bacs), colonne de droite de l'onglet Labo : des
-#   bulles rondes representant chacune un DOSSIER du disque, pour trier la
-#   matiere audio a la volee sans ouvrir ces dossiers.
+# - Le panneau des BINS (bacs) : des chips representant chacun un DOSSIER du
+#   disque, pour trier la matiere audio a la volee sans ouvrir ces dossiers.
+#   Utilise en colonne de droite du Labo classique ET comme module de
+#   l'atelier modulaire.
 # - Usage : on glisse n'importe quoi d'audio (slice, carte de sample,
-#   fichier, artefact) sur une bulle -> le fichier est DEPLACE dans le
-#   dossier du bin. Clic droit sur une bulle : ouvrir dans la Reserve,
-#   ouvrir dans l'explorateur, retirer le bin.
+#   fichier, artefact) sur un chip -> le fichier est DEPLACE dans le dossier
+#   du bin. Double-clic : ouvrir dans la Reserve. Clic droit : menu complet.
+#   Deposer un DOSSIER sur le panneau cree directement un bin.
 # - La liste des bins est memorisee en JSON dans QSettings : on retrouve
 #   ses bacs d'une session a l'autre (les dossiers disparus sont ignores).
 #
+# MISE EN PAGE (charte UI_MODERNIZATION.md)
+# - Les chips sont poses dans un FlowLayout (frontend/ui/flow_layout.py) :
+#   colonne quand le panneau est etroit, lignes/grille des que la fenetre du
+#   module s'elargit — comme un flex wrap CSS, sans code de bascule.
+# - Un seul texte par chip (le nom du bin) : ni titre "BIN" repete, ni nom
+#   duplique en legende. Le reste (chemin, geste) passe en tooltip.
+#
 # CLASSES ET FONCTIONS (sommaire)
 # - LaboBin (dataclass)   : un bin = id + etiquette + chemin du dossier.
-# - BinBubble (QWidget)   : la bulle visuelle d'un bin
+# - BinChip (QWidget)     : le chip visuel d'un bin
 #   - signaux : openInReserveRequested, removeRequested, moveHereRequested.
 #   - drag*/dropEvent     : accepte le survol/depot des contenus supportes,
-#     avec mise en evidence (bordure bleue) pendant le survol.
+#     avec mise en evidence (bordure accent) pendant le survol.
 #   - contextMenuEvent    : le menu clic-droit.
-#   - _set_drop_active()/_refresh() : etat visuel et textes.
-# - LaboBinsPanel (QWidget) : la colonne complete
+#   - _set_drop_active()/_refresh() : etat visuel et texte elide.
+# - LaboBinsPanel (QWidget) : le panneau complet
 #   - signaux : openInReserveRequested, reserveRefreshRequested,
 #     sourcePathsMoved (pour que la Reserve se rafraichisse).
+#   - set_title_visible()  : masque le titre interne quand la fenetre du
+#     module l'affiche deja (evite la repetition).
 #   - _choose_bin_folder()/add_bin()/_remove_bin() : gestion des bins.
 #   - _load_bins()/_save_bins() : persistance JSON dans QSettings.
-#   - _rebuild()          : reconstruit toutes les bulles.
+#   - _rebuild()          : reconstruit tous les chips.
 #   - _on_move_here_requested() : LE coeur — traite un depot selon sa
 #     nature : slice (audio brut a ecrire en WAV), carte de sample (deplace
 #     via SampleService), fichiers (deplaces, ou via SampleService s'ils
 #     sont deja suivis en base).
 #   - _unique_target_path() : evite d'ecraser un fichier existant.
 # - _has_supported_bin_drop() : le depot est-il acceptable ?
-# - _compact_label()      : etiquette raccourcie pour tenir dans la bulle.
+# - _dropped_folders()    : dossiers presents dans un depot (creation de bin).
+# - _compact_label()      : etiquette raccourcie pour tenir dans le chip.
 #
 # LIENS CLES
 # - frontend/labo/labo_widget.py : heberge ce panneau et relaie ses signaux.
+# - frontend/modular/modules_setup.py : meme panneau en module "Bins".
 # - backend/services/sample_service.py : deplacements de samples suivis.
 # -----------------------------------------------------------------------------
 
@@ -50,7 +62,7 @@ import numpy as np
 import soundfile as sf
 
 from PySide6.QtCore import QMimeData, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QFont, QFontMetrics
 from PySide6.QtWidgets import (
     QFrame,
     QFileDialog,
@@ -64,7 +76,7 @@ from PySide6.QtWidgets import (
 
 from backend.services.audio_metadata import is_audio_file, normalize_audio_path
 from frontend.labo.artifact_store import ensure_lab_artifact_store
-from frontend.ui import IconButton
+from frontend.ui import IconButton, make_flow_container
 from frontend.right_panel.composer.composer_dnd import has_sample_card, parse_sample_card_mime
 from frontend.styles import theme
 
@@ -81,59 +93,59 @@ class LaboBin:
     path: str
 
 
-class BinBubble(QWidget):
-    """La bulle ronde d'un bin : zone de depot + menu clic-droit."""
+class BinChip(QWidget):
+    """Le chip d'un bin : zone de depot + un seul texte + menu clic-droit."""
 
     openInReserveRequested = Signal(str)
     removeRequested = Signal(str)
     moveHereRequested = Signal(str, object)
 
+    #: Taille fixe : le FlowLayout s'appuie dessus pour calculer les colonnes.
+    CHIP_SIZE = (128, 52)
+
     def __init__(self, bin_data: LaboBin, parent=None):
         super().__init__(parent)
         self.bin_data = bin_data
         self._drop_active = False
-        self.setObjectName("BinBubbleRoot")
+        self.setObjectName("BinChip")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setAcceptDrops(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedSize(*self.CHIP_SIZE)
         self._build_ui()
         self._refresh()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(0)
 
-        self.circle = QWidget()
-        self.circle.setObjectName("BinBubbleCircle")
-        self.circle.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.circle.setMinimumSize(94, 94)
-        self.circle.setMaximumSize(94, 94)
+        self.name_label = QLabel("")
+        self.name_label.setObjectName("BinChipLabel")
+        self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.name_label.setWordWrap(True)
+        self.name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        # Police posee en code (pas en QSS) : QFontMetrics doit mesurer la
+        # vraie police au moment de l'elision, avant tout polish de style.
+        font = self.name_label.font()
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.DemiBold)
+        self.name_label.setFont(font)
 
-        circle_layout = QVBoxLayout(self.circle)
-        circle_layout.setContentsMargins(10, 10, 10, 10)
-        circle_layout.setSpacing(4)
+        layout.addWidget(self.name_label)
 
-        self.circle_title = QLabel("BIN")
-        self.circle_title.setObjectName("BinBubbleTitle")
-        self.circle_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh()
 
-        self.circle_label = QLabel("")
-        self.circle_label.setObjectName("BinBubbleLabel")
-        self.circle_label.setWordWrap(True)
-        self.circle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        circle_layout.addStretch(1)
-        circle_layout.addWidget(self.circle_title)
-        circle_layout.addWidget(self.circle_label)
-        circle_layout.addStretch(1)
-
-        self.footer_label = QLabel("")
-        self.footer_label.setObjectName("BinBubbleFooter")
-        self.footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.footer_label.setWordWrap(True)
-
-        layout.addWidget(self.circle, 0, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.footer_label)
+    def mouseDoubleClickEvent(self, event) -> None:
+        """Double-clic = ouvrir le dossier du bin dans la Reserve."""
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.openInReserveRequested.emit(self.bin_data.path)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
     def dragEnterEvent(self, event) -> None:
         self._handle_drag_enter(event)
@@ -157,7 +169,7 @@ class BinBubble(QWidget):
 
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
-        open_in_reserve = menu.addAction("Ouvrir dans la Reserve")
+        open_in_reserve = menu.addAction("Ouvrir dans la Reserve\tdouble-clic")
         open_in_explorer = menu.addAction("Ouvrir le dossier")
         menu.addSeparator()
         remove_bin = menu.addAction("Retirer ce bin")
@@ -188,21 +200,26 @@ class BinBubble(QWidget):
         if self._drop_active == active:
             return
         self._drop_active = active
-        self.circle.setProperty("dropActive", active)
-        self.circle.style().unpolish(self.circle)
-        self.circle.style().polish(self.circle)
+        self.setProperty("dropActive", active)
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def _refresh(self) -> None:
-        self.circle_label.setText(_compact_label(self.bin_data.label))
-        self.footer_label.setText(self.bin_data.label)
-        tooltip = f"{self.bin_data.label}\n{self.bin_data.path}\nDrop = move"
+        """Un seul texte : le nom du bin, sur deux lignes max puis elide."""
+        available = max(24, self.width() - 16)
+        metrics = QFontMetrics(self.name_label.font())
+        text = metrics.elidedText(
+            _compact_label(self.bin_data.label),
+            Qt.TextElideMode.ElideRight,
+            available * 2 - 8,  # budget de deux lignes (le label est en wrap)
+        )
+        self.name_label.setText(text)
+        tooltip = f"{self.bin_data.label}\n{self.bin_data.path}\nDeposer ici = deplacer"
         self.setToolTip(tooltip)
-        self.circle.setToolTip(tooltip)
-        self.footer_label.setToolTip(tooltip)
 
 
 class LaboBinsPanel(QWidget):
-    """La colonne des bins : en-tete, bouton +, et pile de bulles."""
+    """Le panneau des bins : en-tete minimal + chips en flux adaptatif."""
 
     openInReserveRequested = Signal(str)
     reserveRefreshRequested = Signal()
@@ -214,28 +231,35 @@ class LaboBinsPanel(QWidget):
         self.sample_store = app_context.sample_store
         self._qs = settings
         self._bins: list[LaboBin] = []
-        self._bubble_widgets: dict[str, BinBubble] = {}
+        self._chip_widgets: dict[str, BinChip] = {}
         self._build_ui()
         self._load_bins()
         theme.manager.themeChanged.connect(lambda *_args: self._apply_styles())
 
+    # -- API publique -------------------------------------------------------
+    def set_title_visible(self, visible: bool) -> None:
+        """Masque le titre interne quand la fenetre du module l'affiche deja."""
+        self.title_label.setVisible(bool(visible))
+
     def _build_ui(self) -> None:
         self.setObjectName("LaboBinsRoot")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setMinimumWidth(152)
-        self.setMaximumWidth(188)
+        # Pas de largeur max ici : c'est l'hote (colonne du Labo ou fenetre du
+        # module) qui decide, et le flux passe en lignes des qu'il y a la place.
+        self.setMinimumWidth(136)
+        self.setAcceptDrops(True)
+        self.setToolTip("Bacs de tri. Deposer un fichier = deplacer, deposer un dossier = nouveau bin.")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(6)
 
-        self.title_label = QLabel("Bins")
+        self.title_label = QLabel("BINS")
         self.title_label.setObjectName("LaboBinsTitle")
-        self.title_label.setToolTip("Repartiteur rapide de matiere. Drop = move.")
 
         self.add_button = IconButton("plus", tooltip="Ajouter un bin a partir d'un dossier", size="s")
         self.add_button.setObjectName("LaboBinsAddButton")
@@ -245,28 +269,53 @@ class LaboBinsPanel(QWidget):
         header.addStretch(1)
         header.addWidget(self.add_button)
 
-        self.subtitle_label = QLabel("Tri rapide sans afficher le contenu.")
-        self.subtitle_label.setObjectName("LaboBinsSubtitle")
-        self.subtitle_label.setWordWrap(True)
-
         self.scroll = QScrollArea()
         self.scroll.setObjectName("LaboBinsScroll")
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self.content = QWidget()
         self.content.setObjectName("LaboBinsContent")
-        self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(0, 0, 0, 0)
-        self.content_layout.setSpacing(12)
-        self.content_layout.addStretch(1)
+        self.content_layout = make_flow_container(self.content, margin=0, h_spacing=8, v_spacing=8)
         self.scroll.setWidget(self.content)
 
+        # Indice affiche seulement quand il n'y a aucun bin (zero texte sinon).
+        self.empty_label = QLabel("Deposer un dossier ici")
+        self.empty_label.setObjectName("LaboBinsEmpty")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setVisible(False)
+
         layout.addLayout(header)
-        layout.addWidget(self.subtitle_label)
+        layout.addWidget(self.empty_label)
         layout.addWidget(self.scroll, 1)
 
         self._apply_styles()
+
+    # -- Depot d'un dossier sur le panneau ----------------------------------
+    def dragEnterEvent(self, event) -> None:
+        self._handle_folder_drag(event)
+
+    def dragMoveEvent(self, event) -> None:
+        self._handle_folder_drag(event)
+
+    def dropEvent(self, event) -> None:
+        folders = _dropped_folders(event.mimeData())
+        if not folders:
+            event.ignore()
+            return
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        for folder in folders:
+            self.add_bin(folder)
+
+    def _handle_folder_drag(self, event) -> None:
+        if not _dropped_folders(event.mimeData()):
+            event.ignore()
+            return
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
 
     def _choose_bin_folder(self) -> None:
         """Bouton + : choisir un dossier du disque pour creer un bin."""
@@ -330,20 +379,22 @@ class LaboBinsPanel(QWidget):
         self._qs.setValue(_BINS_SETTINGS_KEY, json.dumps([asdict(bin_data) for bin_data in self._bins]))
 
     def _rebuild(self) -> None:
-        """Detruit toutes les bulles et les recree depuis la liste des bins."""
-        while self.content_layout.count() > 1:
+        """Detruit tous les chips et les recree depuis la liste des bins."""
+        while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
-        self._bubble_widgets.clear()
+        self._chip_widgets.clear()
         for bin_data in self._bins:
-            bubble = BinBubble(bin_data, self.content)
-            bubble.openInReserveRequested.connect(self.openInReserveRequested.emit)
-            bubble.removeRequested.connect(self._remove_bin)
-            bubble.moveHereRequested.connect(self._on_move_here_requested)
-            self.content_layout.insertWidget(self.content_layout.count() - 1, bubble)
-            self._bubble_widgets[bin_data.bin_id] = bubble
+            chip = BinChip(bin_data, self.content)
+            chip.openInReserveRequested.connect(self.openInReserveRequested.emit)
+            chip.removeRequested.connect(self._remove_bin)
+            chip.moveHereRequested.connect(self._on_move_here_requested)
+            self.content_layout.addWidget(chip)
+            self._chip_widgets[bin_data.bin_id] = chip
+        self.empty_label.setVisible(not self._bins)
 
     def _on_move_here_requested(self, bin_id: str, mime: QMimeData) -> None:
         """Traite un depot sur un bin, selon la nature du contenu.
@@ -453,43 +504,41 @@ class LaboBinsPanel(QWidget):
         self.setStyleSheet(
             f"""
             QWidget#LaboBinsRoot {{
-                background: {p.BG_DARK};
-                border: 1px solid {p.BORDER_LIGHT};
-                border-radius: 10px;
-            }}
-            QLabel#LaboBinsTitle {{
-                color: {p.TEXT};
-                font-size: 13px;
-                font-weight: 700;
-            }}
-            QLabel#LaboBinsSubtitle,
-            QLabel#BinBubbleFooter {{
-                color: {p.TEXT_MUTED};
-                font-size: 10px;
-            }}
-            QScrollArea#LaboBinsScroll {{
                 background: transparent;
                 border: none;
             }}
-            QWidget#BinBubbleCircle {{
-                background: {p.BG_CARD};
-                border: 1px solid {p.BORDER};
-                border-radius: 47px;
-            }}
-      QWidget#BinBubbleCircle[dropActive="true"] {{
-                background: {p.BG_HOVER};
-                border-color: {p.INFO};
-            }}
-            QLabel#BinBubbleTitle {{
+            QLabel#LaboBinsTitle {{
                 color: {p.TEXT_MUTED};
-                font-size: 9px;
+                font-size: 10px;
                 font-weight: 700;
                 letter-spacing: 1px;
             }}
-            QLabel#BinBubbleLabel {{
+            QLabel#LaboBinsEmpty {{
+                color: {p.TEXT_MUTED};
+                font-size: 10px;
+                padding: 10px 4px;
+            }}
+            QScrollArea#LaboBinsScroll,
+            QWidget#LaboBinsContent {{
+                background: transparent;
+                border: none;
+            }}
+            QWidget#BinChip {{
+                background: {p.BG_CARD};
+                border: 1px solid {p.BORDER};
+                border-radius: 10px;
+            }}
+            QWidget#BinChip:hover {{
+                background: {p.BG_HOVER};
+                border-color: {p.BORDER_LIGHT};
+            }}
+            QWidget#BinChip[dropActive="true"] {{
+                background: {p.BG_HOVER};
+                border-color: {p.ACCENT};
+            }}
+            QLabel#BinChipLabel {{
                 color: {p.TEXT};
-                font-size: 11px;
-                font-weight: 600;
+                background: transparent;
             }}
             """
         )
@@ -513,6 +562,18 @@ def _has_supported_bin_drop(mime: QMimeData) -> bool:
         if path and is_audio_file(path):
             return True
     return False
+
+
+def _dropped_folders(mime: QMimeData) -> list[str]:
+    """Dossiers presents dans un depot (deposer un dossier = creer un bin)."""
+    if not mime.hasUrls():
+        return []
+    folders: list[str] = []
+    for url in mime.urls():
+        path = url.toLocalFile()
+        if path and os.path.isdir(path):
+            folders.append(os.path.normpath(path))
+    return folders
 
 
 def _compact_label(text: str) -> str:

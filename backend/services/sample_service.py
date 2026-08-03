@@ -66,9 +66,11 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+from time import perf_counter
 
 import soundfile as sf
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QThread, Signal, Slot
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.db import SessionLocal
@@ -80,6 +82,64 @@ from backend.services.notification_service import NotificationType
 from backend.services.scale_analysis_service import ScaleAnalysisService
 
 logger = logging.getLogger("sample_service")
+
+
+class _SampleMoveWorker(QObject):
+    """Deplacement disque+base execute hors du thread UI."""
+
+    succeeded = Signal(int, str, str, str, float)
+    failed = Signal(int, str)
+
+    def __init__(self, sample_id: int, target_folder: str):
+        super().__init__()
+        self.sample_id = int(sample_id)
+        self.target_folder = normalize_audio_path(target_folder)
+
+    @Slot()
+    def run(self) -> None:
+        start = perf_counter()
+        session = SessionLocal()
+        old_path = ""
+        new_path = ""
+        try:
+            inst = session.get(Sample, self.sample_id)
+            if inst is None:
+                raise RuntimeError(f"Sample introuvable: {self.sample_id}")
+
+            old_path = normalize_audio_path(str(getattr(inst, "path", "") or ""))
+            if not old_path:
+                raise RuntimeError("Chemin source introuvable")
+
+            os.makedirs(self.target_folder, exist_ok=True)
+            basename = os.path.basename(old_path)
+            new_path = normalize_audio_path(os.path.join(self.target_folder, basename))
+
+            shutil.move(old_path, new_path)
+            inst.path = new_path
+            session.commit()
+            self.succeeded.emit(
+                self.sample_id,
+                self.target_folder,
+                old_path,
+                new_path,
+                (perf_counter() - start) * 1000.0,
+            )
+        except Exception as exc:
+            session.rollback()
+            if new_path and old_path:
+                try:
+                    if os.path.exists(new_path) and not os.path.exists(old_path):
+                        shutil.move(new_path, old_path)
+                except Exception:
+                    logger.exception(
+                        "[SampleMoveWorker] rollback move impossible sample=%s %s -> %s",
+                        self.sample_id,
+                        new_path,
+                        old_path,
+                    )
+            self.failed.emit(self.sample_id, str(exc))
+        finally:
+            session.close()
 
 
 class SampleService(QObject):
@@ -106,6 +166,9 @@ class SampleService(QObject):
         self._samples = []
         # Workers de normalisation en cours, ranges par id de sample.
         self._normalize_threads = {}
+        # Deplacements asynchrones en cours.
+        self._move_threads: dict[int, tuple[QThread, _SampleMoveWorker]] = {}
+        self._move_started_at: dict[int, float] = {}
         # Concatenation : {id du nouveau sample -> id de la prise precedente}.
         self._concat_candidates: dict[int, int] = {}
         # Samples dont la normalisation est temporairement interdite.
@@ -205,16 +268,28 @@ class SampleService(QObject):
         samp = self._get(sample_id)
         if not samp:
             return
+        logger.info("[SampleService][Perf] delete(%s) start", sample_id)
+        total_start = perf_counter()
+        delete_ms = 0.0
+        notify_ms = 0.0
+        emit_deleted_ms = 0.0
+        emit_changed_ms = 0.0
         try:
+            step_start = perf_counter()
             samp.delete()
+            delete_ms = (perf_counter() - step_start) * 1000.0
             self._cleanup_concat_state_for_deleted(sample_id)
             self._samples = [sample for sample in self._samples if sample.id != sample_id]
+            step_start = perf_counter()
             self.app_context.notifications.notify(
                 title="Sample supprime",
                 message=f"{samp.name}",
                 type=NotificationType.WARNING,
             )
+            notify_ms = (perf_counter() - step_start) * 1000.0
+            step_start = perf_counter()
             self.sampleDeleted.emit(sample_id)
+            emit_deleted_ms = (perf_counter() - step_start) * 1000.0
         except Exception as exc:
             self.app_context.notifications.notify(
                 title="Erreur suppression",
@@ -223,7 +298,20 @@ class SampleService(QObject):
             )
             logger.info("[SampleService] delete error: %s", exc)
         finally:
+            step_start = perf_counter()
             self.samplesChanged.emit(list(self._samples))
+            emit_changed_ms = (perf_counter() - step_start) * 1000.0
+            total_ms = (perf_counter() - total_start) * 1000.0
+            logger.info(
+                "[SampleService][Perf] delete(%s) done total=%.1fms file_db=%.1fms notify=%.1fms sampleDeleted.emit=%.1fms samplesChanged.emit=%.1fms remaining=%s",
+                sample_id,
+                total_ms,
+                delete_ms,
+                notify_ms,
+                emit_deleted_ms,
+                emit_changed_ms,
+                len(self._samples),
+            )
 
     def delete_by_path(self, file_path: str):
         """Supprime par chemin de fichier (utilise par le navigateur de dossiers).
@@ -350,8 +438,15 @@ class SampleService(QObject):
         samp = next((sample for sample in self._samples if sample.id == sample_id), None)
         if not samp:
             return
+        logger.info("[SampleService][Perf] rename(%s, %s) start", sample_id, new_name)
+        total_start = perf_counter()
         old_name = samp.name
         old_path = samp.path
+        stop_ms = 0.0
+        rename_ms = 0.0
+        emit_renamed_ms = 0.0
+        notify_ms = 0.0
+        emit_changed_ms = 0.0
 
         player = self.app_context.audio_player
         if hasattr(player, "is_playing_sample") and player.is_playing_sample(sample_id):
@@ -360,12 +455,14 @@ class SampleService(QObject):
                 import time
 
                 # On attend (2 s max) que pygame libere vraiment le fichier.
+                step_start = perf_counter()
                 player.stop_playback()
                 start = time.time()
                 while pygame.mixer.music.get_busy():
                     if time.time() - start > 2:
                         raise RuntimeError("Impossible d'arreter la lecture")
                     time.sleep(0.05)
+                stop_ms = (perf_counter() - step_start) * 1000.0
             except Exception as exc:
                 self.app_context.notifications.notify(
                     title="Erreur arret lecture",
@@ -376,15 +473,21 @@ class SampleService(QObject):
                 return
 
         try:
+            step_start = perf_counter()
             samp.rename(new_name)
+            rename_ms = (perf_counter() - step_start) * 1000.0
             samp.name = new_name
             new_path = samp.path
+            step_start = perf_counter()
             self.sampleRenamed.emit(sample_id, old_path, new_path)
+            emit_renamed_ms = (perf_counter() - step_start) * 1000.0
+            step_start = perf_counter()
             self.app_context.notifications.notify(
                 title="Sample renomme",
                 message=f"{old_name} -> {new_name}",
                 type=NotificationType.SUCCESS,
             )
+            notify_ms = (perf_counter() - step_start) * 1000.0
         except Exception as exc:
             self.app_context.notifications.notify(
                 title="Erreur renommage",
@@ -393,28 +496,107 @@ class SampleService(QObject):
             )
             logger.info("[SampleService] rename error: %s", exc)
         finally:
+            step_start = perf_counter()
             self.samplesChanged.emit(list(self._samples))
+            emit_changed_ms = (perf_counter() - step_start) * 1000.0
+            total_ms = (perf_counter() - total_start) * 1000.0
+            logger.info(
+                "[SampleService][Perf] rename(%s) done total=%.1fms stop=%.1fms rename=%.1fms sampleRenamed.emit=%.1fms notify=%.1fms samplesChanged.emit=%.1fms",
+                sample_id,
+                total_ms,
+                stop_ms,
+                rename_ms,
+                emit_renamed_ms,
+                notify_ms,
+                emit_changed_ms,
+            )
 
     def move(self, sample_id: int, target_folder: str):
         """Deplace le fichier d'un sample vers un autre dossier (drag and drop)."""
         samp = next((sample for sample in self._samples if sample.id == sample_id), None)
         if not samp:
             return
+        target_folder = normalize_audio_path(target_folder)
+        if not target_folder:
+            return
+        current_folder = normalize_audio_path(os.path.dirname(getattr(samp, "path", "") or ""))
+        if current_folder == target_folder:
+            logger.info("[SampleService][Perf] move(%s) ignored same-folder=%s", sample_id, target_folder)
+            return
+        if int(sample_id) in self._move_threads:
+            logger.info(
+                "[SampleService][Perf] move(%s) ignored pending target=%s",
+                sample_id,
+                target_folder,
+            )
+            return
+
+        logger.info("[SampleService][Perf] move(%s, %s) start", sample_id, target_folder)
+        total_start = perf_counter()
+        stop_ms = 0.0
+        player = self.app_context.audio_player
+        if getattr(player, "current_sample_id", -1) == sample_id:
+            try:
+                step_start = perf_counter()
+                player.clear_audio()
+                stop_ms = (perf_counter() - step_start) * 1000.0
+            except Exception:
+                pass
+
+        thread = QThread(self)
+        worker = _SampleMoveWorker(sample_id, target_folder)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(self._on_move_worker_succeeded)
+        worker.failed.connect(self._on_move_worker_failed)
+        worker.succeeded.connect(lambda sid, *_args: self._cleanup_move_thread(sid))
+        worker.failed.connect(lambda sid, *_args: self._cleanup_move_thread(sid))
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._move_threads[int(sample_id)] = (thread, worker)
+        self._move_started_at[int(sample_id)] = total_start
+        thread.start()
+
+        queue_ms = (perf_counter() - total_start) * 1000.0
+        logger.info(
+            "[SampleService][Perf] move(%s) queued total=%.1fms stop=%.1fms target=%s",
+            sample_id,
+            queue_ms,
+            stop_ms,
+            target_folder,
+        )
+        return
+        logger.info("[SampleService][Perf] move(%s, %s) start", sample_id, target_folder)
+        total_start = perf_counter()
+        stop_ms = 0.0
+        move_ms = 0.0
+        emit_moved_ms = 0.0
+        notify_ms = 0.0
+        emit_changed_ms = 0.0
         # Arrêter la lecture si ce sample est en cours — comme pour la suppression.
         player = self.app_context.audio_player
         if getattr(player, "current_sample_id", -1) == sample_id:
             try:
+                step_start = perf_counter()
                 player.clear_audio()
+                stop_ms = (perf_counter() - step_start) * 1000.0
             except Exception:
                 pass
         try:
+            step_start = perf_counter()
             samp.move_to(target_folder)
+            move_ms = (perf_counter() - step_start) * 1000.0
+            step_start = perf_counter()
             self.sampleMoved.emit(sample_id, target_folder)
+            emit_moved_ms = (perf_counter() - step_start) * 1000.0
+            step_start = perf_counter()
             self.app_context.notifications.notify(
                 title="Sample deplace",
                 message=f"Vers {target_folder}",
                 type=NotificationType.SUCCESS,
             )
+            notify_ms = (perf_counter() - step_start) * 1000.0
         except Exception as exc:
             self.app_context.notifications.notify(
                 title="Erreur deplacement",
@@ -423,7 +605,85 @@ class SampleService(QObject):
             )
             logger.info("[SampleService] move error: %s", exc)
         finally:
+            step_start = perf_counter()
             self.samplesChanged.emit(list(self._samples))
+            emit_changed_ms = (perf_counter() - step_start) * 1000.0
+            total_ms = (perf_counter() - total_start) * 1000.0
+            logger.info(
+                "[SampleService][Perf] move(%s) done total=%.1fms stop=%.1fms move=%.1fms sampleMoved.emit=%.1fms notify=%.1fms samplesChanged.emit=%.1fms",
+                sample_id,
+                total_ms,
+                stop_ms,
+                move_ms,
+                emit_moved_ms,
+                notify_ms,
+                emit_changed_ms,
+            )
+
+    @Slot(int, str, str, str, float)
+    def _on_move_worker_succeeded(
+        self,
+        sample_id: int,
+        target_folder: str,
+        old_path: str,
+        new_path: str,
+        worker_ms: float,
+    ) -> None:
+        sample = self._get(sample_id)
+        if sample is not None:
+            sample.path = new_path
+
+        step_start = perf_counter()
+        self.sampleMoved.emit(sample_id, target_folder)
+        emit_moved_ms = (perf_counter() - step_start) * 1000.0
+
+        step_start = perf_counter()
+        self.app_context.notifications.notify(
+            title="Sample deplace",
+            message=f"Vers {target_folder}",
+            type=NotificationType.SUCCESS,
+        )
+        notify_ms = (perf_counter() - step_start) * 1000.0
+
+        step_start = perf_counter()
+        self.samplesChanged.emit(list(self._samples))
+        emit_changed_ms = (perf_counter() - step_start) * 1000.0
+
+        started_at = self._move_started_at.pop(int(sample_id), None)
+        total_ms = (
+            (perf_counter() - started_at) * 1000.0
+            if started_at is not None
+            else worker_ms + emit_moved_ms + notify_ms + emit_changed_ms
+        )
+        logger.info(
+            "[SampleService][Perf] move(%s) done total=%.1fms worker=%.1fms sampleMoved.emit=%.1fms notify=%.1fms samplesChanged.emit=%.1fms old=%s new=%s",
+            sample_id,
+            total_ms,
+            worker_ms,
+            emit_moved_ms,
+            notify_ms,
+            emit_changed_ms,
+            old_path,
+            new_path,
+        )
+
+    @Slot(int, str)
+    def _on_move_worker_failed(self, sample_id: int, error_msg: str) -> None:
+        self._move_started_at.pop(int(sample_id), None)
+        self.app_context.notifications.notify(
+            title="Erreur deplacement",
+            message=error_msg,
+            type=NotificationType.ERROR,
+        )
+        logger.info("[SampleService] move worker error (%s): %s", sample_id, error_msg)
+
+    def _cleanup_move_thread(self, sample_id: int) -> None:
+        record = self._move_threads.pop(int(sample_id), None)
+        if record is None:
+            return
+        thread, _worker = record
+        if thread.isRunning():
+            thread.quit()
 
     def updateDurationFromFile(self, file_path: str):
         """Re-mesure la duree d'un fichier modifie et met a jour base + cache.
@@ -888,6 +1148,15 @@ class SampleService(QObject):
 
     def shutdown(self) -> None:
         """Arret propre des services de fond (ScaleAnalysisService)."""
+        for sample_id, (thread, _worker) in list(self._move_threads.items()):
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(3000)
+            except Exception:
+                logger.exception("[SampleService] move thread shutdown impossible (%s)", sample_id)
+        self._move_threads.clear()
+        self._move_started_at.clear()
         try:
             self._scale_analysis.shutdown()
         except Exception:

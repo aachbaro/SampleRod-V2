@@ -12,6 +12,7 @@
 # API
 # - themed_icon(name, size=20, color=None) -> QIcon
 # - render_pixmap(name, size=20, color=None) -> QPixmap
+# - icon_qss_url(name, size, color) -> "url(...)" pour une feuille de style
 # - available_names() -> liste des noms connus (inline + assets)
 #
 # LIENS CLES
@@ -21,6 +22,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QRectF, Qt, QSize
@@ -52,7 +54,9 @@ _INLINE: dict[str, str] = {
     "pencil": '<path d="M4 20h4l10.5-10.5a2.828 2.828 0 1 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
     "copy": '<rect x="8" y="8" width="12" height="12" rx="2"/>'
             '<path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+    "chevron-left": '<path d="M15 6l-6 6 6 6"/>',
     "chevron-down": '<path d="M6 9l6 6 6-6"/>',
+    "chevron-up": '<path d="M6 15l6-6 6 6"/>',
     "chevron-right": '<path d="M9 6l6 6-6 6"/>',
     "dots-vertical": '<circle cx="12" cy="5" r="1" fill="currentColor" stroke="none"/>'
                      '<circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/>'
@@ -76,6 +80,13 @@ _INLINE: dict[str, str] = {
             '<path d="M10 19a2 2 0 0 0 4 0"/>',
     "save": '<path d="M6 4h9l3 3v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/>'
             '<path d="M8 4v4h6V4"/><path d="M8 14h8"/>',
+    "settings": '<path d="M10.325 4.317a1.724 1.724 0 0 1 3.35 0a1.724 1.724 0 0 0 2.573 1.066'
+                'a1.724 1.724 0 0 1 2.755 2.387a1.724 1.724 0 0 0 1.272 2.255a1.724 1.724 0 0 1 0 3.35'
+                'a1.724 1.724 0 0 0-1.066 2.573a1.724 1.724 0 0 1-2.387 2.755a1.724 1.724 0 0 0-2.255 1.272'
+                'a1.724 1.724 0 0 1-3.35 0a1.724 1.724 0 0 0-2.573-1.066a1.724 1.724 0 0 1-2.755-2.387'
+                'a1.724 1.724 0 0 0-1.272-2.255a1.724 1.724 0 0 1 0-3.35a1.724 1.724 0 0 0 1.066-2.573'
+                'a1.724 1.724 0 0 1 2.387-2.755a1.724 1.724 0 0 0 2.255-1.272"/>'
+                '<circle cx="12" cy="12" r="3"/>',
     "undo": '<path d="M9 13l-4-4 4-4"/><path d="M5 9h9a5 5 0 0 1 0 10h-1"/>',
     "redo": '<path d="M15 13l4-4-4-4"/><path d="M19 9h-9a5 5 0 0 0 0 10h1"/>',
     "pin": '<path d="M12 21s-6-5.686-6-10a6 6 0 1 1 12 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/>',
@@ -87,6 +98,8 @@ _INLINE: dict[str, str] = {
     # --- Categories / modules ---
     "folder": '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
     "wave": '<path d="M3 12c2-6 4-6 6 0s4 6 6 0 4-6 6 0"/>',
+    "grid": '<path d="M4 4h16v16H4z"/><path d="M9 4v16"/><path d="M15 4v16"/>'
+            '<path d="M4 9h16"/><path d="M4 15h16"/>',
     "layers": '<path d="M12 4l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/>',
     "music": '<circle cx="6" cy="18" r="2.5"/><circle cx="17" cy="16" r="2.5"/>'
              '<path d="M8.5 18V6l11-2v10"/>',
@@ -108,6 +121,10 @@ _SVG_TEMPLATE = (
 
 # Cache : (name, size, color) -> QIcon
 _ICON_CACHE: dict[tuple[str, int, str], QIcon] = {}
+
+# Cache disque des icones referencees depuis une feuille de style Qt
+# (QSS ne sait pointer que vers des fichiers, pas vers un QPixmap en memoire).
+_QSS_ICON_DIR = Path(tempfile.gettempdir()) / "SampleRod" / "qss_icons"
 
 
 def _svg_text(name: str) -> str | None:
@@ -166,6 +183,46 @@ def themed_icon(name: str, size: int = 20, color: str | None = None) -> QIcon:
     icon = QIcon(render_pixmap(name, size, color))
     _ICON_CACHE[key] = icon
     return icon
+
+
+def icon_qss_url(name: str, size: int = 12, color: str | None = None) -> str:
+    """Fragment `url("...")` d'une icone, utilisable dans une feuille de style.
+
+    Pourquoi : des qu'on style un `QComboBox` / `QSpinBox` en QSS, Qt cesse de
+    dessiner ses indicateurs natifs et les fleches disparaissent. Qt ne sait
+    charger une image que depuis un fichier, donc on materialise l'icone du
+    theme dans un cache disque et on renvoie son `url(...)`.
+
+    Le fichier `@2x` est ecrit a cote : Qt le choisit automatiquement sur les
+    ecrans HiDPI. Retourne "" si l'icone est inconnue (l'appelant peut alors
+    omettre la regle plutot que de referencer un fichier absent).
+    """
+    color = color or _default_color()
+    slug = f"{name}_{int(size)}_{color.lstrip('#').lower()}"
+    path = _QSS_ICON_DIR / f"{slug}.png"
+    if not path.is_file():
+        text = _svg_text(name)
+        if text is None:
+            return ""
+        try:
+            _QSS_ICON_DIR.mkdir(parents=True, exist_ok=True)
+            for suffix, scale in (("", 1), ("@2x", 2)):
+                pixmap = _render_flat_pixmap(text, color, int(size) * scale)
+                pixmap.save(str(_QSS_ICON_DIR / f"{slug}{suffix}.png"), "PNG")
+        except OSError:
+            return ""
+    return f'url("{path.as_posix()}")'
+
+
+def _render_flat_pixmap(svg_text: str, color: str, physical_size: int) -> QPixmap:
+    """Rend le SVG a une taille physique exacte (sans devicePixelRatio)."""
+    renderer = QSvgRenderer(QByteArray(svg_text.replace("currentColor", color).encode("utf-8")))
+    pixmap = QPixmap(physical_size, physical_size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter, QRectF(0, 0, physical_size, physical_size))
+    painter.end()
+    return pixmap
 
 
 def clear_cache() -> None:

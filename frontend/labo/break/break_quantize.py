@@ -81,8 +81,11 @@ class BreakQuantizeController:
     def _current_quantized_preview_signature(self) -> tuple[object, ...] | None:
         if not self.widget._current_path or self.widget._analysis_result is None:
             return None
+        # Signature basee sur l'audio REELLEMENT quantize : si la waveform a
+        # ete editee, c'est le WAV temporaire, et la preview doit se refaire.
+        audio_path = self.widget._analysis_result.source_path or self.widget._current_path
         return (
-            os.path.normcase(os.path.normpath(self.widget._current_path)),
+            os.path.normcase(os.path.normpath(audio_path)),
             round(float(self.widget.bpm_spin.value()), 4),
             int(self.widget.grid_combo.currentData() or DEFAULT_QUANTIZE_GRID_DIVISION),
             round(float(self.widget.strength_slider.value()) / 100.0, 4),

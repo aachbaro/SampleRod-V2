@@ -10,8 +10,8 @@
 # - set_sample()               : affiche les infos du sample selectionne
 # - clear_sample()             : remet le panneau a vide
 # - open_current_folder()      : ouvre le dossier du sample dans l'explorateur
-# - send_current_to_lab()      : envoie le sample vers le Labo
 # - toggle_waveform()          : ouvre la waveform dans le Labo
+# - current_card()             : expose la SampleCard integree pour les raccourcis
 # - clear_current_card()       : detruit proprement la SampleCard precedente
 # - _format_scale_text()       : formate le texte de gamme detectee
 #
@@ -26,11 +26,40 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QDesktopServices, QFontMetrics
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from frontend.reserve import ReserveActions, ReserveEntry, apply_status_badge
 from frontend.sample_gui.sample.sample_card import SampleCard
+
+
+class _ElidedLabel(QLabel):
+    """Label d'une seule ligne, elide a droite, texte complet en tooltip.
+
+    Evite qu'un chemin long fasse grossir la bande de detail en hauteur.
+    """
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._full_text = ""
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.set_full_text(text)
+
+    def set_full_text(self, text: str) -> None:
+        self._full_text = str(text or "")
+        self.setToolTip(self._full_text)
+        self._refresh_elision()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_elision()
+
+    def _refresh_elision(self) -> None:
+        metrics = QFontMetrics(self.font())
+        super().setText(
+            metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, max(24, self.width()))
+        )
 
 
 class LibraryDetailWidget(QWidget):
@@ -52,11 +81,21 @@ class LibraryDetailWidget(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        """Construit les elements de l'interface : labels, boutons, conteneur de carte."""
+        """Bande compacte : une ligne d'identite, une ligne d'infos, la carte.
+
+        Pas de boutons d'action : « ouvrir le dossier » et « ouvrir dans la
+        waveform » sont deja dans le menu contextuel de la table (et le
+        double-clic ouvre la waveform). Les metadonnees tiennent sur une seule
+        ligne elidee — l'essentiel est deja dans les colonnes de la liste.
+        """
         self.setObjectName("LibraryDetailPanel")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(8, 6, 8, 8)
+        layout.setSpacing(4)
+
+        identity_row = QHBoxLayout()
+        identity_row.setContentsMargins(0, 0, 0, 0)
+        identity_row.setSpacing(8)
 
         self.title_label = QLabel("Aucun sample selectionne")
         self.title_label.setObjectName("LibrarySectionTitle")
@@ -64,38 +103,28 @@ class LibraryDetailWidget(QWidget):
         self.status_badge = QLabel("")
         self.status_badge.setObjectName("LibraryDetailStatus")
 
-        self.path_label = QLabel("Selectionne un sample pour afficher son detail.")
-        self.path_label.setWordWrap(True)
-        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        identity_row.addWidget(self.title_label)
+        identity_row.addWidget(self.status_badge)
+        identity_row.addStretch(1)
 
-        self.meta_label = QLabel("")
-        self.meta_label.setWordWrap(True)
+        # Chemin et metadonnees : une ligne chacun, elidees a la largeur du
+        # panneau, avec le contenu complet en tooltip.
+        self.path_label = _ElidedLabel("Selectionne un sample pour afficher son detail.")
+        self.path_label.setObjectName("LibraryDetailPath")
 
-        self.open_folder_button = QPushButton("Ouvrir le dossier source")
-        self.open_folder_button.clicked.connect(self.open_current_folder)
-        self.open_folder_button.setEnabled(False)
-
-        self.send_to_lab_button = QPushButton("Envoyer au labo")
-        self.send_to_lab_button.clicked.connect(self.send_current_to_lab)
-        self.send_to_lab_button.setEnabled(False)
-
-        self.toggle_waveform_button = QPushButton("Ouvrir dans le labo")
-        self.toggle_waveform_button.clicked.connect(self.toggle_waveform)
-        self.toggle_waveform_button.setEnabled(False)
+        self.meta_label = _ElidedLabel("")
+        self.meta_label.setObjectName("LibraryDetailMeta")
 
         self.card_container = QWidget()
         self.card_layout = QVBoxLayout(self.card_container)
         self.card_layout.setContentsMargins(0, 0, 0, 0)
         self.card_layout.setSpacing(0)
 
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.status_badge)
+        layout.addLayout(identity_row)
         layout.addWidget(self.path_label)
         layout.addWidget(self.meta_label)
-        layout.addWidget(self.open_folder_button)
-        layout.addWidget(self.send_to_lab_button)
-        layout.addWidget(self.toggle_waveform_button)
-        layout.addWidget(self.card_container, 1)
+        layout.addWidget(self.card_container)
+        layout.addStretch(1)
 
         self.clear_sample()
 
@@ -112,14 +141,19 @@ class LibraryDetailWidget(QWidget):
         self._current_entry = entry
         self.title_label.setText(entry.display_name)
         apply_status_badge(self.status_badge, entry.status)
-        self.path_label.setText(entry.path)
+        self.path_label.set_full_text(entry.path)
         scale_text = self._format_scale_text(entry)
-        self.meta_label.setText(
+        self.meta_label.set_full_text(
             " | ".join(
                 part
                 for part in [
                     f"Racine: {library_service.get_root_label(sample)}",
                     f"Dossier: {library_service.get_folder_label(sample)}",
+                    (
+                        f"Date: {sample.created_at.strftime('%d/%m/%Y %H:%M')}"
+                        if getattr(sample, "created_at", None) is not None
+                        else ""
+                    ),
                     f"Duree: {library_service.format_duration(sample)}",
                     f"RMS: {library_service.format_rms(sample)}" if getattr(sample, "rms_level", None) is not None else "",
                     scale_text,
@@ -128,9 +162,6 @@ class LibraryDetailWidget(QWidget):
                 if part
             )
         )
-        self.open_folder_button.setEnabled(True)
-        self.send_to_lab_button.setEnabled(not entry.missing and os.path.isfile(entry.path))
-
         card = SampleCard(sample, self.app_context)
         self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
         self.sample_store.sampleMoved.connect(card.onMoveSuccess)
@@ -159,7 +190,6 @@ class LibraryDetailWidget(QWidget):
         card.play_button.setEnabled(not missing)
         card.playback_slider.setEnabled(not missing)
         card.waveform_button.setEnabled(not missing)
-        self.toggle_waveform_button.setEnabled(not missing)
         if missing:
             card.name_label.setToolTip("Renommage indisponible: fichier manquant")
             card.name_label.mouseDoubleClickEvent = lambda _event: None  # type: ignore[assignment]
@@ -175,11 +205,8 @@ class LibraryDetailWidget(QWidget):
         self.title_label.setText("Aucun sample selectionne")
         self.status_badge.setText("")
         self.status_badge.setStyleSheet("")
-        self.path_label.setText("Selectionne un sample pour afficher son detail.")
-        self.meta_label.setText("")
-        self.open_folder_button.setEnabled(False)
-        self.send_to_lab_button.setEnabled(False)
-        self.toggle_waveform_button.setEnabled(False)
+        self.path_label.set_full_text("Selectionne un sample pour l'ecouter ici.")
+        self.meta_label.set_full_text("")
         self.clear_current_card()
 
     def open_current_folder(self):
@@ -197,13 +224,6 @@ class LibraryDetailWidget(QWidget):
         if folder:
             QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
-    def send_current_to_lab(self):
-        """Envoie le sample vers le Labo via les reserve_actions."""
-        if self._current_entry is None:
-            return
-        if self.reserve_actions is not None:
-            self.reserve_actions.send_to_lab(self._current_entry)
-
     def toggle_waveform(self):
         """Ouvre la waveform du sample courant dans le Labo (via open_waveform)."""
         if self._current_entry is not None and self.reserve_actions is not None:
@@ -214,6 +234,9 @@ class LibraryDetailWidget(QWidget):
 
     def current_entry(self) -> ReserveEntry | None:
         return self._current_entry
+
+    def current_card(self) -> SampleCard | None:
+        return self._current_card
 
     def clear_current_card(self):
         """Detruit proprement la SampleCard en cours (arrete l'audio, supprime le widget).

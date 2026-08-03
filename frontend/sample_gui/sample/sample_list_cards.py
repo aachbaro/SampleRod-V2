@@ -25,11 +25,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
+from time import perf_counter
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer
 
 from frontend.sample_gui.sample.sample_card import SampleCard
+
+logger = logging.getLogger("sample_list_cards")
 
 
 class SampleListCards:
@@ -121,6 +125,7 @@ class SampleListCards:
 
     # ---- Refresh list
     def refresh_list(self):
+        start = perf_counter()
         self._clear_concat_preview()
         ordered_samples = self.widget.get_filtered_samples()
         self.widget.filtered_samples = list(ordered_samples)
@@ -178,10 +183,32 @@ class SampleListCards:
             )
 
         visible_ids = {int(sample.id) for sample in page_samples}
-        if self.widget._current_sample_id is not None and self.widget._current_sample_id not in visible_ids:
+        pending_focus_id = self.widget._pending_focus_sample_id
+        if pending_focus_id is not None:
+            pending_card = self.widget._card_widgets.get(int(pending_focus_id))
+            if pending_card is not None:
+                self.widget._pending_focus_sample_id = None
+                QTimer.singleShot(0, lambda c=pending_card: self.widget._focus_card(c))
+            elif not visible_ids:
+                self.widget._pending_focus_sample_id = None
+                self.widget.set_current_reserve_sample(None)
+        elif (
+            self.widget._current_sample_id is not None
+            and self.widget._current_sample_id not in visible_ids
+        ):
             self.widget.set_current_reserve_sample(None)
 
         self.widget.updateSelectActions()
+        self.widget._last_render_signature = self.widget._compute_samples_signature(self.widget.samples)
+        logger.info(
+            "[SampleListCards][Perf] refresh_list total=%s page=%s/%s visible_cards=%s layout_items=%s total=%.1fms",
+            total_samples,
+            self.widget.current_page,
+            max_pages,
+            len(page_samples),
+            self.widget.content_layout.count(),
+            (perf_counter() - start) * 1000.0,
+        )
 
     # ---- Helpers
     def _build_card(self, samp):
@@ -241,6 +268,7 @@ class SampleListCards:
         self._stop_card_animation(sample_id)
         self.close_waveforms_for_path(card.sample.path)
         self.widget.selected_ids.discard(sample_id)
+        self.widget._pending_focus_sample_id = self._next_focus_candidate_id(sample_id)
 
         def _finalize():
             self.widget.content_layout.removeWidget(card)
@@ -300,6 +328,25 @@ class SampleListCards:
         anim_out = self._exit_animations.pop(sample_id, None)
         if anim_out:
             anim_out.stop()
+
+    def _next_focus_candidate_id(self, sample_id: int) -> int | None:
+        ordered_samples = self.widget.get_filtered_samples()
+        ordered_ids = [int(sample.id) for sample in ordered_samples]
+        if not ordered_ids:
+            return None
+        try:
+            index = ordered_ids.index(int(sample_id))
+        except ValueError:
+            current_cards = self.widget._visible_cards_in_order()
+            for card in current_cards:
+                if int(card.sample.id) != int(sample_id):
+                    return int(card.sample.id)
+            return None
+        if index + 1 < len(ordered_ids):
+            return ordered_ids[index + 1]
+        if index - 1 >= 0:
+            return ordered_ids[index - 1]
+        return None
 
     def on_concat_preview_hover_changed(self, sample_id: int, active: bool, prev_id):
         if not active:

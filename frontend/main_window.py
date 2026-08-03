@@ -47,7 +47,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QGroupBox,
-    QScrollArea,
 )
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QShortcut, QKeySequence
@@ -56,13 +55,7 @@ import logging
 logger = logging.getLogger("main_window")
 
 from frontend.record_widget import RecordWidgetWindow
-from frontend.settings_gui.libraries_list import SettingsLibrariesList
-from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
-from frontend.settings_gui.audio_settings import AudioSettingsWidget
-from frontend.settings_gui.display_settings import DisplaySettingsWidget
-from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
-from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
-from frontend.settings_gui.waveform_settings import WaveformSettingsWidget
+from frontend.settings_gui.settings_panel import SettingsPanelWidget
 from frontend.screenshot_gui.screenshot_list import ScreenshotListWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.labo.artifact_store import ensure_lab_artifact_store
@@ -88,6 +81,7 @@ class MainWindow(QMainWindow):
         self.directory_service = DirectoryService(self.app_context.sample_store)
         self.activity_service = ActivityService(self.app_context, self)
         self.lab_artifact_store = ensure_lab_artifact_store(self.app_context, self)
+        self._settings_tab_index = 0
 
         # Atelier modulaire (nouvelle UI, ouverte a la demande, non destructif)
         self._window_manager: WindowManager | None = None
@@ -160,91 +154,13 @@ class MainWindow(QMainWindow):
         # --- Onglet 'Parametres'
         settings_tab = QWidget()
         settings_layout = QVBoxLayout(settings_tab)
-
-        # Scroll area pour garder une UI lisible sur petites fenetres
-        settings_scroll = QScrollArea()
-        settings_scroll.setWidgetResizable(True)
-        settings_layout.addWidget(settings_scroll)
-
-        settings_container = QWidget()
-        settings_scroll.setWidget(settings_container)
-        container_layout = QVBoxLayout(settings_container)
-        container_layout.setContentsMargins(12, 12, 12, 12)
-        container_layout.setSpacing(12)
-
-        # Widgets settings
-        self.settings_libraries_list = SettingsLibrariesList(self.app_context)
-        self.settings_retro_widget = RetroRecordingWidget(self.settings)
-        self.audio_settings_widget = AudioSettingsWidget(self.app_context)
-        self.display_settings_widget = DisplaySettingsWidget(self.settings)
-        self.remote_control_widget = RemoteControlSettingsWidget(self.app_context)
-        self.screenshot_settings_widget = ScreenshotSettingsWidget(self.app_context)
-        self.waveform_settings_widget = WaveformSettingsWidget(self.settings)
-
-        # Section: bibliotheques (pleine largeur)
-        libraries_group = self._make_settings_group(
-            "Bibliotheques",
-            "Gestion des bibliotheques de samples (ajout, suppression, ordre).",
-            self.settings_libraries_list
-        )
-        container_layout.addWidget(libraries_group)
-
-        # Section: colonnes pour clarifier l'organisation
-        columns = QHBoxLayout()
-        columns.setSpacing(12)
-
-        left_col = QVBoxLayout()
-        left_col.setSpacing(12)
-        right_col = QVBoxLayout()
-        right_col.setSpacing(12)
-
-        retro_group = self._make_settings_group(
-            "Enregistrement retro",
-            "Active le pre-enregistrement, ajuste la duree du buffer, puis utilise la molette sur REC pour choisir le retro time de chaque prise.",
-            self.settings_retro_widget
-        )
-        display_group = self._make_settings_group(
-            "Affichage",
-            "Configuration de la pagination et de la densite des listes.",
-            self.display_settings_widget
-        )
-        audio_group = self._make_settings_group(
-            "Audio",
-            "Sample rate, loopback et normalisation.",
-            self.audio_settings_widget
-        )
-        remote_group = self._make_settings_group(
-            "Controle distant",
-            "Piloter l'app depuis un navigateur (mobile) sur le meme reseau.",
-            self.remote_control_widget
-        )
-        screenshot_group = self._make_settings_group(
-            "Captures d'ecran",
-            "Capturer des images depuis le telephone (optionnel).",
-            self.screenshot_settings_widget
-        )
-        waveform_group = self._make_settings_group(
-            "Waveform / Decoupage",
-            "Comportement de l'editeur waveform et des outils de decoupage.",
-            self.waveform_settings_widget
-        )
-
-        left_col.addWidget(retro_group)
-        left_col.addWidget(display_group)
-        left_col.addWidget(waveform_group)
-        left_col.addStretch()
-
-        right_col.addWidget(audio_group)
-        right_col.addWidget(remote_group)
-        right_col.addWidget(screenshot_group)
-        right_col.addStretch()
-
-        columns.addLayout(left_col, 1)
-        columns.addLayout(right_col, 1)
-        container_layout.addLayout(columns)
-        container_layout.addStretch()
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        self.settings_panel = SettingsPanelWidget(self.app_context)
+        settings_layout.addWidget(self.settings_panel)
 
         self.tab_widget.addTab(settings_tab, "ParamÃ¨tres")
+
+        self._settings_tab_index = self.tab_widget.count() - 1
 
         # Tooltips rapides sur toute l'application (UI icone-only)
         app = QApplication.instance()

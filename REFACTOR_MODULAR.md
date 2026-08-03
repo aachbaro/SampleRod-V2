@@ -111,6 +111,7 @@ frontend/ui/                     ← design-core réutilisable
 ├── icons.py                     registre d'icônes Tabler + themed_icon()
 ├── icon_button.py               IconButton (rond, hover fill, theme-aware)
 ├── fast_tooltip.py              install_fast_tooltips() (délai réduit)
+├── flow_layout.py               FlowLayout / make_flow_container (flex wrap)
 └── assets/icons/                (optionnel) SVG Tabler officiels déposés ici
 
 frontend/modular/                ← atelier modulaire
@@ -191,8 +192,9 @@ Ordre issu du doc de conception ; ✅ fait · 🟡 en cours · ⬜ à faire.
 - **Icônes** : jeu inline « style Tabler » pour démarrer. Pour les officielles,
   déposer les `.svg` dans `frontend/ui/assets/icons/` (prioritaires, même
   mécanisme `currentColor`).
-- **Bins** reste le principal module encore à approfondir côté session/outillage
-  modulaire ; Break et Compositeur disposent maintenant de leur coque à onglets.
+- **Bins** : la présentation est passée aux chips adaptatifs (`FlowLayout`),
+  mais le module n'a pas encore de `save_state`/`restore_state` propre — il
+  s'appuie toujours sur la liste globale en `QSettings`.
 
 ---
 
@@ -327,6 +329,297 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
   qui flottait par-dessus la carte → porteurs de données dans un conteneur masqué.
 - **Reste** : épuration fine du chrome Réserve (déjà bien avancée par Codex) et
   refonte de la vue **Indexé** (désuète/incohérente).
+
+### Checkpoint — Labo / Artefacts / Indexe
+- **Indexe compacté** : la liste indexée retire la colonne `RMS` pour gagner de
+  la place, conserve le RMS dans le panneau de détail, et affiche désormais le
+  **poids directement en Mo** dans la table.
+- **Déplacements plus fluides** : le `move()` du `SampleService` bascule le
+  déplacement disque+base dans un worker en arrière-plan. Les drops depuis
+  `Indexe`, les bins et les autres entrées suivies ne devraient donc plus
+  figer l'atelier pendant le `shutil.move()`.
+- **Waveform renommable** : le nom du fichier courant dans `WaveformToolWidget`
+  devient un point d’entrée de renommage par **double-clic** ; le renommage
+  passe par `SampleService.rename_by_path()` pour propager le changement au reste
+  de l’application quand le fichier est indexé.
+- **Artefacts plus ouverts** : le plateau d’artefacts accepte maintenant les
+  **drops manuels** (fichiers externes, samples de la Réserve, slices, autres
+  artefacts résolus en chemin audio) pour créer rapidement des entrées dans le
+  `LabArtifactStore`.
+- **Artefacts renommables** : double-clic sur le nom ou action de menu
+  contextuel → renommage de l’artefact ; si l’artefact pointe sur un vrai fichier,
+  le chemin est renommé aussi et le store met à jour ses références.
+
+### Bins — chips adaptatifs (27 juillet 2026)
+- **Nouvelle brique design-core** : `frontend/ui/flow_layout.py` (`FlowLayout` +
+  `make_flow_container`) donne l'effet `flex-wrap` du CSS — une liste s'affiche
+  en colonne dans un panneau étroit et en lignes/grille dès que la fenêtre du
+  module s'élargit, sans code de bascule.
+- **`BinBubble` → `BinChip`** : les grosses bulles rondes (94 px, titre « BIN »
+  répété + nom affiché deux fois) laissent la place à un chip 128×52 portant
+  **un seul texte**, le nom du bin, élidé sur deux lignes max. Le reste
+  (chemin, geste) passe en tooltip.
+- **Chrome épuré** : sous-titre « Tri rapide sans afficher le contenu »
+  supprimé, titre interne réduit à un label discret et **masqué dans le module**
+  (`set_title_visible(False)`) puisque la barre de titre de la fenêtre le dit
+  déjà. Fond du panneau transparent : plus de double cadre.
+- **Panneau fluide** : plus de `setMaximumWidth` interne — c'est l'hôte qui
+  borne (colonne fixe côté Labo classique, fenêtre libre côté module).
+- **Gestes ajoutés** : double-clic sur un chip = ouvrir dans la Réserve ;
+  déposer un **dossier** sur le panneau crée directement un bin (l'état vide
+  affiche cet indice, seul texte restant quand il n'y a aucun bin).
+- **Couverture** : `tests/test_labo_bins.py` vérifie le reflow colonne→lignes
+  et la détection du drop de dossier.
+
+### Générateur de break — grille compacte (27 juillet 2026)
+- **Grille 6 lignes → 3** (`Anc` / `Lock` / `Hit`) : `Vel`, `Src` et `FX`
+  passent en **tooltip** de la case du hit. Cellules carrées de 34 px, hauteur
+  de bloc divisée par ~3.
+- **Gestes** : clic gauche sur un hit = le jouer seul (déjà présent, désormais
+  documenté dans le tooltip de la table) ; **clic droit** = menu avec « Voir la
+  slice N dans Decoupage » — bascule d'onglet, sélection de la slice, waveform
+  recadrée et jouée, ligne amenée dans le champ de vision. C'est le chemin
+  rapide pour corriger une classification fausse puis regénérer.
+- **Signal** : `BreakGeneratorPanel.sliceInspectRequested(int)` →
+  `BreakWidget._inspect_slice_in_decoupage` → `BreakHitsTableController._inspect_slice`.
+- **Ligne d'aide** réduite à l'état courant (ancres / locks / boucle) ; le mode
+  d'emploi vit dans le tooltip de la table.
+- **Contrôles** : `icon_qss_url()` (nouveau, dans `frontend/ui/icons.py`) rend
+  les chevrons des combos et spins, invisibles depuis qu'ils étaient stylés en
+  QSS ; la molette est réactivée sur ces contrôles (le panneau n'est pas dans
+  un `QScrollArea`, donc pas de conflit) ; BPM et bars élargis.
+- **Couverture** : `tests/test_break_generator_grid.py`.
+
+### Break — classification manuelle persistante (27 juillet 2026)
+- **Le problème** : `reanalyze_from_markers` et `analyze_file` re-classent
+  *tous* les hits, puis `_apply_analysis_result(persist=True)` écrasait le
+  cache. Toute correction faite à la main disparaissait au moindre
+  redécoupage — d'où l'obligation de tout refaire à chaque fois.
+- **Le calque** : `DrumAnalysisService` gagne un magasin de corrections séparé
+  du cache d'analyse (`~/.samplerod/break_labels/<hash>.json`) —
+  `load_manual_labels` / `set_manual_label` / `clear_manual_labels` /
+  `apply_manual_labels`. C'est de la **donnée utilisateur**, pas un résultat
+  dérivé : elle survit donc à l'invalidation du cache (mtime, version).
+- **Clé = position, pas index** : les index sont renumérotés dès qu'on ajoute
+  ou retire un marqueur. Le recollement se fait par proximité temporelle
+  (`MANUAL_LABEL_TOLERANCE_S = 25 ms`), ce qui absorbe la dérive d'un
+  redécoupage sans contaminer un hit voisin.
+- **Application** : `_apply_analysis_result` repose le calque après *chaque*
+  analyse, sur les slices **et** sur les `transient_hits` du prototype (c'est
+  ce que lit le générateur). Le statut annonce combien de corrections ont été
+  restaurées.
+- **Sortie de secours** : bouton `⟲` dans la barre `Découpage`, affiché
+  seulement quand des corrections existent, pour revenir à l'automatique.
+- **Couverture** : `tests/test_break_manual_labels.py` (renumérotage, dérive
+  de position, hit trop éloigné, double correction, reset, prototype).
+
+### Fix — analyse de break perdue au redémarrage (27 juillet 2026)
+- **Symptôme** : au relancement de l'app, plus de liste de slices ni de
+  classification ; il fallait relancer une analyse.
+- **Ce n'était pas le cache** : `load_cached()` renvoie bien le résultat (109
+  slices vérifiées sur un fichier réel), et `open_file()` seul restaure
+  correctement. Le coupable est la séquence de `BreakModule.restore_state` :
+  `open_file(path)` **puis** `set_markers(markers)`. Le second appel tombe dans
+  `_apply_pending_markers()`, qui faisait un `_clear_analysis()`
+  inconditionnel — juste après que le loader ait restauré l'analyse.
+- **Correctif** : `_markers_match_analysis()` compare les marqueurs de session
+  aux débuts de slices (tolérance 1 ms). S'ils correspondent, ils sont déjà
+  posés par `_apply_markers_to_waveform` : on ne touche pas à l'analyse. Sinon
+  le comportement historique reste (slices invalidées, message de re-analyse).
+- **Couverture** : `tests/test_break_session_restore.py`.
+
+### Fix — empilement des fenêtres (27 juillet 2026)
+- **Symptôme** : cliquer une fenêtre en faisait remonter plusieurs, et la
+  Réserve repassait derrière toutes les autres.
+- **Cause** : `raise_group()` parcourait `self._instances` (ordre de
+  **création**) et remontait chaque fenêtre. La première instance créée — la
+  Réserve — se retrouvait donc systématiquement au fond du groupe. Aucun
+  traitement particulier pour la Réserve : juste l'ancienneté.
+- **Correctif** : le `WindowManager` tient un `_stack_order` (bas → haut) mis à
+  jour à chaque activation et à chaque affichage, et `raise_group()` remonte
+  les modules dans cet ordre. Les fenêtres compagnes (Workspace) gardent leur
+  place au-dessus des modules, la fenêtre active reste remontée en dernier.
+- **Couverture** : `tests/test_window_stacking.py`.
+
+### Break — source éditée + édition incrémentale des slices (27 juillet 2026)
+- **Source matérialisée** : `BreakAnalysisController._resolve_working_path()`
+  écrit la waveform affichée dans `%TEMP%/SampleRod/break_edits/` dès qu'elle
+  diverge du fichier (comparaison frames / samplerate / canaux), en **float32**
+  — le fichier alimente aussi la quantize, le rendu et le drag des slices, le
+  défaut WAV 16 bits aurait dégradé la matière exportée. `_current_path` reste
+  l'identité affichée et sauvegardée en session ; `_working_path` est la source
+  analysée, et `_matches_path` accepte les deux.
+  *Piège rencontré* : `waveform_data` est déjà en `(n_samples, channels)` — la
+  transposer faisait échouer silencieusement l'écriture, donc l'analyse
+  retombait sur l'original.
+- **`analyzer.classify_segment()`** (nouveau, dans le prototype) : classe UN
+  segment en réutilisant exactement le chemin de mesure de
+  `_detect_transient_hits`, sans détection d'onsets ni estimation de tempo.
+- **Trois éditions incrémentales** dans `DrumAnalysisService` :
+  `merge_slice_into_previous()` (supprimer = fusionner avec la voisine de
+  gauche, qui garde sa classe), `split_slice_at()` (poser un marqueur = couper
+  et reclasser les deux moitiés) et `move_slice_boundary()` (déplacer un
+  marqueur = recaler les deux frontières et reclasser). Toutes renumérotent les
+  slices et resynchronisent `prototype_result.transient_hits`, que lit le
+  générateur.
+- **Signaux waveform** : `markerAdded(float)` et `markerMoved(float, float)`.
+  `markerAdded` n'est émis que sur les poses **manuelles** (`_record_history`),
+  pour que la projection d'une analyse ou une restauration de session ne
+  déclenche pas de redécoupage en boucle.
+- **Couverture** : `tests/test_break_edited_source.py` (7),
+  `tests/test_break_slice_edits.py` (15).
+
+### Générateur — BPM live sur la preview (27 juillet 2026)
+- **Pourquoi pas un simple repitch** : `render_break_pattern` replace les hits
+  sur la grille du tempo demandé sans les transposer. Rejouer le clip existant
+  plus vite (façon platine) aurait donné un résultat **différent de l'artefact
+  exporté** — l'invariant tenu ici est « la preview est toujours ce que
+  *Rendre artefact* produirait au BPM courant ».
+- **Mécanique** : `target_bpm_spin.valueChanged` arme un `QTimer` single-shot
+  de 200 ms (pas de re-rendu par cran de molette). À son échéance,
+  `_apply_live_bpm()` relance `render_break_pattern` en mode `preview` avec
+  `_active_preview_request` — l'extrait qui joue réellement, donc une boucle
+  sur les steps 5-8 revient sur 5-8 et pas sur le pattern entier.
+- **Continuité** : `_on_preview_settings_changed` ne coupe pas la lecture
+  (`stop_if_playing=False`), le clip courant tourne pendant le calcul et la
+  bascule se fait à l'arrivée du nouveau rendu.
+- **Coalescing** : si le service rend déjà quelque chose, la demande est
+  marquée `_live_bpm_pending` et rejouée en fin de rendu
+  (`_resume_pending_live_bpm`) au lieu d'empiler des workers.
+- **Priorité à l'artefact** : `_render_pattern_artifact()` annule le timer et
+  le pending. Effet de bord assumé : le bouton `Rendre artefact` est désactivé
+  le temps d'un re-rendu de preview (`_render_busy`), donc un bref clignotement
+  quand on tourne le BPM.
+- **Couverture** : `tests/test_break_generator_live_bpm.py` (10).
+
+### Waveform — drag de la sélection directement depuis le tracé (27 juillet 2026)
+- **Geste** : Ctrl+double-clic (ou Ctrl+clic en mode marqueur) crée la région
+  entre deux marqueurs ; si le bouton reste enfoncé et que la souris dépasse
+  `QApplication.startDragDistance()`, on part en `QDrag`. Relâcher sans bouger
+  désarme — le clic simple garde son comportement.
+- **Une seule source de vérité pour la slice** : `MarkerManager` expose
+  `selection_payload()`, utilisé à la fois par la ligne « Sélection » de la
+  liste et par le drag depuis la waveform. Impossible que les deux gestes
+  divergent.
+- **MIME inchangé** (`application/x-sample-slice-data`, pickle) : tous les
+  consommateurs existants (Bins, Break, Stems, Waveform modulaire) acceptent
+  ce drag sans modification.
+- **Couverture** : `tests/test_waveform_selection_drag.py` (9).
+
+### Générateur — sélection de plage sur les numéros de step (27 juillet 2026)
+- **Geste** : `PatternHeaderSelector` (filtre d'événements sur le viewport de
+  l'en-tête) remplace `sectionClicked`. Press/move/release gérés à la main →
+  glissement possible ; relâcher sans avoir bougé retombe sur le comportement
+  d'origine (jouer depuis ce step). Le sens du glissement est normalisé.
+- **Menu clic-droit sur la sélection** : jouer en boucle · verrouiller /
+  déverrouiller la plage (garde le contenu au prochain `Generer`) · ancrer sur
+  le type / retirer les ancres · exporter la plage en artefact. Un clic droit
+  hors de la sélection recadre d'abord sur ce seul step.
+- **`STEP_LABEL_TO_ANCHOR`** : le vocabulaire des ancres est plus grossier que
+  celui des labels (`hat` couvre `closed_hat`/`open_hat`, `ghost` couvre les
+  fantômes). Sans cette table, ancrer un `closed_hat` échouait silencieusement.
+- **Export de plage** : mode de rendu `artifact_range`. Le service ne sait
+  rendre que le pattern entier ; la plage est ensuite découpée avec **le même
+  calcul de bornes que la preview en boucle**, donc ce qu'on a entendu est ce
+  qu'on exporte. L'artefact porte `start_step`/`end_step` dans ses métadonnées.
+- **Correctif de flux** : `_mark_generation_constraint_changed()` remplace
+  `_mark_pattern_dirty()` sur les 4 chemins ancre/verrou. Ces gestes sont des
+  contraintes pour le *prochain* Generate — ils ne touchent ni l'audio courant
+  ni la signature de rendu. Les marquer « dirty » bloquait preview et export,
+  donc cassait l'enchaînement « je fige la plage, puis je l'exporte ».
+- **Couverture** : `tests/test_break_pattern_selection.py` (14).
+
+### Générateur — playhead + grille non tronquée (27 juillet 2026)
+- **Grille coupée** : `PATTERN_TABLE_HEIGHT` ne laissait pas la place à la
+  barre de défilement horizontale, donc un pattern de 32 steps était tronqué
+  net à droite sans moyen d'atteindre la fin. La hauteur réserve maintenant
+  `PATTERN_HSCROLL_HEIGHT`, et le défilement passe en `ScrollPerPixel` pour
+  suivre le playhead sans à-coups. Vérifié à 900 px de large : les 32 steps
+  sont atteignables et les 3 lignes restent entières.
+- **Playhead** : `pygame.mixer.music.get_pos()` → seconde écoulée → numéro de
+  step, replié modulo la durée du clip (`get_pos()` ne repart pas de zéro à
+  chaque tour de boucle). L'origine vient de `_active_preview_request`, donc
+  une boucle sur les steps 9-12 illumine bien 9-12 et pas 1-4.
+- **Coût maîtrisé** : timer à 40 ms, et `set_playhead_step()` ne touche que
+  deux cellules — il mémorise les pinceaux d'origine de la cellule éclairée
+  pour les restaurer ensuite, au lieu de rappeler
+  `_refresh_pattern_visual_state()` (qui repeint les 32 colonnes).
+  Ce dernier invalide le playhead mémorisé pour éviter de restaurer des
+  couleurs périmées.
+- **Couverture** : `tests/test_break_pattern_playhead.py` (12).
+
+### Waveform — découpage au tempo (27 juillet 2026)
+- **Deux fichiers neufs** : `waveform_grid.py` (calcul pur, testable sans Qt)
+  et `waveform_grid_panel.py` (popup ancré au bouton de la barre d'outils).
+- **Modèle** : un step = une double-croche, `(60 / bpm) / 4` — la même
+  convention que le générateur de break, pour que les deux outils parlent le
+  même langage. Deux paramètres seulement : BPM et steps par tranche, avec des
+  raccourcis 1 temps / 1 mesure / 2 mesures / 4 mesures.
+- **Point de départ** : le marqueur posé avant le curseur, sinon le curseur
+  lui-même, sinon zéro. C'est le geste visé — poser un marqueur sur le premier
+  temps puis extrapoler.
+- **Non destructif** : la grille *fusionne* avec les marqueurs existants
+  (tolérance 2 ms pour ne pas empiler deux marqueurs indissociables à la
+  souris), et tout est poussé en **un seul bloc d'historique** — un `Ctrl+Z`
+  retire la grille entière, pas un marqueur à la fois.
+- **Garde-fou** : `max_markers` (4096) empêche qu'un tempo absurde sur un long
+  enregistrement fige l'interface.
+- **Aperçu avant pose** : le popup annonce le nombre de marqueurs et la durée
+  d'une tranche, et désactive le bouton s'il n'y a rien à découper.
+- **Couverture** : `tests/test_waveform_tempo_grid.py` (19).
+
+### Fix — fuite de fichiers temporaires (27 juillet 2026)
+- **Constat** : `%TEMP%/SampleRod/` contenait 381 Mo — 602 WAV dans
+  `break_pattern`, 286 dans `break_pattern_segments`, 12 dans `break_preview`.
+  Tous nommés par UUID, donc jamais réutilisés, et jamais supprimés. Le BPM en
+  direct (un rendu par pause de molette) et l'export de plage accélèrent le
+  remplissage.
+- **`backend/services/temp_workspace.py`** : `temp_dir()` / `prune_temp_dir()`
+  / `prune_all_workspaces()`. Politique = garder les N plus récents par
+  dossier (budget par dossier) + purge au-delà de 7 jours. `protect=` met à
+  l'abri le fichier en cours de lecture ; les erreurs de suppression sont
+  ignorées (sous Windows un WAV encore ouvert refuse de partir, on retentera).
+- **Points de branchement** : balayage au démarrage dans `app.py`, plus un
+  élagage dans les trois chemins d'écriture les plus chauds
+  (`_pattern_render_temp_path`, `_preview_temp_path`,
+  `_extract_preview_segment`) et dans la matérialisation de waveform éditée.
+- **Effet mesuré** : 830 fichiers supprimés, 381 Mo → 55 Mo.
+- **Couverture** : `tests/test_temp_workspace.py` (9).
+
+### Perf — pose de marqueurs, et grille réglable en direct (27 juillet 2026)
+- **Mesure d'abord** : poser 213 marqueurs prenait **7,0 s**, en croissance
+  quadratique. Trois causes cumulées, dans l'ordre d'importance :
+  1. `ViewBox.updateAutoRange` → `childrenBounds` reparcourait les bornes de
+     **tous** les items du plot à chaque `addItem` (4,3 s des 4,5 s au profil,
+     45 000 appels à `transformAngle`). Or une `InfiniteLine` verticale n'a
+     aucune étendue à cadrer → `add_plot_item_once(..., ignore_bounds=True)`.
+  2. `refresh_marker_list()` **recopiait tout l'audio** en tranches float32
+     (`data[s0:s1].astype`) pour chaque item, à chaque appel — des payloads que
+     personne ne lit tant qu'on ne glisse pas. Les items ne portent plus que
+     `s0`/`s1` ; `materialize_slice_payload()` découpe au moment du drag.
+  3. La liste était reconstruite **deux fois par marqueur** (`add_marker` le
+     faisait déjà, l'appelant repassait derrière) → `batch_updates()`.
+- **Résultat mesuré** : 7 000 ms → **219 ms** pour 213 marqueurs.
+- **Grille en direct** (`waveform_grid_session.py`) : tant que la session est
+  ouverte, changer un réglage **remplace** la grille au lieu de l'empiler.
+  Deux chemins selon le coût : décalage → translation des lignes existantes
+  (~26 ms, tient au drag d'un slider) ; BPM/tranche → re-pose (~270 ms, à la
+  validation). Les marqueurs posés à la main ne sont jamais repris.
+- **`bpm_from_span()`** : déduit le tempo d'une sélection dont on affirme le
+  nombre de steps (`bpm = 15 × steps / durée`). Plus fiable que de deviner à
+  l'oreille ; on subdivise ensuite sans que la grille décroche.
+- Au passage : `on_marker_moved` retrouvait sa ligne par un scan O(n) du
+  dictionnaire à chaque pixel de drag — il lit maintenant `line.old_pos`.
+- **Ancrage bilatéral** : `grid_marker_times(extend_before=True)` fait rayonner
+  la grille **des deux côtés** du point de départ. Conséquence de conception :
+  le décalage **ré-ancre** la grille au lieu de translater une grille de base —
+  sinon un marqueur sortait par le bord sans jamais revenir. Et
+  `shift_markers()` **retire** un marqueur qui sort du fichier au lieu de le
+  rabattre sur la borne (`np.clip` en empilait plusieurs sur 0 et laissait des
+  lignes orphelines dans le plot). Le chemin rapide ne s'applique que si le
+  nombre de marqueurs est inchangé ; sinon on repose franchement.
+- **Couverture** : `tests/test_waveform_grid_live.py` (40), dont trois verrous
+  de performance et un fil-piège qui échoue si un refresh découpe l'audio.
 
 ### À suivre
 - Polir l'UI de **Break / Compositeur / Artefacts** pour finir d'éliminer les

@@ -70,6 +70,7 @@ import soundfile as sf
 from PySide6.QtCore import QObject, QThread, Signal
 
 from backend.services.audio_metadata import is_audio_file, normalize_audio_path
+from backend.services.temp_workspace import prune_temp_dir, temp_dir
 
 logger = logging.getLogger("drum_analysis_service")
 
@@ -357,8 +358,10 @@ def project_quantized_slices(
 
 def _preview_temp_path(source_path: str, target_bpm: float) -> str:
     """Chemin d'un WAV temporaire pour un apercu quantize (nom unique)."""
-    temp_root = Path(tempfile.gettempdir()) / "SampleRod" / "break_preview"
-    temp_root.mkdir(parents=True, exist_ok=True)
+    temp_root = temp_dir("break_preview")
+    # Chaque apercu ecrit un fichier de plus : sans ce menage, le dossier
+    # grossit indefiniment jusqu'au disque plein.
+    prune_temp_dir("break_preview", keep_recent=10)
     stem = Path(source_path or "break").stem or "break"
     # Suffixe aleatoire : deux apercus du meme fichier ne s'ecrasent jamais.
     suffix = uuid.uuid4().hex[:8]
@@ -368,8 +371,10 @@ def _preview_temp_path(source_path: str, target_bpm: float) -> str:
 
 def _pattern_render_temp_path(source_path: str, target_bpm: float, seed: int) -> str:
     """Chemin d'un WAV temporaire pour un break genere (nom unique avec seed)."""
-    temp_root = Path(tempfile.gettempdir()) / "SampleRod" / "break_pattern"
-    temp_root.mkdir(parents=True, exist_ok=True)
+    temp_root = temp_dir("break_pattern")
+    # Un rendu par Generate, par Preview et par changement de BPM en direct :
+    # c'est le dossier qui grossit le plus vite, on le borne serre.
+    prune_temp_dir("break_pattern", keep_recent=30)
     stem = Path(source_path or "break").stem or "break"
     suffix = uuid.uuid4().hex[:8]
     filename = (
@@ -381,6 +386,13 @@ def _pattern_render_temp_path(source_path: str, target_bpm: float, seed: int) ->
 def _normalized_cache_key(source_path: str) -> str:
     """Cle de cache d'un fichier : son chemin normalise (casse ignoree)."""
     return os.path.normcase(os.path.normpath(str(source_path or "")))
+
+
+# Tolerance de recollement d'une correction manuelle a un hit re-analyse.
+# Les positions bougent de quelques millisecondes quand on redecoupe : on
+# retrouve le hit corrige par proximite temporelle, pas par index (les index
+# sont renumerotes a chaque analyse).
+MANUAL_LABEL_TOLERANCE_S = 0.025
 
 
 # =============================================================================
@@ -1173,6 +1185,401 @@ class DrumAnalysisService(QObject):
             self._cache_path(source_path).unlink(missing_ok=True)
         except Exception:
             pass
+
+    # ---------------------------------------------------------------------- #
+    # Editions incrementales de la liste de slices
+    # Relancer une analyse complete pour un seul marqueur coute plusieurs
+    # secondes : ces deux operations modifient le decoupage en place.
+    # ---------------------------------------------------------------------- #
+    def merge_slice_into_previous(
+        self,
+        result: DrumAnalysisResult,
+        slice_index: int,
+    ) -> DrumAnalysisResult | None:
+        """Supprime une slice en la FUSIONNANT avec celle qui la precede.
+
+        La slice retiree n'ouvre pas un trou : la precedente s'etend jusqu'a la
+        fin de celle qu'on enleve et garde sa classe. C'est le geste « ce coup
+        n'aurait pas du etre coupe en deux ».
+
+        La toute premiere slice n'a pas de precedente : elle est alors fusionnee
+        avec la suivante, qui recule son debut. Retourne None si l'index est
+        inconnu ou s'il ne reste qu'une slice.
+        """
+        slices = list(result.slices)
+        if len(slices) < 2:
+            return None
+        position = next(
+            (i for i, item in enumerate(slices) if int(item.index) == int(slice_index)),
+            None,
+        )
+        if position is None:
+            return None
+
+        removed = slices.pop(position)
+        if position > 0:
+            target = position - 1
+            slices[target] = replace(slices[target], end_s=float(removed.end_s))
+        else:
+            slices[0] = replace(slices[0], start_s=float(removed.start_s))
+        return self._rebuilt_with_slices(result, slices)
+
+    def split_slice_at(
+        self,
+        result: DrumAnalysisResult,
+        position_s: float,
+        *,
+        source_path: str | None = None,
+    ) -> DrumAnalysisResult | None:
+        """Coupe la slice qui contient `position_s` et reclasse les deux moities.
+
+        Sert quand l'utilisateur pose un marqueur : la nouvelle slice arrive a
+        sa place dans la liste et recoit un type detecte, sans re-analyser tout
+        le break. Retourne None si la position ne coupe aucune slice ou si la
+        classification echoue.
+        """
+        slices = list(result.slices)
+        if not slices:
+            return None
+        position_s = float(position_s)
+        host = next(
+            (
+                i
+                for i, item in enumerate(slices)
+                if float(item.start_s) < position_s < float(item.end_s)
+            ),
+            None,
+        )
+        if host is None:
+            return None
+        original = slices[host]
+        # Deux moities trop courtes ne donneraient rien d'exploitable.
+        if (position_s - float(original.start_s)) < 0.005 or (float(original.end_s) - position_s) < 0.005:
+            return None
+
+        audio_path = source_path or result.source_path
+        try:
+            audio, sample_rate = sf.read(audio_path, dtype="float32", always_2d=False)
+        except Exception:
+            logger.warning("Split slice: audio illisible (%s)", audio_path, exc_info=True)
+            return None
+
+        halves = (
+            (float(original.start_s), position_s),
+            (position_s, float(original.end_s)),
+        )
+        classified: list[DrumSlice] = []
+        analyzer = _load_analyzer_module()
+        for offset, (start_s, end_s) in enumerate(halves):
+            try:
+                hit = analyzer.classify_segment(audio, int(sample_rate), start_s, end_s)
+            except Exception:
+                logger.info("Split slice: classification impossible sur [%s, %s]", start_s, end_s)
+                return None
+            classified.append(
+                replace(
+                    original,
+                    index=int(original.index) + offset,
+                    start_s=float(start_s),
+                    end_s=float(end_s),
+                    label=str(hit.label),
+                    confidence=float(hit.confidence),
+                    role=str(hit.role),
+                    rhythmic_position=str(hit.rhythmic_position),
+                    secondary_labels=tuple(hit.secondary_labels),
+                    layer_score=float(hit.layer_score),
+                )
+            )
+
+        slices[host : host + 1] = classified
+        return self._rebuilt_with_slices(result, slices)
+
+    def move_slice_boundary(
+        self,
+        result: DrumAnalysisResult,
+        from_s: float,
+        to_s: float,
+        *,
+        source_path: str | None = None,
+        tolerance_s: float = 0.005,
+    ) -> DrumAnalysisResult | None:
+        """Deplace une frontiere de slice et reclasse les deux slices touchees.
+
+        Un marqueur est la frontiere entre deux slices : le bouger change la
+        fin de celle de gauche ET le debut de celle de droite. Sans ca, la
+        selection jouee depuis la liste restait sur l'ancien decoupage.
+        Retourne None si aucune frontiere ne correspond ou si le deplacement
+        ecraserait une slice voisine.
+        """
+        slices = list(result.slices)
+        if not slices:
+            return None
+        from_s = float(from_s)
+        to_s = float(to_s)
+
+        right = next(
+            (i for i, item in enumerate(slices) if abs(float(item.start_s) - from_s) <= tolerance_s),
+            None,
+        )
+        left = next(
+            (i for i, item in enumerate(slices) if abs(float(item.end_s) - from_s) <= tolerance_s),
+            None,
+        )
+        if right is None and left is None:
+            return None
+
+        # La nouvelle frontiere doit rester dans le territoire des deux slices
+        # concernees, sinon on detruirait leurs voisines.
+        lower = float(slices[left].start_s) if left is not None else 0.0
+        upper = float(slices[right].end_s) if right is not None else float(slices[left].end_s)
+        if not (lower + 0.005 <= to_s <= upper - 0.005):
+            return None
+
+        touched: list[int] = []
+        if left is not None:
+            slices[left] = replace(slices[left], end_s=to_s)
+            touched.append(left)
+        if right is not None:
+            slices[right] = replace(slices[right], start_s=to_s)
+            touched.append(right)
+
+        audio_path = source_path or result.source_path
+        try:
+            audio, sample_rate = sf.read(audio_path, dtype="float32", always_2d=False)
+        except Exception:
+            logger.warning("Move boundary: audio illisible (%s)", audio_path, exc_info=True)
+            audio = None
+            sample_rate = 0
+
+        if audio is not None:
+            analyzer = _load_analyzer_module()
+            for position in touched:
+                item = slices[position]
+                try:
+                    hit = analyzer.classify_segment(
+                        audio, int(sample_rate), float(item.start_s), float(item.end_s)
+                    )
+                except Exception:
+                    # Le contour est corrige meme si la reclassification echoue.
+                    continue
+                slices[position] = replace(
+                    item,
+                    label=str(hit.label),
+                    confidence=float(hit.confidence),
+                    role=str(hit.role),
+                    rhythmic_position=str(hit.rhythmic_position),
+                    secondary_labels=tuple(hit.secondary_labels),
+                    layer_score=float(hit.layer_score),
+                )
+
+        return self._rebuilt_with_slices(result, slices)
+
+    def _rebuilt_with_slices(
+        self,
+        result: DrumAnalysisResult,
+        slices: list[DrumSlice],
+    ) -> DrumAnalysisResult:
+        """Renumerote les slices et resynchronise les hits du prototype.
+
+        Le generateur lit `prototype_result.transient_hits` : sans cette
+        resynchronisation, il continuerait a voir l'ancien decoupage.
+        """
+        normalized = tuple(
+            replace(drum_slice, index=index)
+            for index, drum_slice in enumerate(slices, start=1)
+        )
+        raw_result = getattr(result, "prototype_result", None)
+        updated_raw = raw_result
+        if raw_result is not None:
+            try:
+                analyzer = _load_analyzer_module()
+                hits = tuple(
+                    analyzer.TransientHit(
+                        index=int(drum_slice.index),
+                        start_s=float(drum_slice.start_s),
+                        end_s=float(drum_slice.end_s),
+                        label=str(drum_slice.label),
+                        confidence=float(drum_slice.confidence),
+                        peak_db=self._peak_db_for(raw_result, drum_slice),
+                        low_ratio=0.0,
+                        mid_ratio=0.0,
+                        high_ratio=0.0,
+                        secondary_labels=tuple(drum_slice.secondary_labels),
+                        layer_score=float(drum_slice.layer_score),
+                        role=str(drum_slice.role),
+                        rhythmic_position=str(drum_slice.rhythmic_position),
+                    )
+                    for drum_slice in normalized
+                )
+                updated_raw = replace(
+                    raw_result,
+                    onset_count=len(hits),
+                    transient_hits=hits,
+                    hit_sequences=(),
+                )
+            except Exception:
+                logger.info("[DrumAnalysisService] prototype non resynchronise apres edition")
+                updated_raw = raw_result
+        return replace(
+            result,
+            onset_count=len(normalized),
+            slices=normalized,
+            prototype_result=updated_raw,
+        )
+
+    @staticmethod
+    def _peak_db_for(raw_result: Any, drum_slice: DrumSlice) -> float:
+        """Reprend le niveau mesure du hit d'origine le plus proche."""
+        best = 0.0
+        best_delta = 0.05
+        for hit in tuple(getattr(raw_result, "transient_hits", ()) or ()):
+            delta = abs(float(hit.start_s) - float(drum_slice.start_s))
+            if delta <= best_delta:
+                best = float(hit.peak_db)
+                best_delta = delta
+        return best
+
+    # ---------------------------------------------------------------------- #
+    # Corrections manuelles de classification
+    # Une analyse re-classe TOUS les hits : sans ce calque, chaque re-analyse
+    # (ou chaque redecoupage) effacait les corrections faites a la main.
+    # On les stocke donc a part du cache d'analyse — ce sont des donnees
+    # utilisateur, pas un resultat derive — et on les re-applique apres
+    # chaque analyse.
+    # Cle = position de depart du hit (en secondes), et pas son index :
+    # les index sont renumerotes des qu'on ajoute ou retire un marqueur.
+    # ---------------------------------------------------------------------- #
+    @property
+    def _manual_labels_dir(self) -> Path:
+        return Path.home() / ".samplerod" / "break_labels"
+
+    def _manual_labels_path(self, source_path: str) -> Path:
+        key = hashlib.sha256(_normalized_cache_key(source_path).encode()).hexdigest()[:20]
+        return self._manual_labels_dir / f"{key}.json"
+
+    def load_manual_labels(self, source_path: str) -> dict[float, str]:
+        """Corrections de classe enregistrees pour ce fichier : {start_s: label}."""
+        if not source_path:
+            return {}
+        try:
+            path = self._manual_labels_path(source_path)
+            if not path.exists():
+                return {}
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("Break labels lecture impossible: %s", source_path, exc_info=True)
+            return {}
+        overrides: dict[float, str] = {}
+        for entry in payload.get("overrides", ()) or ():
+            try:
+                overrides[float(entry["start_s"])] = str(entry["label"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        return overrides
+
+    def _save_manual_labels(self, source_path: str, overrides: dict[float, str]) -> None:
+        try:
+            path = self._manual_labels_path(source_path)
+            if not overrides:
+                path.unlink(missing_ok=True)
+                return
+            self._manual_labels_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "source_path": source_path,
+                "overrides": [
+                    {"start_s": round(float(start_s), 6), "label": str(label)}
+                    for start_s, label in sorted(overrides.items())
+                ],
+            }
+            path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            logger.warning("Break labels ecriture impossible: %s", source_path, exc_info=True)
+
+    def set_manual_label(self, source_path: str, start_s: float, label: str) -> None:
+        """Memorise (et persiste) la correction de classe d'un hit."""
+        if not source_path:
+            return
+        overrides = self.load_manual_labels(source_path)
+        # Remplace une correction deja posee sur le meme hit plutot que d'en
+        # empiler une seconde a quelques millisecondes d'ecart.
+        existing = self._nearest_override_key(overrides, float(start_s))
+        if existing is not None:
+            overrides.pop(existing)
+        overrides[float(start_s)] = str(label)
+        self._save_manual_labels(source_path, overrides)
+
+    def drop_manual_label(self, source_path: str, start_s: float) -> None:
+        """Oublie la correction posee sur ce hit (hit supprime, par exemple)."""
+        if not source_path:
+            return
+        overrides = self.load_manual_labels(source_path)
+        key = self._nearest_override_key(overrides, float(start_s))
+        if key is None:
+            return
+        overrides.pop(key)
+        self._save_manual_labels(source_path, overrides)
+
+    def clear_manual_labels(self, source_path: str) -> None:
+        """Oublie toutes les corrections de classe de ce fichier."""
+        self._save_manual_labels(source_path, {})
+
+    @staticmethod
+    def _nearest_override_key(overrides: dict[float, str], start_s: float) -> float | None:
+        """Correction posee sur ce hit, a la tolerance pres (None sinon)."""
+        best_key: float | None = None
+        best_delta = MANUAL_LABEL_TOLERANCE_S
+        for key in overrides:
+            delta = abs(float(key) - float(start_s))
+            if delta <= best_delta:
+                best_key = key
+                best_delta = delta
+        return best_key
+
+    def apply_manual_labels(self, result: DrumAnalysisResult) -> DrumAnalysisResult:
+        """Repose les corrections manuelles par-dessus un resultat d'analyse.
+
+        Appele apres chaque analyse : les slices ET les hits du prototype
+        (que lit le generateur) recoivent la classe choisie par l'utilisateur.
+        Retourne le resultat inchange s'il n'y a rien a appliquer.
+        """
+        if result is None:
+            return result
+        overrides = self.load_manual_labels(result.source_path)
+        if not overrides:
+            return result
+
+        changed = False
+        patched_slices = []
+        for drum_slice in result.slices:
+            key = self._nearest_override_key(overrides, float(drum_slice.start_s))
+            label = overrides[key] if key is not None else None
+            if label is None or label == drum_slice.label:
+                patched_slices.append(drum_slice)
+                continue
+            patched_slices.append(replace(drum_slice, label=label))
+            changed = True
+
+        raw_result = getattr(result, "prototype_result", None)
+        patched_raw = raw_result
+        if raw_result is not None:
+            try:
+                patched_hits = []
+                for raw_hit in tuple(getattr(raw_result, "transient_hits", ()) or ()):
+                    key = self._nearest_override_key(overrides, float(raw_hit.start_s))
+                    label = overrides[key] if key is not None else None
+                    if label is None or label == raw_hit.label:
+                        patched_hits.append(raw_hit)
+                        continue
+                    patched_hits.append(replace(raw_hit, label=label))
+                    changed = True
+                patched_raw = replace(raw_result, transient_hits=tuple(patched_hits))
+            except Exception:
+                logger.info("[DrumAnalysisService] corrections non appliquees au prototype")
+                patched_raw = raw_result
+
+        if not changed:
+            return result
+        return replace(result, slices=tuple(patched_slices), prototype_result=patched_raw)
 
     def shutdown(self) -> None:
         """Arrete tous les workers encore actifs (appele a la fermeture).

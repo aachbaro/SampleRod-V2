@@ -56,13 +56,23 @@ def _bins_factory(ctx):
     from PySide6.QtCore import QSettings
     from frontend.labo.bins_panel import LaboBinsPanel
 
-    return LaboBinsPanel(ctx.app_context, QSettings("SampleRod", "Main"))
+    panel = LaboBinsPanel(ctx.app_context, QSettings("SampleRod", "Main"))
+    # La fenetre du module affiche deja "Bins" dans sa barre de titre.
+    panel.set_title_visible(False)
+    panel.setContentsMargins(10, 8, 10, 10)
+    return panel
 
 
 def _artifacts_factory(ctx):
     from .artifact_module import ArtifactModule
 
     return ArtifactModule(ctx.app_context)
+
+
+def _settings_factory(ctx):
+    from frontend.settings_gui.settings_panel import SettingsPanelWidget
+
+    return SettingsPanelWidget(ctx.app_context)
 
 
 def build_default_registry() -> ModuleRegistry:
@@ -147,6 +157,21 @@ def build_default_registry() -> ModuleRegistry:
             renamable=False,
             duplicable=False,
             closable=False,
+        )
+    )
+    registry.register(
+        ModuleType(
+            type_id="settings",
+            label="Parametres",
+            category="PARAMETRES",
+            icon="settings",
+            factory=_settings_factory,
+            default_title="Parametres",
+            multi=False,
+            workspace_creatable=True,
+            renamable=False,
+            duplicable=False,
+            closable=True,
         )
     )
     return registry

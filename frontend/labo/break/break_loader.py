@@ -30,6 +30,7 @@ class BreakLoaderController:
             return True
         self.widget._pending_restored_markers = None
         self.widget._current_path = normalized
+        self.widget._working_path = normalized
         self.widget.file_label.setText(os.path.basename(normalized))
         self.widget._clear_analysis()
         self.widget._update_header_meta()
@@ -51,6 +52,13 @@ class BreakLoaderController:
         waveform.installEventFilter(self.widget)
         self.widget.waveform_layout.addWidget(waveform)
         self.widget._waveform_widget = waveform
+        # Poser un marqueur a la main recoupe la slice concernee et la reclasse,
+        # sans relancer l'analyse complete.
+        try:
+            waveform.markerAdded.connect(self.widget._on_marker_added)
+            waveform.markerMoved.connect(self.widget._on_marker_moved)
+        except AttributeError:
+            pass
         loader = getattr(waveform, "loader", None)
         if loader is not None:
             loader.finished.connect(self._on_waveform_loaded)

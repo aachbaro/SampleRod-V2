@@ -117,9 +117,17 @@ class BreakPlaybackController:
         self.widget._tp_active_play_path = play_path
 
     def _matches_path(self, path: str | None) -> bool:
-        if not path or not self.widget._current_path:
+        """Ce chemin designe-t-il le break courant ?
+
+        Deux chemins sont acceptes : le fichier ouvert, et le WAV temporaire
+        materialise quand la waveform a ete editee (les resultats d'analyse
+        reviennent alors estampilles avec ce dernier).
+        """
+        if not path:
             return False
-        return (
-            os.path.normcase(os.path.normpath(self.widget._current_path))
-            == os.path.normcase(os.path.normpath(path))
+        target = os.path.normcase(os.path.normpath(path))
+        candidates = (self.widget._current_path, self.widget._working_path)
+        return any(
+            candidate and os.path.normcase(os.path.normpath(candidate)) == target
+            for candidate in candidates
         )

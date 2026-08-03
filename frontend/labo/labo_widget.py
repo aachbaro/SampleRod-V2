@@ -133,7 +133,11 @@ class LaboWidget(QWidget):
         self.splitter.splitterMoved.connect(self._on_splitter_moved)
 
         self.bins_panel = LaboBinsPanel(self.app_context, self._qs)
-        self.bins_panel.setObjectName("LaboBinsPanel")
+        # Pas de renommage d'objectName ici : le panneau se style lui-meme
+        # via #LaboBinsRoot (le renommer cassait sa propre feuille de style).
+        # En mode classique le panneau reste une colonne etroite : les chips
+        # s'empilent. C'est l'hote qui borne la largeur, pas le panneau.
+        self.bins_panel.setFixedWidth(144)
 
         body_row = QHBoxLayout()
         body_row.setContentsMargins(0, 0, 0, 0)

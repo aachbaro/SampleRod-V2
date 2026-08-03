@@ -34,12 +34,16 @@ from backend.services.drum_analysis_service import (
     DEFAULT_PATTERN_TAIL_MODE,
 )
 from frontend.styles import theme
+from frontend.ui import icon_qss_url
 
 from .generator_constants import (
     DEFAULT_PITCH_SEQUENCE,
     FILL_STYLE_LABELS,
     GENERATION_PROFILE_LABELS,
     GENERATOR_MODE_LABELS,
+    PATTERN_CELL_SIZE,
+    PATTERN_ROW_LABELS,
+    PATTERN_TABLE_HEIGHT,
     PATTERN_TAIL_MODE_LABELS,
     PITCH_CURVE_OPTIONS,
     PITCH_MODE_OPTIONS,
@@ -63,19 +67,10 @@ _MOTIF_ROLE_OPTIONS: tuple = (
 )
 
 
-class _NoScrollComboBox(QComboBox):
-    def wheelEvent(self, event):
-        event.ignore()
-
-
-class _NoScrollSpinBox(QSpinBox):
-    def wheelEvent(self, event):
-        event.ignore()
-
-
-class _NoScrollDoubleSpinBox(QDoubleSpinBox):
-    def wheelEvent(self, event):
-        event.ignore()
+# Note : les combos et spins du generateur acceptent volontairement la
+# molette (changer le BPM, les bars, passer d'une option a l'autre). Le
+# panneau n'est pas dans un QScrollArea, donc il n'y a pas de conflit avec le
+# defilement de la page. Les knobs, eux, restent insensibles a la molette.
 
 
 class BreakGeneratorUIBuilder:
@@ -140,19 +135,22 @@ class BreakGeneratorUIBuilder:
         if profile_index >= 0:
             self.widget.profile_combo.setCurrentIndex(profile_index)
 
-        self.widget.bars_spin = _NoScrollSpinBox()
+        self.widget.bars_spin = QSpinBox()
         self.widget.bars_spin.setObjectName("BreakGeneratorSpin")
         self.widget.bars_spin.setRange(1, 4)
         self.widget.bars_spin.setValue(1)
-        self.widget.bars_spin.setFixedWidth(52)
+        self.widget.bars_spin.setFixedWidth(62)
+        self.widget.bars_spin.setToolTip("Nombre de mesures (molette pour changer)")
 
-        self.widget.target_bpm_spin = _NoScrollDoubleSpinBox()
+        self.widget.target_bpm_spin = QDoubleSpinBox()
         self.widget.target_bpm_spin.setObjectName("BreakGeneratorSpin")
         self.widget.target_bpm_spin.setRange(40.0, 300.0)
         self.widget.target_bpm_spin.setDecimals(1)
         self.widget.target_bpm_spin.setSingleStep(1.0)
         self.widget.target_bpm_spin.setValue(float(DEFAULT_GENERATOR_TARGET_BPM))
-        self.widget.target_bpm_spin.setFixedWidth(68)
+        # Assez large pour "300.0" + les fleches, sinon la valeur est rognee.
+        self.widget.target_bpm_spin.setFixedWidth(88)
+        self.widget.target_bpm_spin.setToolTip("BPM de preview (molette pour changer)")
 
         self.widget.seed_value = QLabel("auto")
         self.widget.seed_value.setObjectName("BreakGeneratorSeed")
@@ -262,7 +260,7 @@ class BreakGeneratorUIBuilder:
         self.widget.snare_stretch_span_slider = self._build_knob(35)
         self.widget.snare_stretch_amount_slider = self._build_knob(80)
 
-        self.widget.snare_stretch_curve_combo = _NoScrollComboBox()
+        self.widget.snare_stretch_curve_combo = QComboBox()
         self.widget.snare_stretch_curve_combo.setObjectName("BreakGeneratorCombo")
         for option in SNARE_STRETCH_CURVE_OPTIONS:
             self.widget.snare_stretch_curve_combo.addItem(option.replace("_", " ").title(), option)
@@ -304,19 +302,19 @@ class BreakGeneratorUIBuilder:
         _ptl.setContentsMargins(8, 8, 8, 8)
         _ptl.setSpacing(8)
 
-        self.widget.pitch_mode_combo = _NoScrollComboBox()
+        self.widget.pitch_mode_combo = QComboBox()
         self.widget.pitch_mode_combo.setObjectName("BreakGeneratorCombo")
         for option in PITCH_MODE_OPTIONS:
             self.widget.pitch_mode_combo.addItem(option.replace("_", " ").title(), option)
-        self.widget.pitch_scope_combo = _NoScrollComboBox()
+        self.widget.pitch_scope_combo = QComboBox()
         self.widget.pitch_scope_combo.setObjectName("BreakGeneratorCombo")
         for option in PITCH_SCOPE_OPTIONS:
             self.widget.pitch_scope_combo.addItem(option.replace("_", " ").capitalize(), option)
-        self.widget.pitch_scale_combo = _NoScrollComboBox()
+        self.widget.pitch_scale_combo = QComboBox()
         self.widget.pitch_scale_combo.setObjectName("BreakGeneratorCombo")
         for option in PITCH_SCALE_OPTIONS:
             self.widget.pitch_scale_combo.addItem(option.capitalize(), option)
-        self.widget.pitch_root_combo = _NoScrollComboBox()
+        self.widget.pitch_root_combo = QComboBox()
         self.widget.pitch_root_combo.setObjectName("BreakGeneratorCombo")
         for index, note in enumerate(PITCH_NOTE_NAMES):
             self.widget.pitch_root_combo.addItem(note, index)
@@ -324,11 +322,11 @@ class BreakGeneratorUIBuilder:
         self.widget.pitch_range_max_spin = self._build_double_spin(-24.0, 24.0, 1.0, 12.0)
         self.widget.pitch_sequence_input = QLineEdit(DEFAULT_PITCH_SEQUENCE)
         self.widget.pitch_sequence_input.setObjectName("BreakGeneratorInput")
-        self.widget.pitch_rate_combo = _NoScrollComboBox()
+        self.widget.pitch_rate_combo = QComboBox()
         self.widget.pitch_rate_combo.setObjectName("BreakGeneratorCombo")
         for option in PITCH_RATE_OPTIONS:
             self.widget.pitch_rate_combo.addItem(option.replace("_", " ").capitalize(), option)
-        self.widget.pitch_curve_combo = _NoScrollComboBox()
+        self.widget.pitch_curve_combo = QComboBox()
         self.widget.pitch_curve_combo.setObjectName("BreakGeneratorCombo")
         for option in PITCH_CURVE_OPTIONS:
             self.widget.pitch_curve_combo.addItem(option.replace("_", " ").capitalize(), option)
@@ -398,7 +396,7 @@ class BreakGeneratorUIBuilder:
         tail_mode_index = self.widget.tail_mode_combo.findData(DEFAULT_PATTERN_TAIL_MODE)
         if tail_mode_index >= 0:
             self.widget.tail_mode_combo.setCurrentIndex(tail_mode_index)
-        self.widget.sequence_max_len_spin = _NoScrollSpinBox()
+        self.widget.sequence_max_len_spin = QSpinBox()
         self.widget.sequence_max_len_spin.setObjectName("BreakGeneratorSpin")
         self.widget.sequence_max_len_spin.setRange(1, 8)
         self.widget.sequence_max_len_spin.setValue(4)
@@ -440,25 +438,43 @@ class BreakGeneratorUIBuilder:
         self.widget.pattern_summary = QLabel("Aucun pattern genere.")
         self.widget.pattern_summary.setObjectName("BreakSectionHint")
         self.widget.pattern_summary.setWordWrap(True)
-        self.widget.pattern_interaction_label = QLabel(
-            "Header = play from step | Shift+header = loop range | Anchor = type | Lock = keep step | Event = one-shot"
-        )
+        self.widget.pattern_interaction_label = QLabel("")
         self.widget.pattern_interaction_label.setObjectName("BreakGeneratorInfo")
         self.widget.pattern_interaction_label.setWordWrap(True)
 
-        self.widget.pattern_table = QTableWidget(6, 16)
+        # 3 lignes seulement : velocite / source / FX partent en tooltip de la
+        # case Event, ce qui rend la grille carree et beaucoup plus compacte.
+        self.widget.pattern_table = QTableWidget(3, 16)
         self.widget.pattern_table.setObjectName("BreakGeneratorTable")
         self.widget.pattern_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.widget.pattern_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.widget.pattern_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.widget.pattern_table.setAlternatingRowColors(False)
-        self.widget.pattern_table.setWordWrap(True)
-        self.widget.pattern_table.setVerticalHeaderLabels(("Anchor", "Lock", "Event", "Vel", "Src", "FX"))
-        self.widget.pattern_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.widget.pattern_table.setWordWrap(False)
+        self.widget.pattern_table.setVerticalHeaderLabels(PATTERN_ROW_LABELS)
+        self.widget.pattern_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.widget.pattern_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self.widget.pattern_table.horizontalHeader().setMinimumSectionSize(56)
-        self.widget.pattern_table.setMinimumHeight(340)
-        self.widget.pattern_table.setMaximumHeight(520)
+        self.widget.pattern_table.horizontalHeader().setMinimumSectionSize(PATTERN_CELL_SIZE)
+        self.widget.pattern_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.widget.pattern_table.setToolTip(
+            "Clic gauche sur un Hit = jouer ce coup seul\n"
+            "Clic droit sur un Hit = ouvrir la slice dans Decoupage\n"
+            "Numeros : clic = jouer depuis ce step, glisser = selectionner une\n"
+            "plage et la boucler, clic droit = figer ou exporter la selection\n"
+            "Anc = imposer un type | Lock = garder ce step au prochain Generer"
+        )
+        self.widget.pattern_table.setFixedHeight(PATTERN_TABLE_HEIGHT)
+        self.widget.pattern_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.widget.pattern_table.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        # Le defilement suit le playhead step par step, pas par a-coups d'un
+        # ecran entier.
+        self.widget.pattern_table.setHorizontalScrollMode(
+            QTableWidget.ScrollMode.ScrollPerPixel
+        )
 
         pattern_layout.addWidget(self.widget.pattern_title)
         pattern_layout.addWidget(self.widget.pattern_summary)
@@ -518,11 +534,11 @@ class BreakGeneratorUIBuilder:
 
         steps_row.addSpacing(8)
         steps_row.addWidget(_fl("Len :"))
-        w.motif_length_spin = _NoScrollSpinBox()
+        w.motif_length_spin = QSpinBox()
         w.motif_length_spin.setObjectName("BreakGeneratorSpin")
         w.motif_length_spin.setRange(4, 8)
         w.motif_length_spin.setValue(8)
-        w.motif_length_spin.setFixedWidth(48)
+        w.motif_length_spin.setFixedWidth(58)
         steps_row.addWidget(w.motif_length_spin)
         steps_row.addStretch()
         editor_l.addLayout(steps_row)
@@ -539,16 +555,16 @@ class BreakGeneratorUIBuilder:
         props_row.addWidget(w.motif_name_input)
 
         props_row.addWidget(_fl("Base :"))
-        w.motif_base_prob_spin = _NoScrollSpinBox()
+        w.motif_base_prob_spin = QSpinBox()
         w.motif_base_prob_spin.setObjectName("BreakGeneratorSpin")
         w.motif_base_prob_spin.setRange(0, 100)
         w.motif_base_prob_spin.setValue(60)
         w.motif_base_prob_spin.setSuffix("%")
-        w.motif_base_prob_spin.setFixedWidth(62)
+        w.motif_base_prob_spin.setFixedWidth(76)
         props_row.addWidget(w.motif_base_prob_spin)
 
         props_row.addWidget(_fl("Rôle :"))
-        w.motif_role_combo = _NoScrollComboBox()
+        w.motif_role_combo = QComboBox()
         w.motif_role_combo.setObjectName("BreakGeneratorCombo")
         for _key, _label in _MOTIF_ROLE_OPTIONS:
             w.motif_role_combo.addItem(_label, _key)
@@ -645,7 +661,7 @@ class BreakGeneratorUIBuilder:
         return frame
 
     def _build_combo(self, labels: dict[str, str]) -> QComboBox:
-        combo = _NoScrollComboBox()
+        combo = QComboBox()
         combo.setObjectName("BreakGeneratorCombo")
         for key, label in labels.items():
             combo.addItem(label, key)
@@ -654,7 +670,7 @@ class BreakGeneratorUIBuilder:
     def _build_double_spin(
         self, minimum: float, maximum: float, step: float, value: float
     ) -> QDoubleSpinBox:
-        spin = _NoScrollDoubleSpinBox()
+        spin = QDoubleSpinBox()
         spin.setObjectName("BreakGeneratorSpin")
         spin.setRange(float(minimum), float(maximum))
         spin.setSingleStep(float(step))
@@ -685,6 +701,10 @@ class BreakGeneratorUIBuilder:
 
     def _apply_styles(self) -> None:
         p = theme.manager.p
+        # Fleches des combos / spins : Qt n'affiche plus ses indicateurs natifs
+        # des que le widget est style, on les fournit donc en image.
+        chevron_down = icon_qss_url("chevron-down", 12, p.TEXT_MUTED) or "none"
+        chevron_up = icon_qss_url("chevron-up", 12, p.TEXT_MUTED) or "none"
         self.widget.setStyleSheet(
             f"""
             QWidget#BreakGeneratorRoot {{
@@ -742,10 +762,10 @@ class BreakGeneratorUIBuilder:
                 background: {p.BG_MEDIUM};
                 color: {p.TEXT_MUTED};
                 border: 1px solid {p.BORDER};
-                border-radius: 10px;
-                min-height: 28px;
-                max-height: 28px;
-                font-size: 10px;
+                border-radius: 5px;
+                min-height: 22px;
+                max-height: 22px;
+                font-size: 9px;
                 font-weight: 700;
                 padding: 0;
             }}
@@ -768,10 +788,10 @@ class BreakGeneratorUIBuilder:
                 background: {p.BG_MEDIUM};
                 color: {p.TEXT_MUTED};
                 border: 1px solid {p.BORDER};
-                border-radius: 10px;
-                min-height: 28px;
-                max-height: 28px;
-                font-size: 10px;
+                border-radius: 5px;
+                min-height: 22px;
+                max-height: 22px;
+                font-size: 9px;
                 font-weight: 700;
                 padding: 0;
             }}
@@ -795,6 +815,57 @@ class BreakGeneratorUIBuilder:
                 border-radius: 6px;
                 padding: 4px 6px;
                 min-height: 26px;
+            }}
+            /* Fleches : Qt ne dessine plus les indicateurs natifs des qu'on
+               style le widget. On les redessine en triangles CSS. */
+            QComboBox#BreakGeneratorCombo::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 16px;
+                border: none;
+                background: transparent;
+            }}
+            QComboBox#BreakGeneratorCombo::down-arrow {{
+                image: {chevron_down};
+                width: 11px;
+                height: 11px;
+                margin-right: 3px;
+            }}
+            QSpinBox#BreakGeneratorSpin::up-button,
+            QDoubleSpinBox#BreakGeneratorSpin::up-button {{
+                subcontrol-origin: border;
+                subcontrol-position: top right;
+                width: 16px;
+                border: none;
+                border-top-right-radius: 6px;
+                background: transparent;
+            }}
+            QSpinBox#BreakGeneratorSpin::down-button,
+            QDoubleSpinBox#BreakGeneratorSpin::down-button {{
+                subcontrol-origin: border;
+                subcontrol-position: bottom right;
+                width: 16px;
+                border: none;
+                border-bottom-right-radius: 6px;
+                background: transparent;
+            }}
+            QSpinBox#BreakGeneratorSpin::up-button:hover,
+            QDoubleSpinBox#BreakGeneratorSpin::up-button:hover,
+            QSpinBox#BreakGeneratorSpin::down-button:hover,
+            QDoubleSpinBox#BreakGeneratorSpin::down-button:hover {{
+                background: {p.BG_HOVER};
+            }}
+            QSpinBox#BreakGeneratorSpin::up-arrow,
+            QDoubleSpinBox#BreakGeneratorSpin::up-arrow {{
+                image: {chevron_up};
+                width: 10px;
+                height: 10px;
+            }}
+            QSpinBox#BreakGeneratorSpin::down-arrow,
+            QDoubleSpinBox#BreakGeneratorSpin::down-arrow {{
+                image: {chevron_down};
+                width: 10px;
+                height: 10px;
             }}
             QCheckBox {{
                 color: {p.TEXT};
@@ -825,6 +896,25 @@ class BreakGeneratorUIBuilder:
                 border: none;
                 border-bottom: 1px solid {p.BORDER};
                 padding: 4px 6px;
+            }}
+            /* Zone du header au-dela de la derniere colonne + coin haut-gauche :
+               sans ca Qt les peint en clair et ca ressort violemment. */
+            QHeaderView {{
+                background: {p.BG_MEDIUM};
+                border: none;
+            }}
+            QTableCornerButton::section {{
+                background: {p.BG_CARD};
+                border: none;
+                border-bottom: 1px solid {p.BORDER};
+            }}
+            QTableWidget#BreakGeneratorTable QHeaderView::section:vertical {{
+                padding: 0 6px;
+                font-size: 10px;
+            }}
+            QTableWidget#BreakGeneratorTable QHeaderView::section:horizontal {{
+                padding: 3px 0;
+                font-size: 10px;
             }}
             QTabWidget#BreakGeneratorTabs::pane {{
                 border: 1px solid {p.BORDER};

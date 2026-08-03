@@ -89,6 +89,7 @@ class WaveformInteractionsController:
 
             # Sinon, on crée la région comme avec Ctrl+double-clic en mode non-marker
             w._handle_ctrl_double_click(vb, event)
+            w.region_controller.arm_selection_drag(event.scenePos())
             return True
 
 
@@ -107,7 +108,23 @@ class WaveformInteractionsController:
 
             # Sinon, on appelle la nouvelle méthode
             w._handle_ctrl_double_click(vb, event)
+            # Garder le bouton enfonce et glisser = drag de la slice, comme
+            # depuis la liste de marqueurs.
+            w.region_controller.arm_selection_drag(event.scenePos())
             return True
+
+        # 1 bis) Glisser apres un Ctrl+double-clic → drag de la selection
+        if (not disable_region) and event.type() == QEvent.GraphicsSceneMouseMove \
+        and (event.buttons() & Qt.MouseButton.LeftButton) \
+        and getattr(w, "_selection_drag_armed", False):
+            if w.region_controller.maybe_start_selection_drag(event.scenePos()):
+                return True
+            return False
+
+        # 1 ter) Relacher sans avoir bouge : on desarme, c'etait juste un clic
+        if event.type() == QEvent.GraphicsSceneMouseRelease \
+        and getattr(w, "_selection_drag_armed", False):
+            w.region_controller.disarm_selection_drag()
 
         # 0) Maj + clic gauche DANS le corps (pas sur les handles) → début du déplacement
         if (not disable_region) and event.type() == QEvent.GraphicsSceneMousePress \
