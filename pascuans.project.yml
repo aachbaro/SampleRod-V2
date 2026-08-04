@@ -1,0 +1,36 @@
+schema_version: "1.0"
+name: samplerod
+type: desktop-app
+status: active
+repository:
+  remote: git@github.com:aachbaro/SampleRod-V2.git
+  default_branch: main
+presence:
+  local-desktop: required
+  home-server: forbidden
+execution:
+  requires: [windows, gui, audio, python]
+  allowed_capabilities: [windows, gui, audio, python]
+  server_safe_tasks: []
+validation:
+  - name: tests
+    type: command
+    command: "venv/Scripts/python.exe -m unittest discover -s tests -t ."
+    requires: [windows, python]
+  - name: gui-audio-smoke
+    type: manual
+    launch_command: "launch-samplerod.bat"
+    requires: [windows, gui, audio]
+    timeout_seconds: 30
+    completion:
+      user_confirmation: true
+ai:
+  implementer: claude
+  reviewer: codex
+  allow_auto_commit: false
+  allow_auto_push: false
+  allow_auto_merge: false
+  allow_auto_deploy: false
+deployment: null
+standards: []
+shared: {}
