@@ -104,6 +104,7 @@ class SampleCard(QWidget):
         self.interactions = SampleCardInteractions(self)
         self.selection = SampleCardSelection(self)
         self.status = SampleCardStatus(self)
+        self.status.refresh_display()
         self._build_shortcuts()
         self._set_waveform_shortcuts_enabled(True)
         self.update_scale_badge()
@@ -169,6 +170,14 @@ class SampleCard(QWidget):
         if self.interactions.mouse_move(event):
             return
         super().mouseMoveEvent(event)
+
+    def enterEvent(self, event):
+        self.interactions.set_checkbox_revealed(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.interactions.set_checkbox_revealed(self.checkbox.isChecked())
+        super().leaveEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         # Double-clic uniquement si la cible n'est pas interactive
@@ -354,6 +363,31 @@ class SampleCard(QWidget):
             SampleCardUIBuilder._refresh_tooltip(self)
         return super().event(e)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        width = self.width()
+        name_column_width = 180 if width >= 520 else (145 if width >= 440 else 110)
+        self.name_slot.setFixedWidth(name_column_width)
+        entry = self.playback._entry() if hasattr(self, "playback") else None
+        actionable = bool(entry and str(getattr(entry.status, "value", entry.status)) != "normal")
+        self.length_label.setVisible(width >= 330)
+        self.key_badge.setVisible(
+            width >= 430 and bool(getattr(self.sample, "dominant_note", None))
+        )
+        self.key_slot.setVisible(width >= 430)
+        self.status_label.setVisible(actionable)
+        self.status_slot.setVisible(width >= 500 or actionable)
+        self.playback_slider.setVisible(width >= 400)
+        full_name = str(getattr(self, "_recent_full_name", self.sample.name))
+        checkbox_width = max(0, self.checkbox.maximumWidth())
+        available = max(32, name_column_width - checkbox_width - 8)
+        self.name_label.setText(
+            self.name_label.fontMetrics().elidedText(
+                full_name, Qt.TextElideMode.ElideMiddle, available
+            )
+        )
+        self.name_label.setToolTip(full_name)
+
     # ---- Move / combobox
     def move_sample(self, index: int):
         self.mover.move_sample(index)
@@ -384,7 +418,7 @@ class SampleCard(QWidget):
                 self.concatPreviewHoverChanged.emit(
                     self.sample.id, False, self.concat_prev_id
                 )
-        if self.interactions.event_filter(watched, event):
+        if hasattr(self, "interactions") and self.interactions.event_filter(watched, event):
             return True
         return super().eventFilter(watched, event)
 

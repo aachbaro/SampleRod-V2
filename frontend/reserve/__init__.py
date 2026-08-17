@@ -16,6 +16,11 @@
 # -----------------------------------------------------------------------------
 
 from .reserve_actions import ReserveActions
+from .reserve_preview import (
+    ReservePreviewController,
+    ReservePreviewKey,
+    ensure_reserve_preview,
+)
 from .reserve_entry import (
     ReserveEntry,
     STATUS_ALL,
@@ -32,10 +37,32 @@ from .reserve_entry import (
     reserve_status_label,
     reserve_status_tone,
 )
+from .reserve_capabilities import ReserveCapabilities, reserve_capabilities_for
+from .reserve_inspector import ReserveInspector
+from .reserve_status import ReserveTechnicalStatus
+from .reserve_filters import ReserveFilterController, ReserveFilterState
+from .reserve_formatters import (
+    format_reserve_date,
+    format_reserve_duration,
+    format_reserve_clock_duration,
+    format_reserve_rms,
+    format_reserve_scale,
+    format_reserve_size,
+    format_reserve_status,
+    reserve_date_sort_value,
+)
 
 __all__ = [
     "ReserveActions",
+    "ReservePreviewController",
+    "ReservePreviewKey",
+    "ensure_reserve_preview",
     "ReserveEntry",
+    "ReserveCapabilities",
+    "ReserveInspector",
+    "ReserveTechnicalStatus",
+    "ReserveFilterController",
+    "ReserveFilterState",
     "STATUS_ALL",
     "STATUS_MISSING",
     "STATUS_NEEDS_ANALYSIS",
@@ -48,5 +75,14 @@ __all__ = [
     "reserve_entry_matches_status",
     "reserve_status_badge_stylesheet",
     "reserve_status_label",
+    "reserve_capabilities_for",
+    "format_reserve_date",
+    "format_reserve_duration",
+    "format_reserve_clock_duration",
+    "format_reserve_rms",
+    "format_reserve_scale",
+    "format_reserve_size",
+    "format_reserve_status",
+    "reserve_date_sort_value",
     "reserve_status_tone",
 ]

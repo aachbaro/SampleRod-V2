@@ -61,6 +61,8 @@ from backend.services.recorder_service import RecorderService
 from backend.services.settings_service import SettingsService
 from backend.services.sample_service import SampleService
 from backend.services.sample_service import IntegrityCheckWorker
+from backend.services.reserve_mutation_service import ReserveMutationService
+from backend.services.reserve_import_service import ReserveImportService
 from backend.services.notification_service import NotificationService
 from backend.services.directory_service import DirectoryService
 from backend.services.remote_control_service import RemoteControlService
@@ -98,6 +100,8 @@ class AppContext:
 
         # Service de gestion des samples (stockage, import, etc.)
         self.sample_store = SampleService(self)
+        self.reserve_mutations = ReserveMutationService(self)
+        self.reserve_imports = ReserveImportService(self.sample_store)
 
         # Service de capture d'ecran (optionnel via settings)
         self.screenshots = ScreenshotService(self)

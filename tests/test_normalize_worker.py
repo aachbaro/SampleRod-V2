@@ -9,7 +9,9 @@ from unittest import mock
 import numpy as np
 import soundfile as sf
 
-from backend.models.normalize_worker import NormalizeWorker, _apply_rms_normalization
+from backend.models.normalize_worker import (
+    NormalizeWorker, _apply_rms_normalization, supports_in_place_normalization,
+)
 
 
 class _FakeMeter:
@@ -26,6 +28,11 @@ class _FakePyLoudnorm:
 
 
 class NormalizeWorkerTests(unittest.TestCase):
+    def test_in_place_normalization_is_limited_to_wav_container(self):
+        self.assertTrue(supports_in_place_normalization("sample.wav"))
+        self.assertFalse(supports_in_place_normalization("sample.mp3"))
+        self.assertFalse(supports_in_place_normalization("sample.flac"))
+
     def test_rms_normalization_ignores_empty_audio(self):
         empty = np.empty((0, 1), dtype=np.float32)
         normalized = _apply_rms_normalization(empty, -16.0)

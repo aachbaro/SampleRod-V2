@@ -621,6 +621,56 @@ Suivi chronologique des lots livrés (checkpoints poussés sur `feature/gui-refa
 - **Couverture** : `tests/test_waveform_grid_live.py` (40), dont trois verrous
   de performance et un fil-piège qui échoue si un refresh découpe l'audio.
 
+### Magnétisme des fenêtres — phases 1 à 4 (4 août 2026)
+- **Plan et recherche** : [RECHERCHE_MAGNETISME_FENETRES.md](RECHERCHE_MAGNETISME_FENETRES.md).
+- **`frontend/modular/layout/`** : `geometry.py` et `snap_engine.py` sont
+  **purs, sans un seul import Qt** — un test échoue si le paquet en tire un.
+  C'est ce qui rend seuils, priorités et égalités testables sans GUI (58 tests
+  en 0,3 s).
+- **Convention semi-ouverte** (`right = x + w`) : `QRect.right()` renvoie
+  `x + w - 1`, et mélanger les deux donnerait des accolements à 7 px au lieu
+  de 8. `rect_from_qrect()` est le seul pont, et un test le vérifie.
+- **Priorité par PROXIMITÉ**, pas par type : un bord d'écran à 2 px l'emporte
+  sur une fenêtre à 5 px ; à distance égale la fenêtre gagne ; la grille ne
+  comble qu'un axe resté libre.
+- **Deux concepts distincts** : `geometryChanged` (neutre — mémoire et
+  persistance) et `interactionStarted/Finished` (le geste). Le magnétisme
+  n'écoute **que** le second, sinon un `setGeometry` programmatique passerait
+  pour un geste.
+- **`nativeEvent` strictement passif** : observe `WM_ENTERSIZEMOVE` /
+  `WM_EXITSIZEMOVE`, ignore `WM_MOVING`/`WM_SIZING`, ne consomme jamais,
+  délègue toujours à `super()`, capture toute exception.
+- **Classification déplacement / redimensionnement** : les deux gestes
+  partagent les mêmes messages Win32. Redimensionner seul ne corrige jamais la
+  position ; un geste combiné ne snappe que `x`/`y`.
+- **Persistance** : mémoire immédiate, écriture disque groupée à 500 ms. La
+  géométrie n'était capturée qu'à la fermeture d'une fenêtre — un arrêt brutal
+  perdait les positions. `WorkspaceWindow` persiste enfin la sienne
+  (`modular_workspace_geometry_v1`), elle repartait à 320×620 à chaque
+  lancement.
+- **Couverture** : 151 tests (`test_layout_geometry`, `test_snap_engine`,
+  `test_move_lifecycle`, `test_layout_manager`), dont le décodage d'une vraie
+  structure `MSG` ctypes.
+- **Quadrillage de repérage** (`backdrop.py`) : lignes sur le fond global,
+  basculables depuis l'orchestrateur (clé `modular_grid_overlay_v1`). Dessiné
+  par un **carreau répété nativement par Qt** — tracer les centaines de lignes
+  à la main coûterait cher à chaque repeint. `grid_brush_origin()` décale le
+  pavage pour qu'il tombe sur la grille **globale** : sans cela l'indicateur
+  mentirait dès qu'un écran secondaire place l'origine du bureau virtuel en
+  négatif. Le quadrillage s'affichant *sur* le fond, l'activer allume le fond
+  au besoin.
+- **Espacement réglable** (`frontend/settings_gui/modular_grid_settings.py`,
+  clé `modular_grid_multiplier_v1`) : ×1 / ×2 / ×4 / ×8, soit 8 / 16 / 32 / 64 px
+  au pas de snap par défaut, ×4 par défaut. **Un multiplicateur et non une
+  taille libre** : le quadrillage reste ainsi toujours un multiple du pas de
+  magnétisme, donc chaque ligne affichée marque une position où une fenêtre
+  s'accroche vraiment. Une taille libre (20 px face à un snap de 8) tracerait
+  des lignes trompeuses. La section n'apparaît que dans l'atelier modulaire —
+  `SettingsPanelWidget` la masque quand aucun `WindowManager` n'est fourni.
+- **Reste à faire** : phases 5 à 8 (réglages exposés, magnétisme du
+  redimensionnement, guides d'alignement pendant le geste, dispositions
+  nommées).
+
 ### À suivre
 - Polir l'UI de **Break / Compositeur / Artefacts** pour finir d'éliminer les
   derniers boutons texte et anciens patterns visuels.

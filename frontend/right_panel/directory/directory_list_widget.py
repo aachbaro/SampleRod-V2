@@ -25,6 +25,7 @@ from PySide6.QtCore import QSize, QTimer, Qt
 from PySide6.QtWidgets import QListWidget
 
 from . import directory_dnd
+from frontend.dragdrop import DropAcceptance, DropAction, describe_drop, drag_controller
 
 logger = logging.getLogger("directory_list_widget")
 
@@ -45,11 +46,24 @@ class DirectoryListWidget(QListWidget):
         logger.info("[DirectoryListWidget] Initialisation DnD (start)")
         self.setAcceptDrops(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Item widgets handle pointer clicks themselves.  This guard reserves
+        # QListWidget's current-item signal for explicit keyboard navigation;
+        # native hover/current changes must never feed the Reserve inspector.
+        self._keyboard_selection_in_progress = False
+        self._drop_target_id = f"directory-list:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id, self.viewport(),
+            lambda payload: DropAcceptance.accept(
+                DropAction.COPY_TO_DIRECTORY,
+                describe_drop(DropAction.COPY_TO_DIRECTORY, payload),
+            ),
+        )
         logger.info("[DirectoryListWidget] DnD target ready (acceptDrops=True)")
 
     # ------------------------------------------------------------------ DnD
     def dragEnterEvent(self, event):
         if directory_dnd.accepts(event.mimeData()):
+            drag_controller().enter_target(self._drop_target_id, event.mimeData())
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -57,7 +71,12 @@ class DirectoryListWidget(QListWidget):
     def dragMoveEvent(self, event):
         self.dragEnterEvent(event)
 
+    def dragLeaveEvent(self, event):
+        drag_controller().leave_target(self._drop_target_id)
+        event.accept()
+
     def dropEvent(self, event):
+        drag_controller().finish_drag()
         logger.info(
             "[DirectoryListWidget] drop (formats=%s)",
             list(event.mimeData().formats()),
@@ -69,6 +88,11 @@ class DirectoryListWidget(QListWidget):
 
     def keyPressEvent(self, event):
         key = event.key()
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.AltModifier and key == Qt.Key.Key_Left:
+            self.parent_widget.go_to_parent_directory()
+            event.accept()
+            return
         if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
             # Move selection to prev/next selectable row
             current = self.currentRow()
@@ -77,7 +101,11 @@ class DirectoryListWidget(QListWidget):
             while 0 <= target < self.count():
                 item = self.item(target)
                 if item is not None and item.flags() & Qt.ItemFlag.ItemIsSelectable:
-                    self.setCurrentRow(target)
+                    self._keyboard_selection_in_progress = True
+                    try:
+                        self.setCurrentRow(target)
+                    finally:
+                        self._keyboard_selection_in_progress = False
                     break
                 target += direction
             event.accept()

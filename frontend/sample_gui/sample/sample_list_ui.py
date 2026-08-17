@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QMenu,
     QLabel,
+    QSizePolicy,
 )
 
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
@@ -68,20 +69,29 @@ class SampleListUIBuilder:
         w.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         panel_layout.addWidget(w.toolbar)
 
+        w.recent_title = QLabel("")
+        w.recent_title.setObjectName("RecentSectionTitle")
+        w.toolbar.addWidget(w.recent_title)
+        spacer = QWidget()
+        spacer.setObjectName("SampleToolbarSpacer")
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        w.toolbar.addWidget(spacer)
+
         w.add_files_btn = None
 
-        w.select_all_btn = self._make_round_btn("check", "Tout cocher")
+        w.select_all_btn = self._make_round_btn("check", "Sélectionner cette page")
         w.deselect_all_btn = self._make_round_btn("x", "Tout decocher")
         w.select_all_btn.clicked.connect(w.onSelectAll)
         w.deselect_all_btn.clicked.connect(w.onDeselectAll)
         w.toolbar.addWidget(w.select_all_btn)
+        w.deselect_all_btn.setToolTip("Désélectionner cette page")
         w.toolbar.addWidget(w.deselect_all_btn)
 
         w.toolbar.addSeparator()
 
         w.bulk_archive_act = QAction(
             themed_icon("x", size=16, color="#bdbdbd"),
-            "Retirer de l'historique",
+            "Désindexer",
             w,
         )
         w.bulk_archive_act.setEnabled(False)
@@ -111,17 +121,59 @@ class SampleListUIBuilder:
         w.bulk_normalize_act.setEnabled(False)
         w.bulk_normalize_act.triggered.connect(w.bulkNormalize)
 
+        w.bulk_analyze_act = QAction(
+            themed_icon("music", size=16, color="#58c7d4"),
+            "Analyser la gamme de la sélection",
+            w,
+        )
+        w.bulk_analyze_act.setEnabled(False)
+        w.bulk_analyze_act.triggered.connect(
+            lambda: getattr(w, "bulkAnalyzeScale", lambda: None)()
+        )
+
         w.actions_menu = QMenu(w)
         w.actions_menu.addAction(w.bulk_archive_act)
         w.actions_menu.addAction(w.bulk_delete_act)
         w.actions_menu.addAction(w.bulk_move_act)
         w.actions_menu.addAction(w.bulk_normalize_act)
+        w.actions_menu.addAction(w.bulk_analyze_act)
 
         w.actions_btn = self._make_round_btn("dots-vertical", "Actions selection")
-        w.actions_btn.setMenu(w.actions_menu)
-        w.actions_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        w.actions_btn.setObjectName("RecentActionsMenuButton")
+        # Ouverture manuelle : pas de menu attache au QToolButton, donc Qt ne
+        # dessine aucun petit chevron redondant sous les trois points.
+        w.actions_btn.clicked.connect(
+            lambda: w.actions_menu.exec(
+                w.actions_btn.mapToGlobal(w.actions_btn.rect().bottomLeft())
+            )
+        )
         w.toolbar.addWidget(w.actions_btn)
-        w.toolbar.setVisible(False)
+        w.toolbar.setVisible(True)
+
+        w.bulk_bar = QWidget()
+        w.bulk_bar.setObjectName("RecentBulkBar")
+        bulk_layout = QHBoxLayout(w.bulk_bar)
+        bulk_layout.setContentsMargins(8, 4, 8, 4)
+        bulk_layout.setSpacing(6)
+        w.bulk_count_label = QLabel("0 sélectionné")
+        w.bulk_count_label.setObjectName("RecentBulkCount")
+        bulk_layout.addWidget(w.bulk_count_label)
+        bulk_layout.addStretch(1)
+        w.bulk_buttons = []
+        for text, action in (
+            ("Analyser", w.bulk_analyze_act),
+            ("Normaliser", w.bulk_normalize_act),
+            ("Déplacer", w.bulk_move_act),
+            ("Désindexer", w.bulk_archive_act),
+            ("Supprimer", w.bulk_delete_act),
+        ):
+            button = QPushButton(text)
+            button.setObjectName("RecentBulkButton")
+            button.clicked.connect(action.trigger)
+            bulk_layout.addWidget(button)
+            w.bulk_buttons.append(button)
+        w.bulk_bar.hide()
+        panel_layout.addWidget(w.bulk_bar)
 
         # ---- Drag & drop enabled
         w.setAcceptDrops(True)
@@ -133,8 +185,8 @@ class SampleListUIBuilder:
         w.content_widget = QWidget()
         w.content_widget.setObjectName("SampleListContent")
         w.content_layout = QVBoxLayout(w.content_widget)
-        w.content_layout.setSpacing(10)
-        w.content_layout.setContentsMargins(10, 10, 10, 10)
+        w.content_layout.setSpacing(2)
+        w.content_layout.setContentsMargins(4, 4, 4, 4)
         w.scroll_area.setWidget(w.content_widget)
         panel_layout.addWidget(w.scroll_area)
 
@@ -179,7 +231,7 @@ class SampleListUIBuilder:
                 background-color: {p.BG_DARK};
             }}
             QWidget#SampleListPanel {{
-                background-color: {p.BG_MEDIUM};
+                background-color: transparent;
                 border: 1px solid {p.BORDER_LIGHT};
                 border-radius: 10px;
             }}
@@ -189,10 +241,19 @@ class SampleListUIBuilder:
                 spacing: 6px;
                 padding: 6px 8px 4px 8px;
             }}
+            QToolBar#SampleToolbar QWidget {{
+                background: transparent;
+                border: none;
+            }}
             QToolBar#SampleToolbar::separator {{
                 background: {p.BORDER};
                 width: 1px;
                 margin: 0 6px;
+            }}
+            QToolButton#RecentActionsMenuButton::menu-indicator {{
+                image: none;
+                width: 0px;
+                height: 0px;
             }}
             QScrollArea#SampleScroll {{
                 background: transparent;
@@ -204,6 +265,12 @@ class SampleListUIBuilder:
             QLabel#PaginationLabel {{
                 color: {p.TEXT_MUTED};
             }}
+            QLabel#RecentSectionTitle {{ background:transparent; color:{p.TEXT_MUTED}; font-size:10px; font-weight:700; }}
+            QWidget#SampleToolbarSpacer {{ background:transparent; border:none; }}
+            QWidget#RecentBulkBar {{ background:{p.BG_CARD}; border:1px solid {p.BORDER}; border-radius:8px; }}
+            QLabel#RecentBulkCount {{ color:{p.TEXT}; font-weight:600; }}
+            QPushButton#RecentBulkButton {{ background:transparent; color:{p.TEXT}; border:1px solid {p.BORDER}; border-radius:6px; padding:3px 7px; }}
+            QPushButton#RecentBulkButton:hover {{ background:{p.BG_HOVER}; }}
             QMenu {{
                 background: {p.BG_MEDIUM};
                 color: {p.TEXT};

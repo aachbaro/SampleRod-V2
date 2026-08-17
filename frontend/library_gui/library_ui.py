@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QSplitter,
     QTableWidget,
+    QToolButton,
     QTreeWidget,
     QVBoxLayout,
     QWidget,
@@ -115,11 +116,24 @@ def build_library_widget_ui(widget) -> None:
     table_layout.setContentsMargins(8, 8, 8, 8)
     table_layout.setSpacing(8)
 
-    widget.table_title = QLabel("Samples indexes")
+    table_header = QHBoxLayout()
+    table_header.setContentsMargins(0, 0, 0, 0)
+    table_header.setSpacing(6)
+    widget.table_title = QLabel("Samples indexés")
     widget.table_title.setObjectName("LibrarySectionTitle")
-    widget.table = QTableWidget(0, 8)
+    widget.columns_button = IconButton(
+        "grid", tooltip="Colonnes visibles", size="s", parent=widget.table_panel
+    )
+    widget.columns_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    table_header.addWidget(widget.table_title)
+    table_header.addStretch(1)
+    table_header.addWidget(widget.columns_button)
+    widget.table = QTableWidget(0, 10)
     widget.table.setObjectName("LibraryTable")
-    widget.table.setHorizontalHeaderLabels(["Nom", "Gamme", "Dossier", "Racine", "Date", "Duree", "Poids", "Statut"])
+    widget.table.setHorizontalHeaderLabels([
+        "Nom", "Gamme", "Dossier", "Durée", "Date", "Statut",
+        "Racine", "Poids", "RMS", "Note dominante",
+    ])
     widget.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     widget.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
     widget.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -128,7 +142,7 @@ def build_library_widget_ui(widget) -> None:
     widget.table.verticalHeader().setVisible(False)
     widget.table.setShowGrid(False)
     widget.table.setWordWrap(False)
-    table_layout.addWidget(widget.table_title)
+    table_layout.addLayout(table_header)
     table_layout.addWidget(widget.table, 1)
 
     # Le detail passe SOUS la table plutot qu'a sa droite : en colonne il

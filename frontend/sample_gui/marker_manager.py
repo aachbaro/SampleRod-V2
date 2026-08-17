@@ -32,6 +32,11 @@ import os
 import logging
 from contextlib import contextmanager
 from .waveform.waveform_plot_helpers import add_plot_item_once
+from frontend.dragdrop import (
+    AudioSelection, DragItem, DragKind, DragPayload, DragProvenance,
+    MaterialOperation, MaterialStatus,
+    attach_payload, drag_preview_pixmap, drag_session,
+)
 logger = logging.getLogger("marker_manager")
 
 _ROLE_TYPE = Qt.ItemDataRole.UserRole + 1   # "selection" | "marker"
@@ -122,9 +127,30 @@ class MarkerListWidget(QListWidget):
                 "name": name,
             })
         )
+        start = float(payload.get("time") or 0.0)
+        end = float(payload.get("end_time") or start + (len(audio) / float(sr or 1)))
+        descriptor = DragPayload(
+            kind=DragKind.AUDIO_SELECTION,
+            items=(DragItem(display_name=str(name or "Slice"), duration=max(0.0, end - start)),),
+            source_id="marker-list",
+            source_module="waveform",
+            selection=AudioSelection(
+                start, end,
+                str(getattr(self.editor, "audio_file_path", "") or ""),
+                int(sr) if sr else None,
+            ),
+            status=MaterialStatus.DERIVED,
+            provenance=DragProvenance(
+                str(getattr(self.editor, "audio_file_path", "") or ""),
+                MaterialOperation.SELECTION,
+            ),
+        )
+        attach_payload(mime, descriptor)
         drag = QDrag(self)
         drag.setMimeData(mime)
-        result = drag.exec(Qt.DropAction.CopyAction)
+        drag.setPixmap(drag_preview_pixmap(descriptor))
+        with drag_session(descriptor):
+            result = drag.exec(Qt.DropAction.CopyAction)
         logger.info("[MarkerManager] drag end (result=%s)", result)
 
 class ClickableMarkerLine(pg.InfiniteLine):

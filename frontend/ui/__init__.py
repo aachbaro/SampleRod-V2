@@ -17,6 +17,7 @@ from .icons import available_names, clear_cache, icon_qss_url, render_pixmap, th
 from .fast_tooltip import FastTooltipStyle, install_fast_tooltips
 from .flow_layout import FlowLayout, make_flow_container
 from .tabs import add_tab_close_button
+from .lazy_widget import LazyWidgetHost
 
 __all__ = [
     "IconButton",
@@ -30,4 +31,5 @@ __all__ = [
     "FastTooltipStyle",
     "install_fast_tooltips",
     "add_tab_close_button",
+    "LazyWidgetHost",
 ]

@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFileDialog, QTabWidget, QVBoxLayout, QWidget
 
 from frontend.labo.audio_drop import can_accept_audio_drop, resolve_audio_drop_paths
+from frontend.dragdrop import DropAcceptance, DropAction, describe_drop, drag_controller
 from frontend.ui import IconButton, add_tab_close_button
 
 _AUDIO_FILTER = "Audio (*.wav *.flac *.aif *.aiff *.mp3 *.ogg);;Tous (*.*)"
@@ -25,6 +26,13 @@ class BreakModule(QWidget):
 
         self.setObjectName("BreakModule")
         self.setAcceptDrops(True)
+        self._drop_target_id = f"break:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id, self,
+            lambda payload: DropAcceptance.accept(
+                DropAction.LOAD_BREAK, describe_drop(DropAction.LOAD_BREAK, payload)
+            ),
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -78,9 +86,14 @@ class BreakModule(QWidget):
 
     def dragEnterEvent(self, event):  # noqa: N802
         if self._can_accept_mime(event.mimeData()):
+            drag_controller().enter_target(self._drop_target_id, event.mimeData())
             event.acceptProposedAction()
         else:
             event.ignore()
+
+    def dragLeaveEvent(self, event):  # noqa: N802
+        drag_controller().leave_target(self._drop_target_id)
+        event.accept()
 
     def dragMoveEvent(self, event):  # noqa: N802
         if self._can_accept_mime(event.mimeData()):
@@ -89,6 +102,7 @@ class BreakModule(QWidget):
             event.ignore()
 
     def dropEvent(self, event):  # noqa: N802
+        drag_controller().finish_drag()
         paths = self._paths_from_mime(event.mimeData())
         if not paths:
             event.ignore()

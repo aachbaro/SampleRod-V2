@@ -17,7 +17,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QSettings, Qt, Signal
+import logging
+
+from PySide6.QtCore import QEvent, QRect, QSettings, Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
@@ -30,7 +32,16 @@ from PySide6.QtWidgets import (
 from frontend.styles import theme
 from frontend.ui import IconButton, themed_icon
 
+from .module_window import clamp_rect_to_screens
 from .window_manager import WindowManager
+
+# Le Workspace n'est pas une ModuleInstance : sa geometrie a sa propre cle,
+# comme "modular_backdrop_enabled" a la sienne.
+_GEOMETRY_KEY = "modular_workspace_geometry_v1"
+_GRID_OVERLAY_KEY = "modular_grid_overlay_v1"
+_WORKSPACE_WINDOW_ID = "workspace"
+
+logger = logging.getLogger("workspace_window")
 
 
 class _InstanceRow(QWidget):
@@ -137,20 +148,49 @@ class WorkspaceWindow(QWidget):
 
     exitRequested = Signal()  # basculer vers l'affichage classique (bouton toggle)
     quitRequested = Signal()  # fermer l'application (croix de l'orchestrateur)
+    # Meme convention que ModuleWindow : notification neutre, pas une fin de
+    # geste. Voir frontend/modular/layout/layout_manager.py.
+    geometryChanged = Signal(str)
+    # Cycle du geste utilisateur, comme ModuleWindow.
+    interactionStarted = Signal(str)
+    interactionFinished = Signal(str)
 
     def __init__(self, window_manager: WindowManager, parent=None):
         super().__init__(parent)
         self._wm = window_manager
+        # Observateur cree en premier : resize()/_restore_geometry() plus bas
+        # peuvent declencher des evenements de geometrie.
+        from .layout.move_lifecycle import create_interaction_watcher
+
+        self._interaction_watcher = create_interaction_watcher(
+            _WORKSPACE_WINDOW_ID, self
+        )
+        self._interaction_watcher.interactionStarted.connect(self.interactionStarted)
+        self._interaction_watcher.interactionFinished.connect(self.interactionFinished)
+
         self.setObjectName("WorkspaceWindow")
         self.setWindowTitle("SampleRod - Workspace")
         self.setMinimumWidth(280)
         self.resize(320, 620)
+        # Taille d'usine posee d'abord, geometrie enregistree ensuite : sans
+        # persistance, la palette repartait a 320x620 a chaque lancement.
+        self._restore_geometry()
 
         self._build_ui()
         self._wm.instancesChanged.connect(self._rebuild)
         self._wm.instanceUpdated.connect(lambda *_a: self._rebuild())
         theme.manager.themeChanged.connect(lambda *_a: self._apply_styles())
         self._wm.add_companion(self)
+        # Fenetre externe : elle participe a l'espace mais sa geometrie ne vit
+        # pas dans une ModuleInstance.
+        layout_manager = self._wm.layout_manager
+        layout_manager.register_window(
+            _WORKSPACE_WINDOW_ID, self, managed_by_window_manager=False
+        )
+        self.geometryChanged.connect(layout_manager.geometry_changed)
+        self.interactionStarted.connect(layout_manager.interaction_started)
+        self.interactionFinished.connect(layout_manager.interaction_finished)
+        layout_manager.externalGeometryChanged.connect(self._on_external_geometry)
         self._rebuild()
         # Restaure l'etat du fond global (backdrop)
         backdrop_on = QSettings("SampleRod", "Main").value(
@@ -158,11 +198,87 @@ class WorkspaceWindow(QWidget):
         )
         self._backdrop_btn.setChecked(bool(backdrop_on))
         self._wm.set_backdrop_enabled(bool(backdrop_on))
+        # Reperage de grille : restaure APRES le fond, puisqu'il s'y dessine.
+        # La densite vient des Parametres ; on la pose avant d'allumer.
+        from frontend.settings_gui.modular_grid_settings import load_grid_multiplier
+
+        self._wm.set_grid_overlay_multiplier(load_grid_multiplier())
+        grid_on = QSettings("SampleRod", "Main").value(
+            _GRID_OVERLAY_KEY, False, type=bool
+        )
+        self._grid_btn.setChecked(bool(grid_on))
+        self._wm.set_grid_overlay_visible(bool(grid_on))
+        self._sync_backdrop_button()
 
     def _on_backdrop_toggled(self, *_args) -> None:
         enabled = self._backdrop_btn.isChecked()
         self._wm.set_backdrop_enabled(enabled)
         QSettings("SampleRod", "Main").setValue("modular_backdrop_enabled", enabled)
+        if not enabled and self._grid_btn.isChecked():
+            # Plus de fond, donc plus de surface pour la grille : on remet le
+            # bouton en accord avec ce qui est reellement affiche.
+            self._grid_btn.setChecked(False)
+            self._wm.set_grid_overlay_visible(False)
+            QSettings("SampleRod", "Main").setValue(_GRID_OVERLAY_KEY, False)
+
+    def _on_grid_toggled(self, *_args) -> None:
+        visible = self._grid_btn.isChecked()
+        self._wm.set_grid_overlay_visible(visible)
+        QSettings("SampleRod", "Main").setValue(_GRID_OVERLAY_KEY, visible)
+        # set_grid_overlay_visible a pu allumer le fond : le bouton doit suivre.
+        self._sync_backdrop_button()
+
+    def _sync_backdrop_button(self) -> None:
+        enabled = self._wm.is_backdrop_enabled()
+        if self._backdrop_btn.isChecked() != enabled:
+            self._backdrop_btn.setChecked(enabled)
+            QSettings("SampleRod", "Main").setValue("modular_backdrop_enabled", enabled)
+
+    # -- Geometrie -----------------------------------------------------------
+    def _restore_geometry(self) -> None:
+        """Restaure la geometrie enregistree, si elle tient sur un ecran."""
+        raw = QSettings("SampleRod", "Main").value(_GEOMETRY_KEY, None)
+        if not isinstance(raw, dict):
+            return
+        try:
+            rect = QRect(
+                int(raw["x"]), int(raw["y"]), int(raw["width"]), int(raw["height"])
+            )
+        except (KeyError, TypeError, ValueError):
+            return
+        # Meme filet que les fenetres de modules : un second ecran debranche ne
+        # doit pas faire disparaitre la palette.
+        self.setGeometry(clamp_rect_to_screens(rect))
+
+    def _on_external_geometry(self, window_id: str, payload: dict) -> None:
+        if window_id != _WORKSPACE_WINDOW_ID:
+            return
+        QSettings("SampleRod", "Main").setValue(_GEOMETRY_KEY, dict(payload))
+
+    def _notify_watcher(self) -> None:
+        watcher = getattr(self, "_interaction_watcher", None)
+        if watcher is not None:
+            watcher.on_geometry_event()
+
+    def nativeEvent(self, event_type, message):  # noqa: N802
+        # Observation passive : voir ModuleWindow.nativeEvent.
+        try:
+            watcher = getattr(self, "_interaction_watcher", None)
+            if watcher is not None:
+                watcher.handle_native(event_type, message)
+        except Exception:
+            logger.exception("Observation du cycle natif impossible")
+        return super().nativeEvent(event_type, message)
+
+    def moveEvent(self, event):  # noqa: N802
+        super().moveEvent(event)
+        self._notify_watcher()
+        self.geometryChanged.emit(_WORKSPACE_WINDOW_ID)
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self._notify_watcher()
+        self.geometryChanged.emit(_WORKSPACE_WINDOW_ID)
 
     def changeEvent(self, event):  # noqa: N802
         # Workspace active -> remonte tout le groupe de fenetres visibles.
@@ -195,6 +311,17 @@ class WorkspaceWindow(QWidget):
         )
         self._backdrop_btn.setCheckable(True)
         self._backdrop_btn.clicked.connect(self._on_backdrop_toggled)
+        self._grid_btn = IconButton(
+            "grid",
+            tooltip=(
+                "Quadrillage de reperage : montre ou les fenetres s'alignent.\n"
+                "Allume le fond global si besoin (il s'y dessine).\n"
+                "Espacement reglable dans les Parametres."
+            ),
+            size="s",
+        )
+        self._grid_btn.setCheckable(True)
+        self._grid_btn.clicked.connect(self._on_grid_toggled)
         self._settings_btn = IconButton(
             "settings",
             tooltip="Ouvrir les parametres",
@@ -209,6 +336,7 @@ class WorkspaceWindow(QWidget):
         self._exit_btn.clicked.connect(self.exitRequested.emit)
         h.addWidget(self._brand, 1)
         h.addWidget(self._backdrop_btn, 0)
+        h.addWidget(self._grid_btn, 0)
         h.addWidget(self._settings_btn, 0)
         h.addWidget(self._exit_btn, 0)
         root.addWidget(header)

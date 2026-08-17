@@ -32,15 +32,18 @@
 from __future__ import annotations
 
 import os
+from collections import Counter
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QTabWidget, QVBoxLayout, QWidget
 
 from backend.models.AppContext import AppContext
 from backend.services.directory_service import DirectoryService
 from frontend.ui import IconButton
 from frontend.reserve import (
     ReserveActions,
+    ReserveFilterController,
+    ReserveInspector,
     STATUS_ALL,
     STATUS_MISSING,
     STATUS_NEEDS_ANALYSIS,
@@ -69,9 +72,16 @@ class ReservePane(QWidget):
         self.directory_service = directory_service
         self.app_context = app_context
         self.reserve_actions = ReserveActions(self.app_context)
+        self.filter_controller = ReserveFilterController(self)
         self._build_ui()
         self._bind_signals()
         theme.manager.themeChanged.connect(lambda _: self._apply_styles())
+
+    def closeEvent(self, event):  # noqa: N802
+        controller = getattr(self.app_context, "reserve_preview", None)
+        if controller is not None:
+            controller.stop()
+        super().closeEvent(event)
 
     def _build_ui(self) -> None:
         """Construit la barre de filtres, le chip de filtre gamme et les trois onglets."""
@@ -107,6 +117,23 @@ class ReservePane(QWidget):
         self.status_filter.addItem("A analyser", STATUS_NEEDS_ANALYSIS)
         self.status_filter.addItem("Fichiers manquants", STATUS_MISSING)
 
+        self.scale_filter = QComboBox()
+        self.scale_filter.setObjectName("ReserveScaleFilter")
+        self.scale_filter.addItem("Toutes les gammes", "__all__")
+
+        self.results_label = QLabel("")
+        self.results_label.setObjectName("ReserveResultsLabel")
+
+        self.filters_menu_btn = IconButton(
+            "settings", tooltip="Filtres", size="m", parent=self.filters_row
+        )
+        self.filters_menu = QMenu(self.filters_menu_btn)
+        self.filters_menu_btn.clicked.connect(
+            lambda: self.filters_menu.exec(
+                self.filters_menu_btn.mapToGlobal(self.filters_menu_btn.rect().bottomLeft())
+            )
+        )
+
         # Bouton analyse par lots (gamme) — libelle mis a jour dynamiquement selon l'onglet
         self.batch_analyze_btn = IconButton(
             "music",
@@ -129,6 +156,9 @@ class ReservePane(QWidget):
 
         filters_layout.addWidget(self.search_input, 1)
         filters_layout.addWidget(self.status_filter, 0)
+        filters_layout.addWidget(self.scale_filter, 0)
+        filters_layout.addWidget(self.results_label, 0)
+        filters_layout.addWidget(self.filters_menu_btn, 0)
         filters_layout.addWidget(self.batch_analyze_btn, 0)
         filters_layout.addWidget(self.show_key_toggle, 0)
 
@@ -144,7 +174,7 @@ class ReservePane(QWidget):
 
         self.compat_filter_clear_btn = IconButton(
             "x",
-            tooltip="Effacer le filtre de compatibilite",
+            tooltip="Effacer tous les filtres",
             size="s",
         )
         self.compat_filter_clear_btn.setObjectName("CompatFilterClearBtn")
@@ -153,6 +183,8 @@ class ReservePane(QWidget):
         compat_row_layout.addWidget(self.compat_filter_clear_btn)
         compat_row_layout.addStretch()
         self.compat_filter_row.setVisible(False)
+        self._rebuild_filters_menu()
+        self.filters_menu.aboutToShow.connect(self._rebuild_filters_menu)
 
         def _clear_compat_filter_from_double_click(event) -> None:
             if event.button() == Qt.MouseButton.LeftButton:
@@ -183,39 +215,118 @@ class ReservePane(QWidget):
         )
 
         self.mode_tabs.addTab(self.directory_widget, "Dossiers")
-        self.mode_tabs.addTab(self.history_widget, "Historique")
+        self.mode_tabs.addTab(self.history_widget, "Récents")
         self.mode_tabs.addTab(self.indexed_widget, "Indexe")
         self.mode_tabs.setCurrentIndex(0)
+        self.inspector = ReserveInspector(
+            self.app_context,
+            reserve_actions=self.reserve_actions,
+            parent=self,
+        )
+        self.inspector.set_mode("compact")
 
         layout.addWidget(self.title_label)
         layout.addWidget(self.subtitle_label)
         layout.addWidget(self.filters_row)
         layout.addWidget(self.compat_filter_row)
         layout.addWidget(self.mode_tabs, 1)
+        layout.addWidget(self.inspector, 0)
 
         self._apply_styles()
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        compact = self.width() < 720
+        self.status_filter.setVisible(not compact)
+        self.scale_filter.setVisible(not compact)
+        self.results_label.setVisible(not compact)
+        self.filters_menu_btn.setVisible(compact)
+
+    def _rebuild_filters_menu(self) -> None:
+        self.filters_menu.clear()
+        status_menu = self.filters_menu.addMenu("Statut")
+        for index in range(self.status_filter.count()):
+            action = status_menu.addAction(self.status_filter.itemText(index))
+            action.setCheckable(True)
+            action.setChecked(index == self.status_filter.currentIndex())
+            action.triggered.connect(
+                lambda checked=False, i=index: self.status_filter.setCurrentIndex(i)
+            )
+        scale_menu = self.filters_menu.addMenu("Gamme")
+        for index in range(self.scale_filter.count()):
+            action = scale_menu.addAction(self.scale_filter.itemText(index))
+            action.setCheckable(True)
+            action.setChecked(index == self.scale_filter.currentIndex())
+            action.triggered.connect(
+                lambda checked=False, i=index: self.scale_filter.setCurrentIndex(i)
+            )
+        self.filters_menu.addSeparator()
+        self.filters_menu.addAction("Tout effacer").triggered.connect(self._clear_all_filters)
 
     def _bind_signals(self) -> None:
         """Connecte les signaux de tous les onglets, filtres et boutons."""
         self.reserve_actions.sendToLabRequested.connect(self.sendToLaboRequested.emit)
         self.reserve_actions.waveformRequested.connect(self._forward_waveform_request)
         self.directory_widget.sendToComposerRequested.connect(self.sendToLaboRequested.emit)
-        self.search_input.textChanged.connect(lambda *_args: self._apply_shared_filters())
-        self.status_filter.currentIndexChanged.connect(lambda *_args: self._apply_shared_filters())
-        self.mode_tabs.currentChanged.connect(lambda *_args: self._apply_shared_filters())
+        self.search_input.textChanged.connect(self.filter_controller.set_query)
+        self.status_filter.currentIndexChanged.connect(
+            lambda *_args: self.filter_controller.set_status(
+                self.status_filter.currentData() or STATUS_ALL
+            )
+        )
+        self.scale_filter.currentIndexChanged.connect(
+            lambda *_args: self.filter_controller.set_scale(
+                self.scale_filter.currentData() or "__all__"
+            )
+        )
+        self.filter_controller.queryChanged.connect(self._apply_query_filter)
+        self.filter_controller.statusChanged.connect(self._apply_status_filter)
+        self.filter_controller.scaleChanged.connect(self._apply_scale_filter)
+        self.filter_controller.compatibilityChanged.connect(self._apply_compat_filter)
+        self.filter_controller.scopeChanged.connect(self.indexed_widget.set_reserve_scope)
+        self.filter_controller.stateChanged.connect(self._update_active_filter_summary)
+        self.mode_tabs.currentChanged.connect(self._sync_inspector_from_current_view)
+        self.mode_tabs.currentChanged.connect(lambda *_args: QTimer.singleShot(0, self._update_results_summary))
+        for widget in (self.directory_widget, self.history_widget, self.indexed_widget):
+            widget.reserveEntrySelected.connect(self.inspector.set_entry)
+        self.inspector.entryMutated.connect(lambda *_args: self.refresh_current_view())
+        self.inspector.analyzeRequested.connect(self._analyze_entry)
         # Mise a jour du libelle du bouton selon l'onglet/dossier actif
         self.mode_tabs.currentChanged.connect(lambda *_args: self._update_batch_btn_label())
         self.directory_widget.directoryChanged.connect(lambda *_args: self._update_batch_btn_label())
         # Analyse par lots
         self.batch_analyze_btn.clicked.connect(self._on_batch_analyze)
         # Filtre gamme compatible
-        self.compat_filter_clear_btn.clicked.connect(self._clear_compat_filter)
+        self.compat_filter_clear_btn.clicked.connect(self._clear_all_filters)
         self.history_widget.compatFilterChanged.connect(self._on_compat_filter_changed)
         self.directory_widget.compatFilterChanged.connect(self._on_compat_filter_changed)
+        self.app_context.sample_store.sampleScaleAnalyzed.connect(
+            lambda *_args: self._refresh_scale_options()
+        )
+        self.indexed_widget.reserveScaleFilterRequested.connect(self._select_scale_filter)
+        self.indexed_widget.reserveScopeChanged.connect(self.filter_controller.set_scope)
         # Ouvrir l'emplacement depuis une carte de l'historique
         self.history_widget.openInFoldersRequested.connect(self._open_in_folders)
-        self._apply_shared_filters()
+        self._refresh_scale_options()
         self._update_batch_btn_label()
+        self._sync_inspector_from_current_view()
+
+    def _sync_inspector_from_current_view(self, *_args) -> None:
+        current = self.mode_tabs.currentWidget()
+        getter = getattr(current, "current_reserve_entry", None)
+        entry = getter() if callable(getter) else None
+        if entry is None:
+            self.inspector.clear_entry()
+        else:
+            self.inspector.set_entry(entry)
+
+    def _analyze_entry(self, entry) -> None:
+        if entry is None or entry.sample_id is None or entry.missing:
+            return
+        analyzer = getattr(self.app_context.sample_store, "_scale_analysis", None)
+        enqueue = getattr(analyzer, "enqueue", None)
+        if callable(enqueue):
+            enqueue(int(entry.sample_id), entry.path)
 
     def _forward_waveform_request(self, entry) -> None:
         """Retransmet une demande d'ouverture de waveform comme sendToLaboRequested."""
@@ -224,14 +335,105 @@ class ReservePane(QWidget):
             self.sendToLaboRequested.emit([path])
 
     def _apply_shared_filters(self) -> None:
-        """Propage la recherche et le filtre de statut a tous les onglets."""
-        query = self.search_input.text().strip()
-        status_filter = self.status_filter.currentData() or STATUS_ALL
+        """Adaptateur historique : applique immediatement l'etat des controles."""
+        self.filter_controller.set_query(self.search_input.text())
+        self.filter_controller.flush_query()
+        self.filter_controller.set_status(self.status_filter.currentData() or STATUS_ALL)
+        self.filter_controller.set_scale(self.scale_filter.currentData() or "__all__")
+
+    def _apply_query_filter(self, query: str) -> None:
         for widget in (self.directory_widget, self.history_widget, self.indexed_widget):
             if hasattr(widget, "set_reserve_query"):
                 widget.set_reserve_query(query)
+
+    def _apply_status_filter(self, status_filter: str) -> None:
+        for widget in (self.directory_widget, self.history_widget, self.indexed_widget):
             if hasattr(widget, "set_reserve_status_filter"):
                 widget.set_reserve_status_filter(status_filter)
+
+    def _apply_scale_filter(self, scale: str) -> None:
+        for widget in (self.directory_widget, self.history_widget, self.indexed_widget):
+            setter = getattr(widget, "set_reserve_scale_filter", None)
+            if callable(setter):
+                setter(scale)
+
+    def _select_scale_filter(self, scale: str) -> None:
+        index = self.scale_filter.findData(scale)
+        if index >= 0:
+            self.scale_filter.setCurrentIndex(index)
+        else:
+            self.filter_controller.set_scale(scale)
+
+    def _apply_compat_filter(self, sample_id) -> None:
+        for widget in (self.directory_widget, self.history_widget, self.indexed_widget):
+            widget.set_compatible_scales_filter(sample_id)
+
+    def _refresh_scale_options(self) -> None:
+        raw_labels = [
+            str(getattr(sample, "detected_scale_label", "") or "").strip()
+            for sample in self.app_context.sample_store.get_cached()
+        ]
+        counts = Counter(label for label in raw_labels if label)
+        without_scale = sum(1 for label in raw_labels if not label)
+        current = self.filter_controller.state.scale
+        self.scale_filter.blockSignals(True)
+        self.scale_filter.clear()
+        self.scale_filter.addItem("Toutes les gammes", "__all__")
+        self.scale_filter.addItem(f"Sans gamme ({without_scale})", "__none__")
+        for label in sorted(counts):
+            self.scale_filter.addItem(f"{label} ({counts[label]})", label)
+        index = self.scale_filter.findData(current)
+        self.scale_filter.setCurrentIndex(max(0, index))
+        self.scale_filter.blockSignals(False)
+        self._rebuild_filters_menu()
+
+    def _update_active_filter_summary(self, state) -> None:
+        parts = []
+        if state.query:
+            parts.append(f'“{state.query}”')
+        if state.technical_status != STATUS_ALL:
+            parts.append(self.status_filter.currentText())
+        if state.scale != "__all__":
+            parts.append(self.scale_filter.currentText())
+        if state.compatibility_sample_id is not None:
+            ref = next((s for s in self.app_context.sample_store.get_cached() if s.id == state.compatibility_sample_id), None)
+            label = getattr(ref, "detected_scale_label", None) or getattr(ref, "dominant_note", None) or f"#{state.compatibility_sample_id}"
+            parts.append("Compatible avec " + str(label))
+        if state.scope_kind != "all":
+            scope_label = "Externes" if state.scope_kind == "external" else (state.scope_value or state.scope_kind)
+            parts.append("Scope : " + os.path.basename(str(scope_label)))
+        self.compat_filter_label.setText("  ·  ".join(parts))
+        self.compat_filter_row.setVisible(bool(parts))
+        QTimer.singleShot(0, self._update_results_summary)
+
+    def _update_results_summary(self) -> None:
+        current = self.mode_tabs.currentWidget()
+        if current is self.directory_widget:
+            visible = len(getattr(current, "_rows_by_path", {}))
+            total = visible
+        elif current is self.history_widget:
+            visible = len(current.get_filtered_samples())
+            total = len(current.samples)
+        else:
+            visible = len(current.filtered_entries)
+            total = len(current.samples)
+        active = self.filter_controller.state != type(self.filter_controller.state)()
+        if active and visible == 0:
+            self.results_label.setText("Aucun résultat")
+        elif active:
+            self.results_label.setText(f"{visible} / {total}")
+        else:
+            self.results_label.setText(f"{total}")
+
+    def _clear_all_filters(self) -> None:
+        for control in (self.search_input, self.status_filter, self.scale_filter):
+            control.blockSignals(True)
+        self.search_input.clear()
+        self.status_filter.setCurrentIndex(0)
+        self.scale_filter.setCurrentIndex(0)
+        for control in (self.search_input, self.status_filter, self.scale_filter):
+            control.blockSignals(False)
+        self.filter_controller.clear_all()
 
     def open_directory_in_folders(self, path: str) -> bool:
         """Bascule sur l'onglet Dossiers et navigue vers le chemin donne.
@@ -284,7 +486,8 @@ class ReservePane(QWidget):
         else:
             self.batch_analyze_btn.set_icon_name("music")
             self.batch_analyze_btn.setToolTip(
-                "Lance la detection de gamme sur tous les samples non encore analyses."
+                "Analyser la gamme des éléments actuellement affichés.\n"
+                "Pour une sélection cochée : menu ⋮ de la vue Récents."
             )
 
     def _on_batch_analyze(self) -> None:
@@ -293,7 +496,17 @@ class ReservePane(QWidget):
         if folder:
             count = self.app_context.sample_store.batch_analyze_folder(folder)
         else:
-            count = self.app_context.sample_store.batch_analyze_missing()
+            current = self.mode_tabs.currentWidget()
+            if current is self.history_widget:
+                sample_ids = list(self.history_widget._card_widgets)
+            elif current is self.indexed_widget:
+                sample_ids = [
+                    entry.sample_id for entry in self.indexed_widget.filtered_entries
+                    if entry.sample_id is not None
+                ]
+            else:
+                sample_ids = []
+            count = self.app_context.sample_store.batch_analyze_ids(sample_ids)
         if count == 0:
             self.batch_analyze_btn.set_icon_name("check")
             self.batch_analyze_btn.setToolTip("Tous les samples du contexte sont deja analyses.")
@@ -316,27 +529,7 @@ class ReservePane(QWidget):
 
     def _on_compat_filter_changed(self, sample_id: int) -> None:
         """Propage le filtre gamme a tous les onglets et met a jour le chip."""
-        if sample_id == 0:
-            self.history_widget.set_compatible_scales_filter(None)
-            self.indexed_widget.set_compatible_scales_filter(None)
-            self.directory_widget.set_compatible_scales_filter(None)
-            self.compat_filter_row.setVisible(False)
-            return
-        self.history_widget.set_compatible_scales_filter(sample_id)
-        self.indexed_widget.set_compatible_scales_filter(sample_id)
-        self.directory_widget.set_compatible_scales_filter(sample_id)
-        ref = next(
-            (s for s in self.app_context.sample_store.get_cached() if s.id == sample_id),
-            None,
-        )
-        note = getattr(ref, "detected_scale_label", None) if ref else None
-        if not note and ref is not None:
-            note = getattr(ref, "dominant_note", None)
-        name = getattr(ref, "name", None) if ref else None
-        label_name = note or (os.path.basename(name) if name else "#" + str(sample_id))
-        label = "Compatibles avec : " + label_name
-        self.compat_filter_label.setText(label)
-        self.compat_filter_row.setVisible(True)
+        self.filter_controller.set_compatibility(sample_id or None)
 
     def _open_in_folders(self, folder: str) -> None:
         """Bascule vers l'onglet Dossiers et navigue vers le dossier du sample."""
@@ -344,10 +537,7 @@ class ReservePane(QWidget):
 
     def _clear_compat_filter(self) -> None:
         """Efface le filtre de gammes compatibles sur tous les onglets."""
-        self.history_widget.set_compatible_scales_filter(None)
-        self.indexed_widget.set_compatible_scales_filter(None)
-        self.directory_widget.set_compatible_scales_filter(None)
-        self.compat_filter_row.setVisible(False)
+        self.filter_controller.set_compatibility(None)
 
     def _on_show_key_toggled(self, checked: bool) -> None:
         """Toggle global : afficher/masquer le badge de gamme sur les cartes."""
@@ -374,11 +564,17 @@ class ReservePane(QWidget):
             "    color: " + p.TEXT_MUTED + ";"
             "    font-size: 11px;"
             "}"
+            "QLabel#ReserveResultsLabel { color: " + p.TEXT_MUTED + "; font-size: 11px; }"
             "QWidget#ReserveFiltersRow {"
             "    background: transparent;"
             "}"
+            "QWidget#ReserveFiltersRow QWidget { background: transparent; }"
+            "QWidget#ReservePane QToolButton::menu-indicator {"
+            "    image: none; width: 0px; height: 0px;"
+            "}"
             "QLineEdit#ReserveSearchInput,"
-            "QComboBox#ReserveStatusFilter {"
+            "QComboBox#ReserveStatusFilter,"
+            "QComboBox#ReserveScaleFilter {"
             "    background: " + p.BG_MEDIUM + ";"
             "    color: " + p.TEXT + ";"
             "    border: 1px solid " + p.BORDER + ";"
@@ -386,7 +582,8 @@ class ReservePane(QWidget):
             "    padding: 6px 8px;"
             "}"
             "QLineEdit#ReserveSearchInput:focus,"
-            "QComboBox#ReserveStatusFilter:focus {"
+            "QComboBox#ReserveStatusFilter:focus,"
+            "QComboBox#ReserveScaleFilter:focus {"
             "    border-color: " + p.INFO + ";"
             "}"
             "QWidget#CompatFilterRow {"

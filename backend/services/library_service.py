@@ -254,15 +254,17 @@ class LibraryService:
 
     def format_duration(self, sample) -> str:
         """Duree formatee pour l'affichage, ex : "12.3s"."""
-        duration = float(getattr(sample, "duration", 0.0) or 0.0)
-        return f"{duration:.1f}s"
+        from frontend.reserve.reserve_formatters import format_reserve_duration
+
+        return format_reserve_duration(
+            getattr(sample, "duration", 0.0), compact=True
+        )
 
     def format_rms(self, sample) -> str:
         """Volume moyen formate pour l'affichage ("-" si non calcule)."""
-        rms_level = getattr(sample, "rms_level", None)
-        if rms_level is None:
-            return "-"
-        return f"{float(rms_level):.3f}"
+        from frontend.reserve.reserve_formatters import format_reserve_rms
+
+        return format_reserve_rms(getattr(sample, "rms_level", None))
 
     def _sample_matches_library(self, sample, root_path: str) -> bool:
         """Vrai si le fichier du sample est dans root_path (ou en dessous)."""

@@ -44,8 +44,14 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QEvent, QPoint, QMimeData, QTimer, QUrl, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QMimeData, QSize, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QDrag
+from frontend.dragdrop import (
+    DragItem, DragKind, DragPayload, DragProvenance, DropAcceptance, DropAction,
+    MaterialOperation, MaterialStatus,
+    attach_payload, describe_drop, drag_controller, drag_preview_pixmap, drag_session,
+    payload_from_mime,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -98,6 +104,16 @@ def _short_kind(kind: str) -> str:
     }.get(kind, kind.upper()[:4])
 
 
+def _payload_is_existing_artifact(payload: DragPayload | None, artifact_ids) -> bool:
+    """Vrai pour un artefact redéposé dans un plateau qui le contient déjà."""
+    known = set(artifact_ids)
+    return bool(
+        payload is not None
+        and payload.kind is DragKind.ARTIFACT
+        and any(item.item_id in known for item in payload.items if item.item_id)
+    )
+
+
 
 class ArtifactTrayRow(QWidget):
     """Une ligne du plateau : [play] [badge] nom [slider] temps [x]."""
@@ -141,9 +157,8 @@ class ArtifactTrayRow(QWidget):
         # ── Nom (tronqué, tooltip = métas complètes) ─────────────────────
         self.name_label = QLabel("")
         self.name_label.setObjectName("ArtifactName")
-        self.name_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        self.name_label.setMinimumWidth(50)
-        self.name_label.setMaximumWidth(200)
+        self.name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.name_label.setMinimumWidth(0)
         self.name_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.name_label.setToolTip("Double-clique pour renommer l'artefact")
         self.name_label.mouseDoubleClickEvent = self._on_name_double_click  # type: ignore[assignment]
@@ -180,6 +195,29 @@ class ArtifactTrayRow(QWidget):
         layout.addWidget(self.time_label)
         layout.addWidget(self.delete_button)
 
+        self._update_compact_layout()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_compact_layout()
+        self._refresh_display_name()
+
+    def _update_compact_layout(self) -> None:
+        """Conserve une carte complète en sacrifiant les infos secondaires."""
+        width = self.width()
+        self.slider.setVisible(width >= 390)
+        self.time_label.setVisible(width >= 320)
+
+    def _refresh_display_name(self) -> None:
+        available = max(20, self.name_label.width() - 4)
+        self.name_label.setText(
+            self.name_label.fontMetrics().elidedText(
+                self.artifact.display_name,
+                Qt.TextElideMode.ElideRight,
+                available,
+            )
+        )
+
     # ------------------------------------------------------------------
     # Mise à jour des données
 
@@ -197,13 +235,7 @@ class ArtifactTrayRow(QWidget):
         self.kind_label.setText(_short_kind(artifact.kind))
 
         # Nom élisionné
-        fm = self.name_label.fontMetrics()
-        elided = fm.elidedText(
-            artifact.display_name,
-            Qt.TextElideMode.ElideRight,
-            self.name_label.maximumWidth() - 4,
-        )
-        self.name_label.setText(elided)
+        self._refresh_display_name()
 
         # Slider range
         duration_ms = int((artifact.duration or 0.0) * 1000)
@@ -221,6 +253,9 @@ class ArtifactTrayRow(QWidget):
             f"Source : {artifact_source_name(artifact)}",
             f"Durée : {artifact_duration_label(artifact.duration)}",
             f"Statut : {artifact_status_label(artifact)}",
+            "Matière : ARTEFACT",
+            f"Opération : {artifact.operation or artifact.origin}"
+            if (artifact.operation or artifact.origin) else "",
             f"Origine : {artifact.origin}" if artifact.origin else "",
             f"Chemin : {active_path or artifact.source_path}",
         ]
@@ -372,8 +407,27 @@ class ArtifactTrayRow(QWidget):
             store.attach_mime_data(mime, self.artifact.artifact_id)
         else:
             mime.setUrls([QUrl.fromLocalFile(path)])
+        descriptor = DragPayload(
+            kind=DragKind.ARTIFACT,
+            items=(DragItem(
+                item_id=str(self.artifact.artifact_id),
+                path=path,
+                display_name=str(self.artifact.display_name or os.path.basename(path)),
+                duration=float(self.artifact.duration) if self.artifact.duration is not None else None,
+            ),),
+            source_id=f"artifact:{self.artifact.artifact_id}",
+            source_module="artifacts",
+            status=MaterialStatus.ARTIFACT,
+            provenance=DragProvenance(
+                str(self.artifact.source_path or path),
+                MaterialOperation.ARTIFACT_CREATION,
+            ),
+        )
+        attach_payload(mime, descriptor)
         drag.setMimeData(mime)
-        result = drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
+        drag.setPixmap(drag_preview_pixmap(descriptor))
+        with drag_session(descriptor):
+            result = drag.exec(Qt.DropAction.MoveAction | Qt.DropAction.CopyAction)
         if result == Qt.DropAction.MoveAction:
             # La cible a déplacé le fichier elle-même — source déjà supprimée.
             self.removeRequested.emit(self.artifact.artifact_id, False)
@@ -400,6 +454,11 @@ class ArtifactTrayWidget(QWidget):
         self._rows: dict[str, tuple[QListWidgetItem, ArtifactTrayRow]] = {}
         self._expanded = True
         self._build_ui()
+        self._drop_target_id = f"artifacts:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id, self.list_widget.viewport(),
+            self._drop_acceptance,
+        )
         self._preview_timer = QTimer(self)
         self._preview_timer.setInterval(100)
         self._preview_timer.timeout.connect(self._sync_preview_state)
@@ -443,6 +502,9 @@ class ArtifactTrayWidget(QWidget):
         self.list_widget.setObjectName("ArtifactTrayList")
         self.list_widget.setSpacing(3)
         self.list_widget.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.list_widget.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
         self.list_widget.setAcceptDrops(True)
         self.list_widget.viewport().setAcceptDrops(True)
         self.list_widget.installEventFilter(self)
@@ -461,6 +523,8 @@ class ArtifactTrayWidget(QWidget):
                 return self._handle_drag_move(event)
             if event.type() == QEvent.Type.Drop:
                 return self._handle_drop(event)
+            if event.type() == QEvent.Type.DragLeave:
+                drag_controller().leave_target(self._drop_target_id)
         return super().eventFilter(watched, event)
 
     def dragEnterEvent(self, event) -> None:
@@ -500,7 +564,7 @@ class ArtifactTrayWidget(QWidget):
             row.openRequested.connect(self.openArtifactRequested.emit)
             row.seekRequested.connect(self._on_seek_requested)
             row.removeRequested.connect(self._on_remove_requested)
-            item.setSizeHint(row.sizeHint())
+            item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, row)
             self._rows[artifact.artifact_id] = (item, row)
@@ -508,7 +572,7 @@ class ArtifactTrayWidget(QWidget):
             item, row = row_data
             row.artifact = artifact
             row.refresh()
-            item.setSizeHint(row.sizeHint())
+            item.setSizeHint(QSize(0, row.sizeHint().height()))
         self._update_count()
         self._sync_preview_state()
 
@@ -544,6 +608,9 @@ class ArtifactTrayWidget(QWidget):
 
     def _handle_drag_enter(self, event) -> bool:
         mime = event.mimeData()
+        if self._is_existing_artifact_drag(mime):
+            event.ignore()
+            return True
         if not has_supported_audio_drop(mime):
             return False
         if not can_accept_audio_drop(
@@ -553,12 +620,20 @@ class ArtifactTrayWidget(QWidget):
         ):
             return False
         event.acceptProposedAction()
+        drag_controller().enter_target(self._drop_target_id, mime)
         return True
 
     def _handle_drag_move(self, event) -> bool:
         return self._handle_drag_enter(event)
 
     def _handle_drop(self, event) -> bool:
+        drag_controller().finish_drag()
+        if self._is_existing_artifact_drag(event.mimeData()):
+            # Un depot sur le plateau qui contient deja cet artefact est un
+            # no-op. Il doit rester refuse pour que QDrag renvoie IgnoreAction
+            # et que la ligne source ne supprime pas l'original.
+            event.ignore()
+            return True
         paths = self._paths_from_mime(event.mimeData())
         if not paths:
             return False
@@ -570,6 +645,17 @@ class ArtifactTrayWidget(QWidget):
             return False
         event.acceptProposedAction()
         return True
+
+    def _drop_acceptance(self, payload: DragPayload) -> DropAcceptance:
+        if _payload_is_existing_artifact(payload, self._rows):
+            return DropAcceptance.reject("Artefact déjà présent")
+        return DropAcceptance.accept(
+            DropAction.CREATE_ARTIFACT,
+            describe_drop(DropAction.CREATE_ARTIFACT, payload),
+        )
+
+    def _is_existing_artifact_drag(self, mime) -> bool:
+        return _payload_is_existing_artifact(payload_from_mime(mime), self._rows)
 
     def _paths_from_mime(self, mime) -> list[str]:
         return resolve_audio_drop_paths(
@@ -757,7 +843,6 @@ class ArtifactTrayWidget(QWidget):
                 border: 1px solid {p.BORDER};
                 border-radius: 12px;
                 font-size: 9px;
-                fo
                 font-weight: 700;
                 padding: 0;
             }}

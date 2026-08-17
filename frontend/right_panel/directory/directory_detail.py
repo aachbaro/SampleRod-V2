@@ -29,7 +29,15 @@ from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
-from frontend.reserve import ReserveActions, ReserveEntry, apply_status_badge
+from frontend.reserve import (
+    ReserveActions,
+    ReserveEntry,
+    apply_status_badge,
+    format_reserve_date,
+    format_reserve_duration,
+    format_reserve_rms,
+    format_reserve_scale,
+)
 from frontend.sample_gui.wave_form import WaveformWidget
 
 
@@ -258,9 +266,9 @@ class DirectoryDetailWidget(QWidget):
         """
         parts: list[str] = []
         if entry.duration is not None:
-            parts.append(f"Duree: {float(entry.duration):.2f}s")
+            parts.append(f"Duree: {format_reserve_duration(entry.duration, compact=True)}")
         if entry.rms_level is not None:
-            parts.append(f"RMS: {float(entry.rms_level):.3f}")
+            parts.append(f"RMS: {format_reserve_rms(entry.rms_level)}")
         if entry.detected_scale_label:
             confidence = (
                 f" ({float(entry.scale_confidence):.0%})"
@@ -268,7 +276,7 @@ class DirectoryDetailWidget(QWidget):
                 else ""
             )
             label_prefix = "Gamme" if entry.detected_scale_kind == "scale" else "Note dominante"
-            parts.append(f"{label_prefix}: {entry.detected_scale_label}{confidence}")
+            parts.append(f"{label_prefix}: {format_reserve_scale(entry)}{confidence}")
         elif entry.dominant_note:
             confidence = (
                 f" ({float(entry.scale_confidence):.0%})"
@@ -281,6 +289,6 @@ class DirectoryDetailWidget(QWidget):
         created_at = entry.metadata.get("directory_entry")
         created_at = getattr(created_at, "created_at", None)
         if created_at is not None and hasattr(created_at, "strftime"):
-            parts.append(f"Cree: {created_at.strftime('%d/%m/%Y %H:%M')}")
+            parts.append(f"Cree: {format_reserve_date(created_at)}")
         parts.append("Source: filesystem")
         return " | ".join(parts)

@@ -30,6 +30,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import os
 import shutil
@@ -41,6 +42,23 @@ from backend.db import Base, SessionLocal
 from backend.services.audio_metadata import collect_audio_file_metadata, normalize_audio_path
 
 logger = logging.getLogger("sample")
+
+
+def encode_material_metadata(metadata: dict | None) -> str | None:
+    return (
+        json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+        if metadata else None
+    )
+
+
+def decode_material_metadata(raw: str | None) -> dict:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return dict(parsed) if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError):
+        return {}
 
 
 class Sample(Base):
@@ -61,6 +79,7 @@ class Sample(Base):
     detected_scale_kind = Column(String(16), nullable=True)
     scale_confidence = Column(Float, nullable=True)
     compatible_scales = Column(Text, nullable=True)  # JSON array of scale label strings
+    material_metadata = Column(Text, nullable=True)  # provenance legere JSON
 
     def __init__(
         self,
@@ -76,6 +95,7 @@ class Sample(Base):
         detected_scale_kind: str | None = None,
         scale_confidence: float | None = None,
         compatible_scales: str | None = None,
+        material_metadata: dict | None = None,
     ):
         """Enregistre un nouveau sample en base a partir d'un chemin de fichier.
 
@@ -103,6 +123,7 @@ class Sample(Base):
         self.detected_scale_kind = detected_scale_kind
         self.scale_confidence = scale_confidence
         self.compatible_scales = compatible_scales
+        self.material_metadata = encode_material_metadata(material_metadata)
 
         session = SessionLocal()
         session.expire_on_commit = False
@@ -116,6 +137,11 @@ class Sample(Base):
             session.close()
 
         logger.info("[Sample] Creation de l'echantillon %s (%s)", self.name, self.id)
+
+    @property
+    def material_metadata_dict(self) -> dict:
+        """Métadonnées de matière, rétrocompatibles avec les anciennes lignes."""
+        return decode_material_metadata(self.material_metadata)
 
     def delete(self):
         """Supprime le fichier physique puis l'entree en base.

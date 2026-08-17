@@ -29,11 +29,15 @@ class DirectoryIndexController:
         status = self.widget.service.get_folder_index_status(self.widget.current_dir)
         on_disk = int(status.get("on_disk", 0))
         tracked = int(status.get("tracked", 0))
-        detail = (
-            f"Disque: {on_disk} | DB: {tracked} | "
-            f"Manquants: {status.get('missing', 0)}"
+        missing = int(status.get("missing", 0))
+        self.widget.files_count_label.setText(
+            f"{_human_count(on_disk)} fichier{'s' if on_disk != 1 else ''} audio"
         )
-        self._set_status(status["label"], detail)
+        parts = [f"{_human_count(tracked)} indexé{'s' if tracked != 1 else ''}"]
+        if missing:
+            parts.append(f"{_human_count(missing)} manquant{'s' if missing != 1 else ''}")
+        self.widget.index_summary_label.setText(" · ".join(parts))
+        self._set_status(status["label"])
         if tracked == 0:
             chip_key = "none"
         elif tracked >= on_disk > 0:
@@ -68,8 +72,9 @@ class DirectoryIndexController:
             return
         self._set_index_busy(True)
         self.widget.status_label.setText("Indexation en cours")
-        self.widget.progress_label.setText("Preparation du scan...")
-        self.widget.progress_label.setVisible(True)
+        self.widget.index_summary_label.setText("Préparation de la synchronisation…")
+        self.widget.progress_label.setText("")
+        self.widget.progress_label.setVisible(False)
         self.widget.index_progress.setRange(0, 0)
 
     def _on_index_progress(self, folder: str, current: int, total: int, message: str):
@@ -81,8 +86,13 @@ class DirectoryIndexController:
             self.widget.index_progress.setValue(max(0, min(current, total)))
         else:
             self.widget.index_progress.setRange(0, 0)
-        self.widget.progress_label.setText(message)
-        self.widget.progress_label.setVisible(True)
+        if total > 0:
+            self.widget.index_summary_label.setText(
+                f"Synchronisation…  {_human_count(current)} / {_human_count(total)}"
+            )
+        else:
+            self.widget.index_summary_label.setText("Synchronisation…")
+        self.widget.progress_label.setVisible(False)
 
     def _on_index_finished(self, folder: str, summary: object):
         if normalize_audio_path(folder) != self.widget.current_dir:
@@ -153,3 +163,7 @@ class DirectoryIndexController:
             self.widget._refresh_detail_for_path(new_key)
         self.widget._sync_preview_row_state()
         self._refresh_index_status()
+
+
+def _human_count(value: int) -> str:
+    return f"{max(0, int(value)):,}".replace(",", " ")

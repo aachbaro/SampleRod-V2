@@ -59,9 +59,9 @@ class SampleCardMove:
             except IndexError:
                 return
 
-        if c.app_context.audio_player.current_sample_id == c.sample.id:
+        if c.playback.controller.is_active(c.playback._entry()):
             try:
-                c.app_context.audio_player.clear_audio()
+                c.playback.controller.stop(c.playback._entry())
                 c.playback.set_paused_icon()
             except Exception:
                 pass

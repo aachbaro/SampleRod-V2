@@ -40,6 +40,7 @@ from frontend.reserve import (
     reserve_entry_from_sample,
     reserve_entry_matches_query,
     reserve_entry_matches_status,
+    format_reserve_scale,
 )
 from frontend.sample_gui.sample.sample_list_ui import SampleListUIBuilder
 from frontend.styles import theme
@@ -51,6 +52,7 @@ from frontend.sample_gui.sample.sample_list_normalize import SampleListNormalize
 from frontend.sample_gui.sample.sample_list_service import SampleListServiceActions
 from frontend.sample_gui.sample.sample_list_cards import SampleListCards
 from frontend.sample_gui.sample.sample_card import SampleCard
+from frontend.dragdrop import DropAcceptance, DropAction, describe_drop, drag_controller
 
 logger = logging.getLogger("sample_list")
 
@@ -85,6 +87,7 @@ class SampleListWidget(QWidget):
         self.selected_ids  = set()        # ensemble des IDs coches
         self._reserve_query_text = ""
         self._reserve_status_filter = "all"
+        self._reserve_scale_filter = "__all__"
         self._compat_filter_sample_id: int | None = None  # ID reference pour filtre gamme
         self._compat_filter_scales: set[str] = set()       # gammes compatibles du sample ref
         self._current_sample_id: int | None = None
@@ -106,7 +109,7 @@ class SampleListWidget(QWidget):
         self.sample_store.sampleStartedNormalization.connect(self.onStartedNormalization)
         self.sample_store.sampleFinishedNormalization.connect(self.onFinishedNormalization)
         self.sample_store.sampleNormalizationFailed.connect(self.onNormalizationFailed)
-        self.sample_store.sampleRemovedFromHistory.connect(self.onSampleRemovedFromHistory)
+        self.sample_store.sampleUnindexed.connect(self.onSampleRemovedFromHistory)
         self.sample_store.sampleConcatCandidateChanged.connect(
             self.onSampleConcatCandidateChanged
         )
@@ -119,6 +122,15 @@ class SampleListWidget(QWidget):
         self.pagination = SampleListPagination(self)
         self.selection = SampleListSelection(self)
         self.dragdrop = SampleListDragDrop(self)
+        self._drop_target_id = f"reserve:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id,
+            self,
+            lambda payload: DropAcceptance.accept(
+                DropAction.IMPORT_AS_SOURCE,
+                describe_drop(DropAction.IMPORT_AS_SOURCE, payload),
+            ),
+        )
         self.cards = SampleListCards(self)
         self.importer = SampleListImport(self)
         self.normalizer = SampleListNormalize(self)
@@ -142,6 +154,12 @@ class SampleListWidget(QWidget):
 
     def _on_theme_changed(self, _name: str):
         SampleListUIBuilder.restyle(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        show_direct_bulk = self.width() >= 560
+        for button in getattr(self, "bulk_buttons", []):
+            button.setVisible(show_direct_bulk)
 
     def _build_shortcuts(self) -> None:
         self._history_shortcuts = []
@@ -232,16 +250,8 @@ class SampleListWidget(QWidget):
         if card is None:
             return
         self._focus_card(card)
-        try:
-            self.app_context.audio_player.clear_audio()
-        except Exception:
-            pass
-        is_playing = self.app_context.audio_player.seek_position(
-            card.sample.id,
-            card.sample.path,
-            card.sample.duration,
-            0,
-        )
+        entry = self._entry_from_sample(card.sample)
+        is_playing = self.app_context.reserve_preview.restart(entry)
         card.playback._apply_state(is_playing)
         if is_playing:
             card.playback.update_slider()
@@ -259,21 +269,13 @@ class SampleListWidget(QWidget):
         )
         if duration_ms <= 0:
             return
-        player = self.app_context.audio_player
+        controller = self.app_context.reserve_preview
+        entry = self._entry_from_sample(card.sample)
         current_position = 0
-        if (
-            int(getattr(player, "current_sample_id", -1)) == int(card.sample.id)
-            and os.path.normpath(getattr(player, "current_sample_path", "") or "")
-            == os.path.normpath(card.sample.path or "")
-        ):
-            current_position = max(0, int(player.get_position()))
+        if controller.is_active(entry):
+            current_position = max(0, int(self.app_context.audio_player.get_position()))
         target = max(0, min(duration_ms, current_position + int(delta_ms)))
-        is_playing = player.seek_position(
-            card.sample.id,
-            card.sample.path,
-            card.sample.duration,
-            target,
-        )
+        is_playing = controller.seek(entry, target)
         card.playback._apply_state(is_playing)
         card.playback.update_slider()
 
@@ -353,14 +355,27 @@ class SampleListWidget(QWidget):
         if query == self._reserve_query_text:
             return
         self._reserve_query_text = query
-        self.setCurrentPage(1)
+        self._refresh_after_filter_change()
 
     def set_reserve_status_filter(self, status_filter: str) -> None:
         status_filter = status_filter or "all"
         if status_filter == self._reserve_status_filter:
             return
         self._reserve_status_filter = status_filter
+        self._refresh_after_filter_change()
+
+    def set_reserve_scale_filter(self, scale: str) -> None:
+        scale = scale or "__all__"
+        if scale == self._reserve_scale_filter:
+            return
+        self._reserve_scale_filter = scale
+        self._refresh_after_filter_change()
+
+    def _refresh_after_filter_change(self) -> None:
         self.setCurrentPage(1)
+        allowed_ids = {int(sample.id) for sample in self.get_filtered_samples()}
+        self.selected_ids.intersection_update(allowed_ids)
+        self.updateSelectActions()
 
     def current_reserve_entry(self) -> ReserveEntry | None:
         if self._current_sample_id is None:
@@ -369,6 +384,10 @@ class SampleListWidget(QWidget):
         if sample is None:
             return None
         return self._entry_from_sample(sample)
+
+    def _entry_from_sample_id(self, sample_id: int) -> ReserveEntry | None:
+        sample = next((item for item in self.samples if int(item.id) == int(sample_id)), None)
+        return self._entry_from_sample(sample) if sample is not None else None
 
     def open_waveform_for_entry(self, entry: ReserveEntry | None) -> bool:
         if entry is None or entry.sample_id is None:
@@ -442,6 +461,10 @@ class SampleListWidget(QWidget):
     def bulkRemoveFromHistory(self):
         self.selection.bulk_remove_from_history()
 
+    @Slot()
+    def bulkAnalyzeScale(self):
+        self.selection.bulk_analyze_scale()
+
     def refreshList(self):
         self.cards.refresh_list()
 
@@ -453,6 +476,11 @@ class SampleListWidget(QWidget):
             if not reserve_entry_matches_query(entry, self._reserve_query_text):
                 continue
             if not reserve_entry_matches_status(entry, self._reserve_status_filter):
+                continue
+            scale_label = format_reserve_scale(entry)
+            if self._reserve_scale_filter == "__none__" and scale_label != "-":
+                continue
+            if self._reserve_scale_filter not in {"__all__", "__none__"} and scale_label != self._reserve_scale_filter:
                 continue
             if self._compat_filter_scales:
                 # Garde uniquement les samples dont les gammes compatibles se recoupent
@@ -474,7 +502,7 @@ class SampleListWidget(QWidget):
             self._compat_filter_sample_id = None
             self._compat_filter_scales = set()
             self.compatFilterChanged.emit(0)
-            self.setCurrentPage(1)
+            self._refresh_after_filter_change()
             return
         ref = next((s for s in self.samples if s.id == sample_id), None)
         if ref is None:
@@ -491,7 +519,7 @@ class SampleListWidget(QWidget):
         self._compat_filter_sample_id = sample_id
         self._compat_filter_scales = scales
         self.compatFilterChanged.emit(sample_id)
-        self.setCurrentPage(1)
+        self._refresh_after_filter_change()
 
     @Slot(int)
     def onFindCompatiblesRequested(self, sample_id: int) -> None:
@@ -637,11 +665,18 @@ class SampleListWidget(QWidget):
     # ---- Drag & drop
     def dragEnterEvent(self, event):
         self.dragdrop.drag_enter(event)
+        if event.isAccepted():
+            drag_controller().enter_target(self._drop_target_id, event.mimeData())
 
     def dragMoveEvent(self, event):
         self.dragdrop.drag_move(event)
 
+    def dragLeaveEvent(self, event):
+        drag_controller().leave_target(self._drop_target_id)
+        event.accept()
+
     def dropEvent(self, event):
+        drag_controller().finish_drag()
         self.dragdrop.drop(event)
 
     # ---- Pagination

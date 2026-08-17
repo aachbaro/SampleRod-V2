@@ -66,6 +66,26 @@ class WindowManager(QObject):
         self._raising = False                 # garde anti-recursion group raise
         self._backdrop = None                 # fond global optionnel
         self._backdrop_enabled = False
+        self._grid_overlay_visible = False    # reperage de grille sur le fond
+        self._grid_overlay_multiplier = 4     # une ligne tous les 4 pas de snap
+        # Controleur spatial : suit la geometrie des fenetres et planifie la
+        # persistance. Cree paresseusement pour ne rien changer aux tests qui
+        # instancient un WindowManager nu.
+        self._layout_manager = None
+
+    # -- Controleur spatial -------------------------------------------------
+    @property
+    def layout_manager(self):
+        """Controleur spatial, cree a la demande.
+
+        Il connait les fenetres ouvertes et leur geometrie ; le WindowManager
+        reste seul maitre du cycle de vie des instances.
+        """
+        if self._layout_manager is None:
+            from .layout.layout_manager import WorkspaceLayoutManager
+
+            self._layout_manager = WorkspaceLayoutManager(self, parent=self)
+        return self._layout_manager
 
     # -- Lecture ------------------------------------------------------------
     @property
@@ -194,6 +214,9 @@ class WindowManager(QObject):
         win = self._windows.pop(instance_id, None)
         if instance_id in self._stack_order:
             self._stack_order.remove(instance_id)
+        # Desenregistrement SYSTEMATIQUE : une fenetre detruite mais toujours
+        # connue du controleur deviendrait une cible fantome.
+        self.layout_manager.unregister_window(instance_id)
         if win is not None:
             win.windowHidden.disconnect(self._on_window_hidden)
             widget = win.module_widget()
@@ -253,25 +276,28 @@ class WindowManager(QObject):
         return {"instances": [inst.to_dict() for inst in self._instances.values()]}
 
     def restore_session(self, data: dict) -> None:
-        self.clear()
-        for raw in (data or {}).get("instances", []):
-            try:
-                inst = ModuleInstance.from_dict(raw)
-            except (KeyError, TypeError, ValueError):
-                continue
-            if not self._registry.has(inst.module_type):
-                continue
-            self.create_instance(
-                inst.module_type,
-                title=inst.title,
-                artifact_ids=inst.artifact_ids,
-                show=inst.visible,
-                instance_id=inst.instance_id,
-                geometry=inst.geometry,
-                visible=inst.visible,
-                state=inst.state,
-            )
-            self._bump_counter(inst.instance_id)
+        # Toute la restauration est encadree : les geometries restaurees ne
+        # doivent declencher ni magnetisme, ni re-ecriture immediate.
+        with self.layout_manager.restoring_session_guard():
+            self.clear()
+            for raw in (data or {}).get("instances", []):
+                try:
+                    inst = ModuleInstance.from_dict(raw)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not self._registry.has(inst.module_type):
+                    continue
+                self.create_instance(
+                    inst.module_type,
+                    title=inst.title,
+                    artifact_ids=inst.artifact_ids,
+                    show=inst.visible,
+                    instance_id=inst.instance_id,
+                    geometry=inst.geometry,
+                    visible=inst.visible,
+                    state=inst.state,
+                )
+                self._bump_counter(inst.instance_id)
 
     def clear(self) -> None:
         for instance_id in list(self._instances.keys()):
@@ -342,6 +368,9 @@ class WindowManager(QObject):
                 from .backdrop import BackdropWindow
 
                 self._backdrop = BackdropWindow(self)
+            # Un fond cree apres coup doit retrouver l'etat du reperage.
+            self._push_grid_metrics()
+            self._backdrop.set_grid_visible(self._grid_overlay_visible)
             self._backdrop.cover_screens()
             self._backdrop.show()
             self._backdrop.lower()
@@ -351,6 +380,63 @@ class WindowManager(QObject):
 
     def is_backdrop_enabled(self) -> bool:
         return self._backdrop_enabled
+
+    def set_grid_overlay_visible(self, visible: bool) -> None:
+        """Affiche le reperage de grille sur le fond global.
+
+        La grille se dessine SUR le fond : sans lui, il n'y a pas de surface
+        pour la porter. On allume donc le fond au besoin, plutot que de
+        laisser un bouton sans effet visible.
+        """
+        visible = bool(visible)
+        self._grid_overlay_visible = visible
+        if visible and not self._backdrop_enabled:
+            self.set_backdrop_enabled(True)
+        self._push_grid_metrics()
+        if self._backdrop is not None:
+            self._backdrop.set_grid_visible(visible)
+
+    def is_grid_overlay_visible(self) -> bool:
+        return self._grid_overlay_visible
+
+    def set_grid_overlay_multiplier(self, multiplier: int) -> None:
+        """Densite du quadrillage : une ligne tous les `pas x multiplicateur`.
+
+        Un multiplicateur plutot qu'une taille libre : le quadrillage reste
+        ainsi toujours un multiple du pas de magnetisme, donc chaque ligne
+        affichee marque une position ou une fenetre s'accroche vraiment.
+        """
+        value = max(1, int(multiplier or 1))
+        changed = value != self._grid_overlay_multiplier
+        self._grid_overlay_multiplier = value
+        self._push_grid_metrics()
+        # Le quadrillage dessine est aussi la reference des prochains
+        # deplacements : au relachement, x/y rejoignent une ligne visible.
+        self.layout_manager.set_alignment_grid_px(self.grid_overlay_step_px())
+        if changed:
+            self.align_windows_to_grid()
+
+    def align_windows_to_grid(self) -> int:
+        """Aligne position et taille de toutes les fenetres sur la grille visible."""
+        return self.layout_manager.align_windows_to_grid(self.grid_overlay_step_px())
+
+    def grid_overlay_multiplier(self) -> int:
+        return self._grid_overlay_multiplier
+
+    def grid_overlay_step_px(self) -> int:
+        """Pas reellement affiche, en pixels."""
+        from .backdrop import display_step_px
+
+        return display_step_px(
+            self.layout_manager.settings.grid_px, self._grid_overlay_multiplier
+        )
+
+    def _push_grid_metrics(self) -> None:
+        if self._backdrop is not None:
+            self._backdrop.set_grid_metrics(
+                snap_px=self.layout_manager.settings.grid_px,
+                multiplier=self._grid_overlay_multiplier,
+            )
 
     def suspend(self) -> None:
         """Masque les fenetres visibles SANS changer leur etat 'visible'.
@@ -385,8 +471,23 @@ class WindowManager(QObject):
         win = ModuleWindow(inst.instance_id, inst.title, widget)
         win.windowHidden.connect(self._on_window_hidden)
         win.activated.connect(self._on_window_activated)
-        win.apply_geometry(inst.geometry)
+        win.geometryChanged.connect(self.layout_manager.geometry_changed)
+        # Le magnetisme n'ecoute QUE le cycle d'interaction, jamais
+        # geometryChanged : un setGeometry programmatique n'est pas un geste.
+        win.interactionStarted.connect(self.layout_manager.interaction_started)
+        win.interactionFinished.connect(self.layout_manager.interaction_finished)
+        # La geometrie restauree ne doit pas etre prise pour un geste.
+        with self.layout_manager.restoring_session_guard():
+            win.apply_geometry(inst.geometry)
         self._windows[inst.instance_id] = win
+        self.layout_manager.register_window(
+            inst.instance_id, win, module_type=inst.module_type
+        )
+        # Une nouvelle instance doit respecter la grille au meme titre que les
+        # geometries restaurees. Pendant restore_session(), la garde du
+        # controleur rend volontairement cet appel inerte ; le recalage global
+        # est fait une seule fois apres la restauration.
+        self.align_windows_to_grid()
         self._connect_module_signals(inst, widget)
         self._restore_module_state(inst, widget)
         return win
@@ -405,7 +506,9 @@ class WindowManager(QObject):
         win = self._windows.get(inst.instance_id)
         if win is None:
             win = self._build_window(inst)
-        win.apply_geometry(inst.geometry)
+        # Re-affichage : la geometrie reappliquee n'est pas un geste utilisateur.
+        with self.layout_manager.applying_geometry_guard():
+            win.apply_geometry(inst.geometry)
         win.show()
         win.raise_()
         win.activateWindow()

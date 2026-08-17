@@ -26,7 +26,7 @@ class SampleListPagination:
 
     def update_label(self, start_idx: int, end_idx: int, total_samples: int):
         """Met a jour le label de pagination "start - end / total"."""
-        self.widget.pagination_label.setText(f"{start_idx} - {end_idx} / {total_samples}")
+        self.widget.pagination_label.setText(f"{start_idx}–{end_idx} / {total_samples}")
 
     def on_samples_per_page_changed(self, count: int):
         self.widget.samples_per_page = count
@@ -59,14 +59,11 @@ class SampleListPagination:
                     pass
 
         # 2) Stopper le player global si besoin
-        current_id = self.widget.app_context.audio_player.current_sample_id
-        if current_id != -1 and current_id not in ids_page:
-            player = self.widget.app_context.audio_player
-            if hasattr(player, "stop_playback"):
-                try:
-                    player.stop_playback()
-                except Exception:
-                    pass
+        controller = self.widget.app_context.reserve_preview
+        active = controller.active_entry
+        active_id = getattr(active, "sample_id", None) if active is not None else None
+        if active is not None and active_id not in ids_page:
+            controller.stop(active)
 
         self.set_current_page(page)
 

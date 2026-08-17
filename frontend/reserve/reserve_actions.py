@@ -34,7 +34,9 @@ from PySide6.QtCore import QObject, Signal, QUrl
 from PySide6.QtGui import QDesktopServices
 
 from backend.services.audio_metadata import get_audio_duration, normalize_audio_path
+from backend.services.reserve_mutation_service import ReserveMutationService
 from .reserve_entry import ReserveEntry
+from .reserve_preview import ensure_reserve_preview
 
 
 class ReserveActions(QObject):
@@ -55,6 +57,11 @@ class ReserveActions(QObject):
         self.app_context = app_context
         self.sample_store = app_context.sample_store
         self.audio_player = app_context.audio_player
+        self.preview_controller = ensure_reserve_preview(app_context)
+        self.preview_controller.activeEntryChanged.connect(self.previewChanged)
+        self.mutations = getattr(app_context, "reserve_mutations", None)
+        if self.mutations is None:
+            self.mutations = ReserveMutationService(app_context)
 
     def can_preview(self, entry: ReserveEntry | None) -> bool:
         """Retourne True si le fichier existe sur disque et n'est pas marque manquant."""
@@ -74,10 +81,7 @@ class ReserveActions(QObject):
 
     def is_previewing(self, entry: ReserveEntry | None) -> bool:
         """Retourne True si c'est ce sample qui est actuellement en lecture."""
-        if not entry or not self.audio_player.is_playing:
-            return False
-        current_path = normalize_audio_path(self.audio_player.current_sample_path or "")
-        return current_path == normalize_audio_path(entry.path)
+        return self.preview_controller.is_active(entry)
 
     def seek_preview(self, entry: ReserveEntry | None, position_ms: int) -> bool:
         """Saute a la position donnee (en ms) dans la lecture du sample.
@@ -91,17 +95,8 @@ class ReserveActions(QObject):
         duration = self._duration_for_entry(entry)
         if duration <= 0:
             return False
-
         position_ms = max(0, min(int(position_ms), int(duration * 1000)))
-        sample_id = self._preview_sample_id(entry)
-        is_playing = self.audio_player.seek_position(
-            sample_id,
-            entry.path,
-            duration,
-            position_ms,
-        )
-        self.previewChanged.emit(entry if is_playing else None)
-        return is_playing
+        return self.preview_controller.seek(entry, position_ms)
 
     def preview(self, entry: ReserveEntry | None) -> bool:
         """Lance ou arrete la lecture du sample (toggle).
@@ -113,25 +108,7 @@ class ReserveActions(QObject):
         if not self.can_preview(entry):
             return False
         assert entry is not None
-        if self.is_previewing(entry):
-            try:
-                self.audio_player.clear_audio()
-            except Exception:
-                pass
-            self.previewChanged.emit(None)
-            return False
-
-        try:
-            if self.audio_player.is_playing:
-                self.audio_player.clear_audio()
-        except Exception:
-            pass
-
-        duration = self._duration_for_entry(entry)
-        sample_id = self._preview_sample_id(entry)
-        self.audio_player.toggle_play(sample_id, entry.path, duration)
-        self.previewChanged.emit(entry)
-        return True
+        return self.preview_controller.play_pause(entry)
 
     def rename(self, entry: ReserveEntry | None, new_name: str) -> tuple[bool, str | None]:
         """Renomme le sample via le sample_store.
@@ -142,10 +119,8 @@ class ReserveActions(QObject):
         if not self.can_rename(entry):
             return False, "Renommage indisponible"
         assert entry is not None
-        if entry.sample_id is not None:
-            self.sample_store.rename(int(entry.sample_id), new_name)
-            return True, None
-        return self.sample_store.rename_by_path(entry.path, new_name)
+        result = self.mutations.rename(entry, new_name)
+        return result.success, (None if result.success else result.message or "Renommage impossible")
 
     def reveal_in_folder(self, entry: ReserveEntry | None) -> bool:
         if not self.can_reveal_in_folder(entry):
@@ -169,11 +144,6 @@ class ReserveActions(QObject):
         assert entry is not None
         self.sendToLabRequested.emit([entry.path])
         return True
-
-    @staticmethod
-    def _preview_sample_id(entry: ReserveEntry) -> int:
-        """Retourne l'ID de lecture : l'ID base si indexe, sinon un hash du chemin."""
-        return int(entry.sample_id) if entry.sample_id is not None else (hash(entry.path) & 0x7FFFFFFF)
 
     @staticmethod
     def _duration_for_entry(entry: ReserveEntry) -> float:

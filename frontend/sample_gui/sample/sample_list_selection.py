@@ -47,6 +47,9 @@ class SampleListSelection:
         self.widget.bulk_delete_act.setEnabled(any_selected)
         self.widget.bulk_move_act.setEnabled(any_selected)
         self.widget.bulk_normalize_act.setEnabled(any_selected)
+        analyze_action = getattr(self.widget, "bulk_analyze_act", None)
+        if analyze_action is not None:
+            analyze_action.setEnabled(any_selected)
         self.widget.bulk_archive_act.setEnabled(any_selected)
 
         self.update_select_actions()
@@ -55,6 +58,20 @@ class SampleListSelection:
         any_samples = bool(self.widget._card_widgets)
         all_selected = len(self.widget.selected_ids) == len(self.widget._card_widgets)
         none_selected = len(self.widget.selected_ids) == 0
+        for name in (
+            "bulk_delete_act", "bulk_move_act", "bulk_normalize_act",
+            "bulk_analyze_act", "bulk_archive_act",
+        ):
+            action = getattr(self.widget, name, None)
+            if action is not None:
+                action.setEnabled(not none_selected)
+        if hasattr(self.widget, "bulk_bar"):
+            self.widget.bulk_bar.setVisible(not none_selected)
+        if hasattr(self.widget, "bulk_count_label"):
+            count = len(self.widget.selected_ids)
+            self.widget.bulk_count_label.setText(
+                f"{count} sélectionné{'s' if count != 1 else ''}"
+            )
 
         # Support legacy QAction buttons or the new round HoverIconButton widgets.
         if hasattr(self.widget, "select_all_btn"):
@@ -81,15 +98,18 @@ class SampleListSelection:
 
         reply = QMessageBox.question(
             self.widget,
-            "Confirmer la suppression de l'historique",
-            f"Voulez-vous vraiment retirer les {len(self.widget.selected_ids)} echantillons de l'historique ?",
+            "Confirmer la désindexation",
+            f"Désindexer les {len(self.widget.selected_ids)} samples sélectionnés ?\n"
+            "Les fichiers audio seront conservés sur le disque.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
         for sample_id in list(self.widget.selected_ids):
-            self.widget.sample_store.removeFromHistory(sample_id)
+            self.widget.app_context.reserve_mutations.unindex(
+                self.widget._entry_from_sample_id(sample_id)
+            )
 
         self.widget.selected_ids.clear()
         self.widget.bulk_delete_act.setEnabled(False)
@@ -108,12 +128,10 @@ class SampleListSelection:
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            to_delete = list(self.widget.selected_ids)
-            current = self.widget.app_context.audio_player.current_sample_id
-            if current in to_delete:
-                self.widget.app_context.audio_player.clear_audio()
-
-            self.widget.sample_store.bulkDelete(to_delete)
+            for sample_id in list(self.widget.selected_ids):
+                self.widget.app_context.reserve_mutations.delete_file_and_record(
+                    self.widget._entry_from_sample_id(sample_id)
+                )
             self.widget.selected_ids.clear()
             self.widget.bulk_delete_act.setEnabled(False)
             self.widget.bulk_move_act.setEnabled(False)
@@ -131,7 +149,9 @@ class SampleListSelection:
             return
 
         for sample_id in list(self.widget.selected_ids):
-            self.widget.sample_store.move(sample_id, dossier)
+            self.widget.app_context.reserve_mutations.move(
+                self.widget._entry_from_sample_id(sample_id), dossier
+            )
 
         self.widget.selected_ids.clear()
         self.widget.bulk_delete_act.setEnabled(False)
@@ -160,3 +180,7 @@ class SampleListSelection:
             worker.normalizationFailed.connect(self.widget.onNormalizationFailed)
             worker.start()
             self.widget.app_context.sample_store._normalize_threads[sample_id] = worker
+
+    def bulk_analyze_scale(self):
+        if self.widget.selected_ids:
+            self.widget.sample_store.batch_analyze_ids(self.widget.selected_ids)

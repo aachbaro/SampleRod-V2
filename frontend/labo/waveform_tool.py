@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from backend.services.material_naming import material_display_name
 from frontend.sample_gui.wave_form import WaveformWidget
 from frontend.styles import theme
 from frontend.ui import IconButton
@@ -298,8 +299,10 @@ class WaveformToolWidget(QWidget):
             self._show_warning("La slice est vide.")
             return
 
-        base_name = os.path.splitext(os.path.basename(self._current_path or "slice"))[0]
-        display_name = f"{base_name}_slice_{start_time:.2f}_{end_time:.2f}"
+        display_name = material_display_name(
+            self._current_path or "slice",
+            kind="audio_selection",
+        )
         temp_path = self._write_temp_snapshot(audio, int(waveform.sample_rate), display_name)
         artifact = LabArtifact(
             artifact_id=uuid.uuid4().hex,
@@ -331,8 +334,10 @@ class WaveformToolWidget(QWidget):
 
         audio = np.asarray(waveform.waveform_data, dtype="float32").copy()
         duration = float(waveform.duration or 0.0)
-        base_name = os.path.splitext(os.path.basename(self._current_path or "current_file"))[0]
-        display_name = f"{base_name}_current"
+        display_name = material_display_name(
+            self._current_path or "current_file",
+            kind="current_file",
+        )
         temp_path = self._write_temp_snapshot(audio, int(waveform.sample_rate), display_name)
         artifact = LabArtifact(
             artifact_id=uuid.uuid4().hex,

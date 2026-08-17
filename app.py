@@ -164,17 +164,6 @@ if __name__ == '__main__':
     if not _acquire_single_instance("SampleRod.SingleInstance"):
         sys.exit(0)
 
-    # Etape 1 bis — menage des fichiers de travail temporaires. Chaque rendu
-    # de pattern, apercu et waveform editee ecrit un WAV qui n'etait jamais
-    # supprime : sur plusieurs sessions, ces dossiers atteignaient des
-    # centaines de Mo. On ne garde que les plus recents.
-    try:
-        from backend.services.temp_workspace import prune_all_workspaces
-
-        prune_all_workspaces()
-    except Exception:
-        logger.exception("Menage des fichiers temporaires impossible")
-
     # Etape 2 — creation de l'application Qt (la boucle d'evenements
     # qui fera vivre toute l'interface).
     gui = QApplication(sys.argv)
@@ -247,6 +236,23 @@ if __name__ == '__main__':
         splash.close()
         # start() choisit le mode (classique / modulaire) sans flash de l'autre.
         main_window.start()
+        # Le menage des WAV temporaires est secondaire et purement disque : il
+        # ne doit plus retarder le premier affichage. Un thread daemon le fait
+        # apres que l'interface est deja visible.
+        def _prune_in_background():
+            try:
+                from backend.services.temp_workspace import prune_all_workspaces
+
+                prune_all_workspaces()
+            except Exception:
+                logger.exception("Menage des fichiers temporaires impossible")
+
+        import threading
+        threading.Thread(
+            target=_prune_in_background,
+            daemon=True,
+            name="startup-temp-prune",
+        ).start()
         sys.exit(gui.exec())
     except Exception:
         logger.exception("Echec pendant l'initialisation de l'interface")

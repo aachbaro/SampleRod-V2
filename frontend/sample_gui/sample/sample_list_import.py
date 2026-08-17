@@ -10,12 +10,15 @@
 #
 # LIENS CLES
 # - frontend/sample_gui/sample/sample_list.py : SampleListWidget (widget parent)
-# - backend/models/SampleLibrary.py           : sample_store.add() / delete_record_by_path()
+# - backend/services/reserve_import_service.py : contrat métier d'import
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
 
 import os
+from backend.services.reserve_import_service import (
+    ReserveImportRequest, ReserveReimportPolicy,
+)
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 
@@ -44,6 +47,7 @@ class SampleListImport:
         self.widget._qs.setValue("lastSampleDir", new_dir)
 
         for path in fichiers:
+            policy = ReserveReimportPolicy.SKIP
             existing = next(
                 (s for s in self.widget.sample_store.get_cached() if s.path == path),
                 None,
@@ -57,9 +61,17 @@ class SampleListImport:
                 )
                 if answer == QMessageBox.StandardButton.No:
                     continue
-                self.widget.sample_store.delete_record_by_path(path)
+                policy = ReserveReimportPolicy.REINDEX
             try:
-                self.widget.sample_store.add(path)
+                result = self.widget.app_context.reserve_imports.import_request(
+                    ReserveImportRequest(
+                        paths=(path,),
+                        status="source",
+                        reimport_policy=policy,
+                    )
+                )
+                if result.errors:
+                    raise RuntimeError(result.errors[0][1])
             except Exception as e:
                 QMessageBox.warning(
                     self.widget,

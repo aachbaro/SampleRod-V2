@@ -40,13 +40,22 @@ from typing import Any, Literal
 
 from backend.services.directory_service import DirectoryAudioEntry
 from frontend.styles import theme
+from .reserve_capabilities import ReserveCapabilities, reserve_capabilities_for
+from .reserve_status import (
+    ReserveTechnicalStatus,
+    STATUS_LABELS,
+    STATUS_TONES,
+    reserve_technical_status_label,
+    reserve_technical_status_tone,
+)
 
 ReserveSourceKind = Literal["filesystem", "history", "indexed"]
 
-STATUS_NORMAL = "normal"
-STATUS_NON_INDEXED = "non_indexed"
-STATUS_NEEDS_ANALYSIS = "needs_analysis"
-STATUS_MISSING = "missing"
+# Alias chaîne historiques : leur type et leur valeur restent inchangés.
+STATUS_NORMAL = ReserveTechnicalStatus.NORMAL.value
+STATUS_NON_INDEXED = ReserveTechnicalStatus.NON_INDEXED.value
+STATUS_NEEDS_ANALYSIS = ReserveTechnicalStatus.NEEDS_ANALYSIS.value
+STATUS_MISSING = ReserveTechnicalStatus.MISSING.value
 STATUS_ALL = "all"
 
 STATUS_ORDER = [
@@ -56,23 +65,9 @@ STATUS_ORDER = [
     STATUS_MISSING,
 ]
 
-STATUS_LABELS = {
-    STATUS_NORMAL: "Normal",
-    STATUS_NON_INDEXED: "Non indexe",
-    STATUS_NEEDS_ANALYSIS: "A analyser",
-    STATUS_MISSING: "Fichier manquant",
-}
-
-STATUS_TONES = {
-    STATUS_NORMAL: "neutral",
-    STATUS_NON_INDEXED: "info",
-    STATUS_NEEDS_ANALYSIS: "warning",
-    STATUS_MISSING: "error",
-}
-
 SOURCE_LABELS = {
     "filesystem": "Dossiers",
-    "history": "Historique",
+    "history": "Récents",
     "indexed": "Indexe",
 }
 
@@ -99,7 +94,7 @@ class ReserveEntry:
     created_at: dt.datetime | None = None
     duration: float | None = None
     rms_level: float | None = None
-    status: str = STATUS_NORMAL
+    status: ReserveTechnicalStatus | str = ReserveTechnicalStatus.NORMAL
     needs_analysis: bool = False
     missing: bool = False
     indexed: bool = False
@@ -113,6 +108,10 @@ class ReserveEntry:
     @property
     def status_label(self) -> str:
         return reserve_status_label(self.status)
+
+    @property
+    def capabilities(self) -> ReserveCapabilities:
+        return reserve_capabilities_for(self)
 
     @property
     def source_label(self) -> str:
@@ -130,23 +129,27 @@ class ReserveEntry:
         return self.source_label
 
 
-def resolve_reserve_status(*, indexed: bool, missing: bool, needs_analysis: bool) -> str:
+def resolve_reserve_status(
+    *, indexed: bool, missing: bool, needs_analysis: bool
+) -> ReserveTechnicalStatus:
     """Deduit le statut a partir de trois booleens (ordre de priorite : missing > not indexed > needs_analysis)."""
     if missing:
-        return STATUS_MISSING
+        return ReserveTechnicalStatus.MISSING
     if not indexed:
-        return STATUS_NON_INDEXED
+        return ReserveTechnicalStatus.NON_INDEXED
     if needs_analysis:
-        return STATUS_NEEDS_ANALYSIS
-    return STATUS_NORMAL
+        return ReserveTechnicalStatus.NEEDS_ANALYSIS
+    return ReserveTechnicalStatus.NORMAL
 
 
-def reserve_status_label(status: str) -> str:
-    return STATUS_LABELS.get(status, STATUS_LABELS[STATUS_NORMAL])
+def reserve_status_label(status: ReserveTechnicalStatus | str) -> str:
+    """Alias historique vers le formateur du statut technique."""
+    return reserve_technical_status_label(status)
 
 
-def reserve_status_tone(status: str) -> str:
-    return STATUS_TONES.get(status, STATUS_TONES[STATUS_NORMAL])
+def reserve_status_tone(status: ReserveTechnicalStatus | str) -> str:
+    """Alias historique vers le ton du statut technique."""
+    return reserve_technical_status_tone(status)
 
 
 def reserve_status_badge_stylesheet(status: str) -> str:
@@ -186,6 +189,8 @@ def apply_status_badge(label_widget, status: str) -> None:
     """Applique le texte et le style de badge de statut sur un QLabel."""
     label_widget.setText(reserve_status_label(status))
     label_widget.setStyleSheet(reserve_status_badge_stylesheet(status))
+    status_value = str(getattr(status, "value", status)).strip().lower()
+    label_widget.setVisible(status_value != "normal")
 
 
 def reserve_entry_matches_query(entry: ReserveEntry, query: str) -> bool:
@@ -240,6 +245,11 @@ def reserve_entry_from_sample(
     path = getattr(sample, "path", "")
     missing = bool(getattr(sample, "missing", False))
     needs_analysis = bool(getattr(sample, "needs_analysis", False))
+    sample_metadata = getattr(sample, "material_metadata_dict", {})
+    if callable(sample_metadata):
+        sample_metadata = sample_metadata()
+    merged_metadata = dict(sample_metadata or {})
+    merged_metadata.update(metadata or {})
     return ReserveEntry(
         source_kind=source_kind,
         path=path,
@@ -267,7 +277,7 @@ def reserve_entry_from_sample(
             else None
         ),
         compatible_scales=_normalize_compatible_scales(getattr(sample, "compatible_scales", None)),
-        metadata=dict(metadata or {}),
+        metadata=merged_metadata,
     )
 
 

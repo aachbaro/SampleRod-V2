@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QMimeData, QObject, QSettings, Signal
 
 from backend.services.audio_metadata import get_audio_duration
+from backend.services.material_naming import human_material_base, material_display_name
 
 from .lab_artifact import LabArtifact, artifact_file_path, build_artifact_filename
 
@@ -71,7 +72,7 @@ class LabArtifactStore(QObject):
             artifact = LabArtifact(
                 artifact_id=uuid.uuid4().hex,
                 kind="current_file",
-                display_name=os.path.splitext(os.path.basename(path))[0] or os.path.basename(path),
+                display_name=self._import_display_name(path),
                 source_path=path,
                 duration=duration,
                 persisted=True,
@@ -81,6 +82,33 @@ class LabArtifactStore(QObject):
             imported.append(artifact)
             self.upsert(artifact)
         return imported
+
+    def _import_display_name(self, path: str) -> str:
+        """Produit un libellé humain, enrichi par la provenance si elle existe."""
+        sample_store = getattr(self.app_context, "sample_store", None)
+        get_cached = getattr(sample_store, "get_cached", None)
+        samples = get_cached() if callable(get_cached) else ()
+        path_key = os.path.normcase(os.path.normpath(path))
+        sample = next(
+            (
+                candidate
+                for candidate in samples
+                if os.path.normcase(
+                    os.path.normpath(str(getattr(candidate, "path", "")))
+                ) == path_key
+            ),
+            None,
+        )
+        metadata = getattr(sample, "material_metadata_dict", {}) if sample else {}
+        if callable(metadata):
+            metadata = metadata()
+        provenance = dict((metadata or {}).get("provenance") or {})
+        if provenance:
+            return material_display_name(
+                str(provenance.get("source_path") or path),
+                kind=str(provenance.get("previous_kind") or ""),
+            )
+        return human_material_base(path)
 
     def rename_artifact(self, artifact_id: str, new_name: str) -> bool:
         artifact = self.artifact(artifact_id)

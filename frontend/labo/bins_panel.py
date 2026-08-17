@@ -79,6 +79,7 @@ from frontend.labo.artifact_store import ensure_lab_artifact_store
 from frontend.ui import IconButton, make_flow_container
 from frontend.right_panel.composer.composer_dnd import has_sample_card, parse_sample_card_mime
 from frontend.styles import theme
+from frontend.dragdrop import DropAcceptance, DropAction, describe_drop, drag_controller
 
 
 _BINS_SETTINGS_KEY = "labo_bins_v1"
@@ -115,6 +116,15 @@ class BinChip(QWidget):
         self.setFixedSize(*self.CHIP_SIZE)
         self._build_ui()
         self._refresh()
+        self._drop_target_id = f"bin:{self.bin_data.bin_id}:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id,
+            self,
+            lambda payload: DropAcceptance.accept(
+                DropAction.MOVE_TO_BIN,
+                f"{describe_drop(DropAction.MOVE_TO_BIN, payload)} dans {self.bin_data.label}",
+            ),
+        )
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -154,10 +164,12 @@ class BinChip(QWidget):
         self._handle_drag_enter(event)
 
     def dragLeaveEvent(self, event) -> None:
+        drag_controller().leave_target(self._drop_target_id)
         self._set_drop_active(False)
         event.accept()
 
     def dropEvent(self, event) -> None:
+        drag_controller().finish_drag()
         if not _has_supported_bin_drop(event.mimeData()):
             self._set_drop_active(False)
             event.ignore()
@@ -187,6 +199,7 @@ class BinChip(QWidget):
             event.ignore()
             return
         self._set_drop_active(True)
+        drag_controller().enter_target(self._drop_target_id, event.mimeData())
         event.setDropAction(Qt.DropAction.MoveAction)
         event.accept()
 

@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFileDialog, QTabWidget, QVBoxLayout, QWidget
 
 from frontend.labo.audio_drop import can_accept_audio_drop
+from frontend.dragdrop import DropAcceptance, DropAction, describe_drop, drag_controller
 from frontend.ui import IconButton, add_tab_close_button
 
 _AUDIO_FILTER = "Audio (*.wav *.flac *.aif *.aiff *.mp3 *.ogg);;Tous (*.*)"
@@ -43,6 +44,13 @@ class WaveformModule(QWidget):
         self._editor_factory = editor_factory or self._default_editor
         self.setObjectName("WaveformModule")
         self.setAcceptDrops(True)
+        self._drop_target_id = f"waveform:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id, self,
+            lambda payload: DropAcceptance.accept(
+                DropAction.OPEN, describe_drop(DropAction.OPEN, payload)
+            ),
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -108,9 +116,14 @@ class WaveformModule(QWidget):
             sample_path_lookup=self._path_for_sample_id,
             artifact_path_lookup=self._path_for_artifact_id,
         ):
+            drag_controller().enter_target(self._drop_target_id, event.mimeData())
             event.acceptProposedAction()
         else:
             event.ignore()
+
+    def dragLeaveEvent(self, event):  # noqa: N802
+        drag_controller().leave_target(self._drop_target_id)
+        event.accept()
 
     def dragMoveEvent(self, event):  # noqa: N802
         if can_accept_audio_drop(
@@ -123,6 +136,7 @@ class WaveformModule(QWidget):
             event.ignore()
 
     def dropEvent(self, event):  # noqa: N802
+        drag_controller().finish_drag()
         paths = self._paths_from_mime(event.mimeData())
         if not paths:
             event.ignore()

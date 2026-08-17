@@ -15,9 +15,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import QEvent, QRect, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMainWindow, QWidget
+
+logger = logging.getLogger("module_window")
 
 _MIN_VISIBLE_W = 96
 _MIN_VISIBLE_H = 48
@@ -45,10 +49,28 @@ class ModuleWindow(QMainWindow):
 
     windowHidden = Signal(str)  # instance_id : la croix a masque la fenetre
     activated = Signal(str)     # instance_id : la fenetre est devenue active
+    # La geometrie a change, pour une raison QUELCONQUE (drag en cours,
+    # setGeometry programmatique, restauration). Sert a la memoire et a la
+    # persistance. Ce n'est PAS une fin de geste : le magnetisme ne doit pas
+    # s'y brancher — il ecoutera le cycle d'interaction natif.
+    geometryChanged = Signal(str)
+    # Cycle du geste utilisateur : saisie puis relachement de la fenetre.
+    # SEULE source du magnetisme.
+    interactionStarted = Signal(str)
+    interactionFinished = Signal(str)
 
     def __init__(self, instance_id: str, title: str, content: QWidget, parent=None):
         super().__init__(parent)
         self._instance_id = instance_id
+        # Observateur du geste utilisateur (debut/fin). C'est lui, et lui seul,
+        # qui declenchera le magnetisme — jamais geometryChanged.
+        # Cree AVANT tout appel qui pourrait declencher move/resizeEvent.
+        from .layout.move_lifecycle import create_interaction_watcher
+
+        self._interaction_watcher = create_interaction_watcher(instance_id, self)
+        self._interaction_watcher.interactionStarted.connect(self.interactionStarted)
+        self._interaction_watcher.interactionFinished.connect(self.interactionFinished)
+
         self.setObjectName("ModuleWindow")
         self.setWindowTitle(title)
         self.setCentralWidget(content)
@@ -89,6 +111,42 @@ class ModuleWindow(QMainWindow):
         event.ignore()
         self.hide()
         self.windowHidden.emit(self._instance_id)
+
+    def _notify_watcher(self) -> None:
+        """Signale un mouvement a l'observateur, s'il existe deja.
+
+        Qt peut emettre un resizeEvent pendant la construction, avant meme que
+        l'observateur soit en place : on ne veut pas d'AttributeError pour ca.
+        """
+        watcher = getattr(self, "_interaction_watcher", None)
+        if watcher is not None:
+            watcher.on_geometry_event()
+
+    def nativeEvent(self, event_type, message):  # noqa: N802
+        """Observation PASSIVE du cycle natif.
+
+        Ne renvoie jamais True de son propre fait, ne modifie jamais le RECT,
+        et delegue toujours a super(). Toute exception de l'observateur est
+        capturee : nativeEvent est sur un chemin chaud, une erreur qui
+        remonterait ici perturberait la fenetre.
+        """
+        try:
+            watcher = getattr(self, "_interaction_watcher", None)
+            if watcher is not None:
+                watcher.handle_native(event_type, message)
+        except Exception:
+            logger.exception("Observation du cycle natif impossible")
+        return super().nativeEvent(event_type, message)
+
+    def moveEvent(self, event):  # noqa: N802
+        super().moveEvent(event)
+        self._notify_watcher()
+        self.geometryChanged.emit(self._instance_id)
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self._notify_watcher()
+        self.geometryChanged.emit(self._instance_id)
 
     def changeEvent(self, event):  # noqa: N802
         if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():

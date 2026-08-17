@@ -269,6 +269,8 @@ class RecordWidgetWindow(QMainWindow):
         p = theme.manager.p
         is_recording = self.app_context.recorder.is_recording
         is_retro = self.settings.isRetroEnabled()
+        # A zero, on retrouve le rond REC normal. Une valeur > 0 remplace
+        # temporairement l'icone par le nombre de secondes selectionne.
         show_retro_value = is_retro and self.retro_time_selected > 0
 
         if is_recording:
@@ -278,16 +280,22 @@ class RecordWidgetWindow(QMainWindow):
             border     = p.RETRO if is_retro else p.BORDER
             text_color = p.TEXT
 
+        button_bg = p.BG
+        if show_retro_value:
+            text_color = "#ffffff"
+
         button_radius = max(1, self.recordButton.height() // 2)
         self.recordButton.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {p.BG};
+                background-color: {button_bg};
                 color: {text_color};
                 border: 1px solid {border};
                 border-radius: {button_radius}px;
                 font-size: 11px;
                 font-weight: 700;
+                padding: 0;
+                margin: 0;
             }}
             QPushButton:hover {{
                 border-color: {p.TEXT};

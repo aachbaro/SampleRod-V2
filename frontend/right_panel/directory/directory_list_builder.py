@@ -22,9 +22,14 @@ from backend.services.audio_metadata import normalize_audio_path
 from frontend.reserve import (
     reserve_entry_matches_query,
     reserve_entry_matches_status,
+    format_reserve_scale,
 )
 
-from .directory_item_widget import DirectoryListItemWidget, DirectorySubfolderRowWidget
+from .directory_item_widget import (
+    DirectoryListItemWidget,
+    DirectorySectionHeader,
+    DirectorySubfolderRowWidget,
+)
 
 logger = logging.getLogger("directory_widget")
 
@@ -63,6 +68,8 @@ class DirectoryListBuilder:
         except OSError:
             subdirs = []
 
+        if subdirs:
+            self._add_section_header("Dossiers")
         for subdir_path in subdirs:
             self._add_subfolder_row(subdir_path)
 
@@ -76,6 +83,14 @@ class DirectoryListBuilder:
             if reserve_entry_matches_query(entry, self.widget._reserve_query_text)
             and reserve_entry_matches_status(entry, self.widget._reserve_status_filter)
             and (
+                getattr(self.widget, "_reserve_scale_filter", "__all__") == "__all__"
+                or (
+                    getattr(self.widget, "_reserve_scale_filter", "__all__") == "__none__"
+                    and format_reserve_scale(entry) == "-"
+                )
+                or format_reserve_scale(entry) == getattr(self.widget, "_reserve_scale_filter", "__all__")
+            )
+            and (
                 not self.widget._compat_filter_scales
                 or bool(set(entry.compatible_scales) & self.widget._compat_filter_scales)
             )
@@ -85,6 +100,8 @@ class DirectoryListBuilder:
             len(filtered_entries),
         )
 
+        if filtered_entries:
+            self._add_section_header("Fichiers")
         for entry in filtered_entries:
             self._add_row_direct(entry)
 
@@ -98,23 +115,13 @@ class DirectoryListBuilder:
 
         if previous_selection and previous_selection in self.widget._folder_rows_by_path:
             self.widget._select_folder_path(previous_selection)
-        elif filtered_entries:
-            target_path = (
-                previous_selection
-                if previous_selection in self.widget._rows_by_path
-                else filtered_entries[0].path
-            )
-            self.widget._select_path(target_path)
-        elif subdirs:
-            target_folder = (
-                previous_selection
-                if previous_selection in self.widget._folder_rows_by_path
-                else normalize_audio_path(subdirs[0])
-            )
-            self.widget._select_folder_path(target_folder)
+        elif previous_selection and previous_selection in self.widget._rows_by_path:
+            self.widget._select_path(previous_selection)
         else:
             self.widget._selected_path = None
             self.widget._selected_folder_path = None
+            self.widget.list_widget.clearSelection()
+            self.widget.list_widget.setCurrentItem(None)
             self.widget.detail_widget.clear_entry()
             self.widget._sync_detail_preview_state()
             self.widget.reserveEntrySelected.emit(None)
@@ -142,6 +149,14 @@ class DirectoryListBuilder:
         self.widget.list_widget.addItem(list_item)
         self.widget.list_widget.setItemWidget(list_item, row_widget)
         self.widget._folder_rows_by_path[normalize_audio_path(subdir_path)] = (list_item, row_widget)
+
+    def _add_section_header(self, text: str) -> None:
+        header = DirectorySectionHeader(text, self.widget.list_widget)
+        item = QListWidgetItem(self.widget.list_widget)
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        item.setSizeHint(header.sizeHint())
+        self.widget.list_widget.addItem(item)
+        self.widget.list_widget.setItemWidget(item, header)
 
     def _add_row_direct(self, entry) -> None:
         item_widget = DirectoryListItemWidget(entry, self.widget)

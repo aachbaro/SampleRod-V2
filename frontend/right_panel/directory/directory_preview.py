@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from typing import Callable, Optional, Any
+from backend.services.audio_metadata import normalize_audio_path
 
 logger = logging.getLogger("directory_preview")
 
@@ -47,6 +48,8 @@ class DirectoryPreviewController:
 
         self._current_widget: Optional[Any] = None
         self._current_sample_id: Optional[int] = None
+        self._path_session_ids: dict[str, int] = {}
+        self._next_session_id = -2
 
     # ------------------------------------------------------------------ public API
     def toggle(self, item_widget: Any) -> None:
@@ -61,9 +64,12 @@ class DirectoryPreviewController:
         if not file_path:
             return
 
-        # NOTE: l'ancien code utilisait un hash du path comme sample_id temporaire.
-        # On conserve ce comportement pour eviter de changer des interactions existantes.
-        sample_id = hash(file_path) & 0x7FFFFFFF
+        normalized_path = normalize_audio_path(file_path)
+        session_key = normalized_path.casefold()
+        if session_key not in self._path_session_ids:
+            self._path_session_ids[session_key] = self._next_session_id
+            self._next_session_id -= 1
+        sample_id = self._path_session_ids[session_key]
         duration = 0.0
         try:
             duration = float(self._get_duration(file_path))

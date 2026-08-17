@@ -29,7 +29,6 @@
 from __future__ import annotations
 
 from collections import Counter
-import datetime as dt
 import json
 import logging
 import os
@@ -40,6 +39,11 @@ from time import perf_counter
 
 from PySide6.QtCore import QEvent, QMimeData, Qt, QTimer, QUrl, Signal, QSettings
 from PySide6.QtGui import QColor, QDrag, QKeySequence, QShortcut
+from frontend.dragdrop import (
+    DragItem, DragKind, DragPayload, DragProvenance,
+    MaterialOperation, MaterialStatus,
+    attach_payload, drag_preview_pixmap, drag_session,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -62,6 +66,12 @@ from frontend.reserve import (
     reserve_entry_matches_status,
     reserve_status_label,
     reserve_status_tone,
+    format_reserve_date,
+    format_reserve_duration,
+    format_reserve_rms,
+    format_reserve_scale,
+    format_reserve_size,
+    reserve_date_sort_value,
 )
 from frontend.styles import theme
 from frontend.ui import themed_icon
@@ -70,6 +80,30 @@ from . import library_ui
 from .library_detail import LibraryDetailWidget
 
 logger = logging.getLogger("library_widget")
+
+
+class LibraryTableItem(QTableWidgetItem):
+    """Human-readable cell with an independent deterministic sort value."""
+
+    SORT_ROLE = Qt.ItemDataRole.UserRole + 20
+
+    def __lt__(self, other) -> bool:
+        left = self.data(self.SORT_ROLE)
+        right = other.data(self.SORT_ROLE) if isinstance(other, QTableWidgetItem) else None
+        if left is not None and right is not None:
+            try:
+                return left < right
+            except TypeError:
+                return str(left) < str(right)
+        return super().__lt__(other)
+
+
+def pending_hidden_refresh_requires_render(
+    pending_snapshot, *, quick_update_unrendered: bool, pending_signature, rendered_signature
+) -> bool:
+    return pending_snapshot is not None and (
+        quick_update_unrendered or pending_signature != rendered_signature
+    )
 
 
 class LibraryWidget(QWidget):
@@ -89,8 +123,27 @@ class LibraryWidget(QWidget):
     TABLE_SAMPLE_ID_ROLE = Qt.ItemDataRole.UserRole
     SCALE_FILTER_ALL = "__all__"
     SCALE_FILTER_NONE = "__none__"
+    COLUMN_DEFINITIONS = (
+        ("name", "Nom", True),
+        ("scale", "Gamme", True),
+        ("folder", "Dossier", True),
+        ("duration", "Durée", True),
+        ("date", "Date", True),
+        ("status", "Statut", True),
+        ("root", "Racine", False),
+        ("size", "Poids", False),
+        ("rms", "RMS", False),
+        ("note", "Note dominante", False),
+    )
+    COLUMN_INDEX = {
+        "name": 0, "scale": 1, "folder": 2, "duration": 3, "date": 4,
+        "status": 5, "root": 6, "size": 7, "rms": 8, "note": 9,
+    }
+    COLUMN_VISIBILITY_PREFIX = "library_columns_v1"
 
     reserveEntrySelected = Signal(object)
+    reserveScaleFilterRequested = Signal(str)
+    reserveScopeChanged = Signal(str, object)
 
     def __init__(
         self,
@@ -166,23 +219,52 @@ class LibraryWidget(QWidget):
         if self.embedded_in_reserve:
             self.search_input.hide()
             self.status_filter.hide()
-            self.title_label.setText("Indexe")
+            self.scale_filter.hide()
+            self.title_label.hide()
+            self.nav_toggle_button.hide()
+            self.table_title.hide()
+            # ReservePane fournit l'unique inspecteur visible. Le détail
+            # historique reste instancié comme adaptateur pendant D2.
+            self.detail_widget.hide()
 
     def _configure_table(self):
         """Configure les modes de redimensionnement des colonnes et installe le filtre d'evenements."""
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setColumnHidden(3, False)
-        self.table.verticalHeader().setDefaultSectionSize(30)
+        for column in range(len(self.COLUMN_DEFINITIONS)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(self.COLUMN_INDEX["name"], QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(self.COLUMN_INDEX["folder"], QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(self.COLUMN_INDEX["folder"], 150)
+        self.table.setMinimumWidth(360)
+        self.table.verticalHeader().setDefaultSectionSize(28)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.viewport().installEventFilter(self)
+        self._build_columns_menu()
+
+    def _build_columns_menu(self) -> None:
+        menu = QMenu(self.columns_button)
+        self._column_actions = {}
+        for index, (key, label, default_visible) in enumerate(self.COLUMN_DEFINITIONS):
+            visible = self._qs.value(
+                f"{self.COLUMN_VISIBILITY_PREFIX}/{key}",
+                default_visible,
+                type=bool,
+            )
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(bool(visible))
+            action.toggled.connect(
+                lambda checked, column=index, column_key=key: self._set_column_visible(
+                    column, column_key, checked
+                )
+            )
+            self._column_actions[key] = action
+            self.table.setColumnHidden(index, not visible)
+        self.columns_button.setMenu(menu)
+
+    def _set_column_visible(self, column: int, key: str, visible: bool) -> None:
+        self.table.setColumnHidden(column, not bool(visible))
+        self._qs.setValue(f"{self.COLUMN_VISIBILITY_PREFIX}/{key}", bool(visible))
 
     def _restore_navigation_visibility(self) -> None:
         visible = self._qs.value("library_nav_visible", True, type=bool)
@@ -279,7 +361,8 @@ class LibraryWidget(QWidget):
         self._refresh_table()
 
     def _scale_label_for_entry(self, entry: ReserveEntry) -> str:
-        return str(entry.detected_scale_label or entry.dominant_note or "").strip()
+        label = format_reserve_scale(entry)
+        return "" if label == "-" else label
 
     def _scale_filter_key_for_entry(self, entry: ReserveEntry) -> str:
         label = self._scale_label_for_entry(entry)
@@ -329,6 +412,12 @@ class LibraryWidget(QWidget):
         label = self._scale_label_for_entry(entry)
         return label or "-"
 
+    @staticmethod
+    def _root_label_for_entry(entry: ReserveEntry) -> str:
+        if entry.indexed and not entry.root_path:
+            return "Externes"
+        return entry.root_name
+
     def _active_query_text(self) -> str:
         return self._reserve_query_text if self.embedded_in_reserve else self.search_input.text()
 
@@ -362,37 +451,41 @@ class LibraryWidget(QWidget):
         return True
 
     def _build_row_items(self, entry: ReserveEntry) -> tuple[QTableWidgetItem, ...]:
-        name_item = QTableWidgetItem(entry.display_name)
+        name_item = LibraryTableItem(entry.display_name)
         name_item.setData(self.TABLE_SAMPLE_ID_ROLE, int(entry.sample_id or -1))
+        name_item.setData(LibraryTableItem.SORT_ROLE, entry.display_name.casefold())
 
-        scale_item = QTableWidgetItem(self._format_scale(entry))
-        scale_item.setData(
-            Qt.ItemDataRole.EditRole,
-            self._scale_label_for_entry(entry).lower(),
-        )
+        scale_item = LibraryTableItem(self._format_scale(entry))
+        scale_item.setData(LibraryTableItem.SORT_ROLE, self._scale_label_for_entry(entry).casefold())
 
-        folder_item = QTableWidgetItem(entry.folder_name)
-        root_item = QTableWidgetItem(entry.root_name)
-        created_item = QTableWidgetItem(self._format_created_at(entry.created_at))
-        created_item.setData(
-            Qt.ItemDataRole.EditRole,
-            self._sort_value_for_created_at(entry.created_at),
-        )
+        folder_item = LibraryTableItem(entry.folder_name)
+        folder_item.setData(LibraryTableItem.SORT_ROLE, entry.folder_name.casefold())
+        root_label = self._root_label_for_entry(entry)
+        root_item = LibraryTableItem(root_label)
+        root_item.setData(LibraryTableItem.SORT_ROLE, root_label.casefold())
+        created_item = LibraryTableItem(self._format_created_at(entry.created_at))
+        created_item.setData(LibraryTableItem.SORT_ROLE, self._sort_value_for_created_at(entry.created_at))
 
-        duration_item = QTableWidgetItem(self._format_duration(entry))
-        duration_item.setData(Qt.ItemDataRole.EditRole, float(entry.duration or 0.0))
+        duration_item = LibraryTableItem(self._format_duration(entry))
+        duration_item.setData(LibraryTableItem.SORT_ROLE, float(entry.duration or 0.0))
 
         size_value = self._size_cache.get(normalize_audio_path(entry.path))
-        size_item = QTableWidgetItem(self._size_text_for_path(entry.path))
-        size_item.setData(
-            Qt.ItemDataRole.EditRole,
-            int(size_value) if size_value is not None else -1,
-        )
+        size_item = LibraryTableItem(self._size_text_for_path(entry.path))
+        size_item.setData(LibraryTableItem.SORT_ROLE, int(size_value) if size_value is not None else -1)
 
-        status_item = QTableWidgetItem(reserve_status_label(entry.status))
+        rms_item = LibraryTableItem(format_reserve_rms(entry.rms_level))
+        rms_item.setData(LibraryTableItem.SORT_ROLE, float(entry.rms_level) if entry.rms_level is not None else float("-inf"))
+        note_item = LibraryTableItem(entry.dominant_note or "-")
+        note_item.setData(LibraryTableItem.SORT_ROLE, (entry.dominant_note or "").casefold())
 
-        for item in (name_item, folder_item, root_item, created_item, duration_item, status_item):
-            item.setToolTip(entry.path)
+        status_label = reserve_status_label(entry.status)
+        status_value = str(getattr(entry.status, "value", entry.status)).strip().lower()
+        status_item = LibraryTableItem("" if status_value == "normal" else status_label)
+        status_item.setData(LibraryTableItem.SORT_ROLE, status_label.casefold())
+
+        common_tooltip = f"{entry.path}\nRacine : {root_label}"
+        for item in (name_item, folder_item, root_item, created_item, duration_item, status_item, rms_item, note_item):
+            item.setToolTip(common_tooltip)
         scale_item.setToolTip(self._format_scale_tooltip(entry))
         size_item.setToolTip(self._size_tooltip_for_path(entry.path))
 
@@ -406,27 +499,19 @@ class LibraryWidget(QWidget):
         else:
             color = QColor(theme.manager.p.TEXT)
 
-        for item in (
-            name_item,
-            scale_item,
-            folder_item,
-            root_item,
-            created_item,
-            duration_item,
-            size_item,
-            status_item,
-        ):
-            item.setForeground(color)
+        status_item.setForeground(color)
 
         return (
             name_item,
             scale_item,
             folder_item,
-            root_item,
-            created_item,
             duration_item,
-            size_item,
+            created_item,
             status_item,
+            root_item,
+            size_item,
+            rms_item,
+            note_item,
         )
 
     def _apply_row_items_to_table(self, row: int, entry: ReserveEntry) -> None:
@@ -478,18 +563,11 @@ class LibraryWidget(QWidget):
 
     @staticmethod
     def _format_created_at(value) -> str:
-        if isinstance(value, dt.datetime):
-            return value.strftime("%d/%m/%Y %H:%M")
-        return "-"
+        return format_reserve_date(value)
 
     @staticmethod
     def _sort_value_for_created_at(value) -> float:
-        if isinstance(value, dt.datetime):
-            try:
-                return float(value.timestamp())
-            except Exception:
-                return -1.0
-        return -1.0
+        return reserve_date_sort_value(value)
 
     def _stop_size_worker(self) -> None:
         if self._size_worker_stop.is_set():
@@ -554,8 +632,7 @@ class LibraryWidget(QWidget):
 
     @staticmethod
     def _format_file_size(size_bytes: int) -> str:
-        value_mo = max(0.0, float(size_bytes) / (1024.0 * 1024.0))
-        return f"{value_mo:.1f} Mo"
+        return format_reserve_size(size_bytes)
 
     def _size_text_for_path(self, path: str) -> str:
         path = str(path or "").strip()
@@ -630,8 +707,18 @@ class LibraryWidget(QWidget):
 
     def _refresh_size_display(self) -> None:
         self._refresh_count_label()
-        for row, entry in enumerate(self.filtered_entries):
-            size_item = self.table.item(row, 6)
+        # The visual row order may differ from filtered_entries while Qt sort
+        # is active. Resolve every row through its stable sample id so an async
+        # size result never lands on the wrong sample.
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, self.COLUMN_INDEX["name"])
+            if id_item is None:
+                continue
+            sample_id = int(id_item.data(self.TABLE_SAMPLE_ID_ROLE) or -1)
+            entry = self._entries_by_sample_id.get(sample_id)
+            if entry is None:
+                continue
+            size_item = self.table.item(row, self.COLUMN_INDEX["size"])
             if size_item is None:
                 continue
             size_item.setText(self._size_text_for_path(entry.path))
@@ -640,7 +727,7 @@ class LibraryWidget(QWidget):
             normalized = normalize_audio_path(path) if path else ""
             size_value = self._size_cache.get(normalized) if normalized else None
             size_item.setData(
-                Qt.ItemDataRole.EditRole,
+                LibraryTableItem.SORT_ROLE,
                 int(size_value) if size_value is not None else -1,
             )
 
@@ -696,16 +783,7 @@ class LibraryWidget(QWidget):
         entry = self.current_reserve_entry()
         if card is None or entry is None:
             return
-        try:
-            self.app_context.audio_player.clear_audio()
-        except Exception:
-            pass
-        is_playing = self.app_context.audio_player.seek_position(
-            int(card.sample.id),
-            entry.path,
-            float(card.sample.duration or 0.0),
-            0,
-        )
+        is_playing = self.app_context.reserve_preview.restart(entry)
         card.playback._apply_state(is_playing)
         if is_playing:
             card.playback.update_slider()
@@ -720,20 +798,12 @@ class LibraryWidget(QWidget):
         duration_ms = max(0, int(float(getattr(card.sample, "duration", 0.0) or 0.0) * 1000))
         if duration_ms <= 0:
             return
-        player = self.app_context.audio_player
+        controller = self.app_context.reserve_preview
         current_position = 0
-        if (
-            int(getattr(player, "current_sample_id", -1)) == int(card.sample.id)
-            and getattr(player, "current_sample_path", "") == entry.path
-        ):
-            current_position = max(0, int(player.get_position()))
+        if controller.is_active(entry):
+            current_position = max(0, int(self.app_context.audio_player.get_position()))
         target = max(0, min(duration_ms, current_position + int(delta_ms)))
-        is_playing = player.seek_position(
-            int(card.sample.id),
-            entry.path,
-            float(card.sample.duration or 0.0),
-            target,
-        )
+        is_playing = controller.seek(entry, target)
         card.playback._apply_state(is_playing)
         card.playback.update_slider()
 
@@ -770,11 +840,14 @@ class LibraryWidget(QWidget):
         if card is None or entry is None or entry.sample_id is None:
             return
         self._prepare_row_after_mutation()
-        self._stop_audio_for_entry(entry)
-        sample_id = int(entry.sample_id)
         self.detail_widget.clear_sample()
         self._selected_sample_id = None
-        QTimer.singleShot(0, lambda sid=sample_id: self.sample_store.delete(sid))
+        QTimer.singleShot(
+            0,
+            lambda current_entry=entry: self.app_context.reserve_mutations.delete_file_and_record(
+                current_entry
+            ),
+        )
 
     def _remove_current_from_history(self) -> None:
         if not self._should_handle_shortcuts():
@@ -786,6 +859,10 @@ class LibraryWidget(QWidget):
         card.onArchiveClicked()
 
     def _stop_audio_for_entry(self, entry: ReserveEntry) -> None:
+        controller = getattr(self.app_context, "reserve_preview", None)
+        if controller is not None:
+            controller.stop(entry)
+            return
         player = self.app_context.audio_player
         target_sample_id = int(entry.sample_id or -1)
         target_path = os.path.normpath(str(entry.path or ""))
@@ -829,6 +906,15 @@ class LibraryWidget(QWidget):
         open_folder_action.setEnabled(self.reserve_actions.can_reveal_in_folder(entry) if self.reserve_actions else True)
         open_folder_action.triggered.connect(self.detail_widget.open_current_folder)
 
+        analyze_action = menu.addAction(
+            themed_icon("music", size=16, color=theme.manager.p.INFO),
+            "Analyser la gamme",
+        )
+        analyze_action.setEnabled(entry.sample_id is not None and not entry.missing)
+        analyze_action.triggered.connect(
+            lambda: self.sample_store.batch_analyze_ids([entry.sample_id])
+        )
+
         scale_label = self._scale_label_for_entry(entry)
         if scale_label:
             filter_scale_action = menu.addAction(
@@ -836,14 +922,14 @@ class LibraryWidget(QWidget):
                 f"Filtrer par {scale_label}",
             )
             filter_scale_action.triggered.connect(
-                lambda checked=False, value=scale_label: self._set_scale_filter_value(value)
+                lambda checked=False, value=scale_label: self._request_scale_filter(value)
             )
 
         menu.addSeparator()
 
         remove_history_action = menu.addAction(
             themed_icon("x", size=16, color=theme.manager.p.TEXT_MUTED),
-            "Retirer de l'historique\tCtrl+Shift+D",
+            "Désindexer\tCtrl+Shift+D",
         )
         remove_history_action.setEnabled(card is not None)
         remove_history_action.triggered.connect(self._remove_current_from_history)
@@ -942,6 +1028,9 @@ class LibraryWidget(QWidget):
             self._navigation_dirty = True
 
         if not self.isVisible():
+            # Le modèle local est à jour, mais le tableau caché ne l'est pas.
+            # Conserver un snapshot force un rendu complet au prochain showEvent.
+            self._pending_samples_snapshot = list(self.samples)
             self._skip_next_full_table_refresh = True
             self._last_render_signature = self._compute_samples_signature(self.samples)
             logger.info(
@@ -1368,7 +1457,20 @@ class LibraryWidget(QWidget):
         self._refresh_navigation_if_dirty()
         if self._pending_samples_snapshot is None:
             return
-        if self._compute_samples_signature(self._pending_samples_snapshot) == self._last_render_signature:
+        pending_signature = self._compute_samples_signature(self._pending_samples_snapshot)
+        if pending_hidden_refresh_requires_render(
+            self._pending_samples_snapshot,
+            quick_update_unrendered=self._skip_next_full_table_refresh,
+            pending_signature=pending_signature,
+            rendered_signature=self._last_render_signature,
+        ):
+            # Une mise à jour rapide reçue pendant que le widget était caché
+            # n'a jamais été appliquée au tableau : elle ne peut pas être
+            # traitée comme un refresh déjà rendu.
+            self._skip_next_full_table_refresh = False
+            self._store_refresh_timer.start()
+            return
+        if pending_signature == self._last_render_signature:
             logger.info(
                 "[LibraryWidget][Perf] showEvent skip-pending-unchanged samples=%s",
                 len(self._pending_samples_snapshot),
@@ -1394,6 +1496,30 @@ class LibraryWidget(QWidget):
         self._reserve_status_filter = status_filter
         if self.embedded_in_reserve:
             self._refresh_table()
+
+    def set_reserve_scale_filter(self, scale: str) -> None:
+        """Applique la gamme partagee sans changer le moteur musical existant."""
+        self._set_scale_filter_value(scale or self.SCALE_FILTER_ALL)
+
+    def _request_scale_filter(self, scale: str) -> None:
+        if self.embedded_in_reserve:
+            self.reserveScaleFilterRequested.emit(scale)
+        else:
+            self._set_scale_filter_value(scale)
+
+    def set_reserve_scope(self, kind: str, value=None) -> None:
+        scope = LibraryScope(kind or "all", value)
+        if (scope.kind, scope.value) == (self.current_scope.kind, self.current_scope.value):
+            return
+        self.current_scope = scope
+        target = self._find_matching_tree_item(
+            self.tree.invisibleRootItem(), (scope.kind, scope.value)
+        )
+        if target is not None:
+            self.tree.blockSignals(True)
+            self.tree.setCurrentItem(target)
+            self.tree.blockSignals(False)
+        self._refresh_table()
 
     def set_compatible_scales_filter(self, sample_id: int | None) -> None:
         """Active ou efface le filtre de gammes compatibles."""
@@ -1516,6 +1642,7 @@ class LibraryWidget(QWidget):
             str(item.data(0, self.TREE_SCOPE_KIND_ROLE)),
             item.data(0, self.TREE_SCOPE_VALUE_ROLE),
         )
+        self.reserveScopeChanged.emit(self.current_scope.kind, self.current_scope.value)
         self._refresh_table()
 
     def _refresh_table(self):
@@ -1602,12 +1729,10 @@ class LibraryWidget(QWidget):
         )
 
     def _format_duration(self, entry: ReserveEntry) -> str:
-        return f"{float(entry.duration or 0.0):.1f}s"
+        return format_reserve_duration(entry.duration, compact=True)
 
     def _format_rms(self, entry: ReserveEntry) -> str:
-        if entry.rms_level is None:
-            return "-"
-        return f"{float(entry.rms_level):.3f}"
+        return format_reserve_rms(entry.rms_level)
 
     def _on_table_selection_changed(self):
         self._sync_detail_with_selection()
@@ -1710,5 +1835,20 @@ class LibraryWidget(QWidget):
                 "application/x-sample-card",
                 pickle.dumps({"sample_id": int(entry.sample_id)}),
             )
+        descriptor = DragPayload(
+            kind=DragKind.AUDIO_FILE,
+            items=(DragItem(
+                item_id=str(entry.sample_id or ""),
+                path=str(entry.path),
+                display_name=os.path.basename(str(entry.path)) or "Sample",
+            ),),
+            source_id=f"library:{entry.sample_id or entry.path}",
+            source_module="reserve",
+            status=MaterialStatus.SOURCE,
+            provenance=DragProvenance(str(entry.path), MaterialOperation.IMPORT),
+        )
+        attach_payload(mime, descriptor)
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.CopyAction)
+        drag.setPixmap(drag_preview_pixmap(descriptor))
+        with drag_session(descriptor):
+            drag.exec(Qt.DropAction.CopyAction)

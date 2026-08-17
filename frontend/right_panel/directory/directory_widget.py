@@ -89,6 +89,7 @@ class DirectoryWidget(QWidget):
         self._selected_folder_path: str | None = None
         self._reserve_query_text = ""
         self._reserve_status_filter = "all"
+        self._reserve_scale_filter = "__all__"
         self._compat_filter_sample_id: int | None = None
         self._compat_filter_scales: set[str] = set()
         self._qs = QSettings("SampleRod", "Main")
@@ -227,6 +228,9 @@ class DirectoryWidget(QWidget):
 
     def set_reserve_status_filter(self, status_filter: str) -> None:
         self.filters.set_reserve_status_filter(status_filter)
+
+    def set_reserve_scale_filter(self, scale: str) -> None:
+        self.filters.set_reserve_scale_filter(scale)
 
     def set_compatible_scales_filter(self, sample_id: int | None) -> None:
         self.filters.set_compatible_scales_filter(sample_id)
@@ -387,7 +391,7 @@ class DirectoryWidget(QWidget):
             if subfolder_count > 0
             else ""
         )
-        self.files_count_label.setText(file_part + folder_part)
+        self.list_count_label.setText(file_part + folder_part)
 
     @staticmethod
     def remove_from_history(path: str) -> None:

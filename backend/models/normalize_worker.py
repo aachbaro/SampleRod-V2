@@ -34,6 +34,11 @@ import soundfile as sf
 import logging
 logger = logging.getLogger("normalize_worker")
 
+
+def supports_in_place_normalization(path: str) -> bool:
+    """Seul WAV est actuellement réécrit sans changer de conteneur."""
+    return os.path.splitext(str(path or ""))[1].lower() == ".wav"
+
 from PySide6.QtCore import QThread, Signal
 
 # pyloudnorm (mesure LUFS) est une dependance optionnelle : on ne tente de la
@@ -166,6 +171,15 @@ class NormalizeWorker(QThread):
         logger.info(f"[NormalizeWorker] Démarrage de la normalisation pour {self.file_path} (mode={self.mode}, target_db={self.target_db})")
         # 1) Envoi du signal de démarrage
         self.startedNormalization.emit(self.sample_id)
+
+        if not supports_in_place_normalization(self.file_path):
+            message = (
+                "Normalisation ignorée : la réécriture sûre est actuellement "
+                "limitée aux fichiers WAV."
+            )
+            logger.warning("[NormalizeWorker] %s (%s)", message, self.file_path)
+            self.normalizationFailed.emit(self.sample_id, message)
+            return
 
         # 2) Chargement du fichier WAV (float32) ; shape = (n_samples,) ou (n_samples, n_channels)
         try:

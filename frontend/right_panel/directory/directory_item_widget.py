@@ -30,17 +30,31 @@ from typing import Any
 
 from PySide6.QtCore import QEvent, QMimeData, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDrag
+from frontend.dragdrop import (
+    DragItem, DragKind, DragPayload, DragProvenance,
+    MaterialOperation, MaterialStatus,
+    attach_payload, drag_preview_pixmap, drag_session,
+)
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QMenu,
     QSizePolicy,
+    QSlider,
     QWidget,
 )
 
-from frontend.reserve import ReserveEntry, apply_status_badge
+from frontend.reserve import (
+    ReserveEntry,
+    apply_status_badge,
+    format_reserve_clock_duration,
+    format_reserve_duration,
+    format_reserve_rms,
+)
 
 from . import directory_ui
 
@@ -66,10 +80,10 @@ class DirectorySubfolderRowWidget(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setContentsMargins(8, 3, 8, 3)
         layout.setSpacing(8)
 
-        icon_lbl = QLabel("📁")
+        icon_lbl = QLabel("▸")
         icon_lbl.setObjectName("SubfolderIcon")
         icon_lbl.setFixedWidth(18)
         icon_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
@@ -128,15 +142,30 @@ class DirectorySubfolderRowWidget(QWidget):
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Right):
+        modifiers = event.modifiers()
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.parent_widget.open_directory(self.folder_path)
             event.accept()
             return
-        if key == Qt.Key.Key_Left:
+        if modifiers & Qt.KeyboardModifier.AltModifier and key == Qt.Key.Key_Right:
+            self.parent_widget.open_directory(self.folder_path)
+            event.accept()
+            return
+        if modifiers & Qt.KeyboardModifier.AltModifier and key == Qt.Key.Key_Left:
             self.parent_widget.go_to_parent_directory()
             event.accept()
             return
         super().keyPressEvent(event)
+
+
+class DirectorySectionHeader(QLabel):
+    """Séparateur visuel inerte pour la liste mixte dossiers/fichiers."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text.upper(), parent)
+        self.setObjectName("DirectorySectionHeader")
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
 
 class DirectoryListItemWidget(QWidget):
@@ -259,7 +288,8 @@ class DirectoryListItemWidget(QWidget):
             except Exception:
                 pass
 
-        success, err = self.parent_widget.app_context.sample_store.delete_by_path(self.file_path)
+        result = self.parent_widget.app_context.reserve_mutations.delete_file_and_record(self.entry)
+        success, err = result.success, (result.message or None)
         if not success and err:
             QMessageBox.warning(self, "Erreur", err)
 
@@ -340,8 +370,23 @@ class DirectoryListItemWidget(QWidget):
                 "application/x-sample-card",
                 pickle.dumps({"sample_id": int(self.sample_id)}),
             )
+        descriptor = DragPayload(
+            kind=DragKind.AUDIO_FILE,
+            items=(DragItem(
+                item_id=str(self.sample_id or ""),
+                path=self.file_path,
+                display_name=os.path.basename(self.file_path) or "Sample",
+            ),),
+            source_id=f"directory:{self.sample_id or self.file_path}",
+            source_module="directory",
+            status=MaterialStatus.SOURCE,
+            provenance=DragProvenance(self.file_path, MaterialOperation.IMPORT),
+        )
+        attach_payload(mime, descriptor)
         drag.setMimeData(mime)
-        drag.exec(Qt.DropAction.CopyAction)
+        drag.setPixmap(drag_preview_pixmap(descriptor))
+        with drag_session(descriptor):
+            drag.exec(Qt.DropAction.CopyAction)
 
     def contextMenuEvent(self, event):
         self.clicked.emit(self)
@@ -427,12 +472,8 @@ class DirectoryListItemWidget(QWidget):
         self.playback_slider.blockSignals(False)
         self._refresh_time_label(position_ms)
 
-    def _advance_preview_position(self) -> None:
-        """Avance la lecture de 10 % de la duree totale (touche →).
-
-        Permet un "scrub rapide" au clavier sans avoir a atteindre le slider.
-        Le pas minimum est 750 ms et le maximum est 8 s.
-        """
+    def _advance_preview_position(self, delta_ms: int = 1000) -> None:
+        """Déplace la lecture d'une seconde, comme Récents et Indexé."""
         duration_ms = max(0, int(self._duration_ms))
         if duration_ms <= 0:
             return
@@ -444,8 +485,7 @@ class DirectoryListItemWidget(QWidget):
                 int(self.parent_widget.app_context.audio_player.get_position()),
             )
 
-        step_ms = self._preview_seek_step_ms(duration_ms)
-        target_position_ms = max(0, min(duration_ms, current_position_ms + step_ms))
+        target_position_ms = max(0, min(duration_ms, current_position_ms + int(delta_ms)))
         if self.parent_widget.seek_preview(self.entry, target_position_ms):
             self._refresh_time_label(target_position_ms)
 
@@ -471,7 +511,13 @@ class DirectoryListItemWidget(QWidget):
 
     def _refresh_display_name(self) -> None:
         metrics = self.name_label.fontMetrics()
-        available_width = max(32, self.name_label.width() or self.width() - 180)
+        compact_reserve = bool(getattr(self.parent_widget, "embedded_in_reserve", False))
+        if compact_reserve:
+            column_width = 180 if self.width() >= 520 else (145 if self.width() >= 440 else 110)
+            self.name_label.parentWidget().setFixedWidth(column_width)
+            available_width = max(32, column_width - 4)
+        else:
+            available_width = max(32, self.name_label.width() or self.width() - 180)
         self.name_label.setText(
             metrics.elidedText(self._full_display_name, Qt.TextElideMode.ElideMiddle, available_width)
         )
@@ -480,8 +526,22 @@ class DirectoryListItemWidget(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._refresh_display_name()
+        self._apply_compact_visibility()
 
     def eventFilter(self, watched, event):
+        # Les labels et conteneurs internes occupent presque toute la carte.
+        # Sans ce relais, ils absorbent le clic et seul le petit espace vide de
+        # DirectoryRow permet réellement de sélectionner l'entrée.
+        if (
+            event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+            and not isinstance(watched, (QAbstractButton, QLineEdit, QSlider))
+        ):
+            self._drag_start_pos = self.mapFromGlobal(event.globalPosition().toPoint())
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            self.clicked.emit(self)
+            event.accept()
+            return True
         return super().eventFilter(watched, event)
 
     @staticmethod
@@ -495,20 +555,45 @@ class DirectoryListItemWidget(QWidget):
     def _build_meta_text(entry) -> str:
         parts = []
         if entry.duration is not None:
-            parts.append(f"{float(entry.duration):.2f}s")
+            parts.append(format_reserve_clock_duration(entry.duration))
         if entry.rms_level is not None:
-            parts.append(f"RMS {float(entry.rms_level):.3f}")
+            parts.append(f"RMS {format_reserve_rms(entry.rms_level)}")
         return " | ".join(parts)
 
     def _refresh_duration_chip(self, entry) -> None:
         chip = getattr(self, "duration_chip", None)
         if chip is None:
             return
-        chip.setText("")
-        chip.setVisible(False)
+        chip.setText(format_reserve_clock_duration(entry.duration))
+        self._apply_compact_visibility()
+
+    def _apply_compact_visibility(self) -> None:
+        width = max(0, self.width())
+        compact_reserve = bool(getattr(self.parent_widget, "embedded_in_reserve", False))
+        if not compact_reserve:
+            return
+        self.playback_slider.setVisible(width >= 360)
+        self.duration_chip.setVisible(width >= 280 and bool(self.duration_chip.text()))
+        self.status_slot.setVisible(width >= 500 or str(getattr(self.entry.status, "value", self.entry.status)) != "normal")
+        self.key_slot.setVisible(width >= 390)
+        self.key_badge.setVisible(
+            width >= 390 and bool(self.entry.dominant_note) and self.sample_id is not None
+        )
+        # Les états qui demandent une action restent visibles même étroits.
+        status_value = str(getattr(self.entry.status, "value", self.entry.status))
+        self.status_badge.setVisible(status_value != "normal")
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
+        modifiers = event.modifiers()
+        if modifiers & Qt.KeyboardModifier.AltModifier:
+            if key == Qt.Key.Key_Left:
+                self.parent_widget.go_to_parent_directory()
+                event.accept()
+                return
+            if key == Qt.Key.Key_Right:
+                event.accept()
+                return
         if key == Qt.Key.Key_Space:
             self._on_clicked()
             event.accept()
@@ -518,7 +603,11 @@ class DirectoryListItemWidget(QWidget):
             event.accept()
             return
         if key == Qt.Key.Key_Right:
-            self._advance_preview_position()
+            self._advance_preview_position(1000)
+            event.accept()
+            return
+        if key == Qt.Key.Key_Left:
+            self._advance_preview_position(-1000)
             event.accept()
             return
         if key == Qt.Key.Key_F2:
@@ -527,10 +616,6 @@ class DirectoryListItemWidget(QWidget):
             return
         if key == Qt.Key.Key_Delete:
             self._on_delete()
-            event.accept()
-            return
-        if key == Qt.Key.Key_Left:
-            self.parent_widget.go_to_parent_directory()
             event.accept()
             return
         super().keyPressEvent(event)

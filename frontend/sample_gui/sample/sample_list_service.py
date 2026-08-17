@@ -26,13 +26,19 @@ class SampleListServiceActions:
         self.widget = widget
 
     def delete_sample(self, sample_id: int):
-        self.widget.sample_store.delete(sample_id)
+        return self.widget.app_context.reserve_mutations.delete_file_and_record(
+            self.widget._entry_from_sample_id(sample_id)
+        )
 
     def rename_sample(self, sample_id: int, new_name: str):
-        self.widget.sample_store.rename(sample_id, new_name)
+        return self.widget.app_context.reserve_mutations.rename(
+            self.widget._entry_from_sample_id(sample_id), new_name
+        )
 
     def move_sample(self, sample_id: int, target_folder: str):
-        self.widget.sample_store.move(sample_id, target_folder)
+        return self.widget.app_context.reserve_mutations.move(
+            self.widget._entry_from_sample_id(sample_id), target_folder
+        )
 
     def concat_with_previous(self, sample_id: int):
         self.widget.sample_store.concat_with_previous(sample_id)

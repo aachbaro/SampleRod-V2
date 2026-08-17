@@ -44,6 +44,11 @@ import pyqtgraph as pg
 import soundfile as sf
 from PySide6.QtCore import QMimeData, Qt
 from PySide6.QtGui import QDrag
+from frontend.dragdrop import (
+    AudioSelection, DragItem, DragKind, DragPayload, DragProvenance,
+    MaterialOperation, MaterialStatus,
+    attach_payload, drag_preview_pixmap, drag_session,
+)
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .waveform_plot_helpers import add_plot_item_once
@@ -358,14 +363,37 @@ class WaveformRegionController:
                 }
             ),
         )
+        start = float(payload.get("time") or 0.0)
+        end = float(payload.get("end_time") or start)
+        descriptor = DragPayload(
+            kind=DragKind.AUDIO_SELECTION,
+            items=(DragItem(
+                display_name=str(payload.get("name") or "Selection"),
+                duration=max(0.0, end - start),
+            ),),
+            source_id="waveform-selection",
+            source_module="waveform",
+            selection=AudioSelection(
+                start, end, str(getattr(w, "audio_file_path", "") or ""),
+                int(payload["sample_rate"]) if payload.get("sample_rate") else None,
+            ),
+            status=MaterialStatus.DERIVED,
+            provenance=DragProvenance(
+                str(getattr(w, "audio_file_path", "") or ""),
+                MaterialOperation.SELECTION,
+            ),
+        )
+        attach_payload(mime, descriptor)
         drag = QDrag(w)
         drag.setMimeData(mime)
+        drag.setPixmap(drag_preview_pixmap(descriptor))
         logger.info(
             "Drag de selection depuis la waveform : %.3fs -> %.3fs",
             float(payload.get("time") or 0.0),
             float(payload.get("end_time") or 0.0),
         )
-        drag.exec(Qt.DropAction.CopyAction)
+        with drag_session(descriptor):
+            drag.exec(Qt.DropAction.CopyAction)
         return True
 
     def _set_play_start_cursor(self, x: float):

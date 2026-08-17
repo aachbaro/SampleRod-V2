@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 
 from backend.services.audio_metadata import is_audio_file, normalize_audio_path
 from frontend.styles import theme
+from frontend.dragdrop import DropAcceptance, DropAction, describe_drop, drag_controller
 from frontend.ui import IconButton, add_tab_close_button
 
 from .audio_drop import (
@@ -65,11 +66,23 @@ class StemSeparatorToolWidget(QWidget):
         super().__init__(parent)
         self.app_context = app_context
         self.service = self.app_context.stem_separator
+        # Le module externe est volontairement paresseux au demarrage global.
+        # Ici le Stem Lab devient visible : c'est le bon moment pour lire ses
+        # modeles avant de construire la liste.
+        self.service.prepare_metadata()
         self._qs = QSettings("SampleRod", "Main")
         self._drop_active = False
         self._sessions: dict[str, StemSessionWidget] = {}
         self._service_status_text = ""
         self._build_ui()
+        self._drop_target_id = f"stem-separator:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id, self.drop_zone,
+            lambda payload: DropAcceptance.accept(
+                DropAction.SEPARATE_STEMS,
+                describe_drop(DropAction.SEPARATE_STEMS, payload),
+            ),
+        )
         self._restore_settings()
         self._bind_signals()
         theme.manager.themeChanged.connect(lambda *_args: self._apply_styles())
@@ -316,6 +329,7 @@ class StemSeparatorToolWidget(QWidget):
             if etype == QEvent.Type.DragMove:
                 return self._handle_drag_enter(event)
             if etype == QEvent.Type.DragLeave:
+                drag_controller().leave_target(self._drop_target_id)
                 self._set_drop_active(False)
                 return True
             if etype == QEvent.Type.Drop:
@@ -335,10 +349,12 @@ class StemSeparatorToolWidget(QWidget):
             self._set_drop_active(False)
             return False
         event.acceptProposedAction()
+        drag_controller().enter_target(self._drop_target_id, mime)
         self._set_drop_active(True)
         return True
 
     def _handle_drop(self, event) -> bool:
+        drag_controller().finish_drag()
         paths = resolve_audio_drop_paths(
             event.mimeData(),
             sample_path_lookup=self._path_for_sample_id,

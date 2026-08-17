@@ -31,7 +31,6 @@
 #   - is_indexing()             : une indexation est-elle en cours ?
 #   - get_folder_index_status() : statut detaille disque vs base.
 #   - handle_drop()             : traite un glisser-deposer dans le dossier.
-#   - _save_slice()/_copy_sample(): cas particuliers du depot.
 #   - _build_audio_entry()      : fabrique une fiche depuis un Sample.
 # - _scan_audio_paths()         : tous les fichiers audio d'un dossier (recursif).
 # - _parse_compatible_scales()  : decode la liste JSON des gammes compatibles.
@@ -46,13 +45,9 @@ from __future__ import annotations
 
 import json
 import os
-import pickle
-import shutil
 import time
 from dataclasses import dataclass
 
-import numpy as np
-import soundfile as sf
 from PySide6.QtCore import QObject, QMimeData, QThread, Signal
 
 from backend.db import SessionLocal
@@ -64,6 +59,7 @@ from backend.services.audio_metadata import (
     normalize_audio_path,
 )
 from backend.services.sample_service import SampleService
+from backend.services.reserve_import_service import ReserveImportService
 import logging
 
 logger = logging.getLogger("directory_service")
@@ -406,6 +402,10 @@ class DirectoryService(QObject):
     def __init__(self, sample_service: SampleService):
         super().__init__()
         self.sample_store = sample_service
+        context = getattr(sample_service, "app_context", None)
+        self.import_service = getattr(context, "reserve_imports", None)
+        if self.import_service is None:
+            self.import_service = ReserveImportService(sample_service)
         self._index_worker: _DirectoryIndexWorker | None = None
         logger.info("[DirectoryService] Initialisation du service")
 
@@ -564,74 +564,22 @@ class DirectoryService(QObject):
         }
 
     def handle_drop(self, folder: str, mime: QMimeData) -> None:
-        """Traite un glisser-deposer vers un dossier du navigateur.
+        """Adaptateur historique : décode le MIME puis délègue au service unique."""
+        from frontend.reserve.reserve_import_adapters import import_request_from_mime
 
-        Trois sortes de contenus peuvent etre deposes :
-        1. des fichiers venant de l'explorateur Windows (urls) -> copies ;
-        2. une "slice" (morceau de son decoupe dans l'appli) -> ecrite en WAV ;
-        3. une carte de sample de l'appli -> son fichier est copie.
-        Dans tous les cas, le resultat est ajoute au catalogue des samples.
-        """
-        logger.info("[DirectoryService] Depot dans %s", folder)
-        os.makedirs(folder, exist_ok=True)
+        def sample_path(sample_id: int):
+            sample = self.sample_store._get(sample_id)
+            return getattr(sample, "path", None) if sample is not None else None
 
-        # Cas 1 : fichiers deposes depuis l'exterieur (explorateur Windows).
-        if mime.hasUrls():
-            copied = 0
-            for url in mime.urls():
-                src = normalize_audio_path(url.toLocalFile())
-                if not src or not is_audio_file(src):
-                    continue
-                if not os.path.isfile(src):
-                    continue
-                # Si un fichier du meme nom existe deja, on suffixe _1, _2...
-                dst = os.path.join(folder, os.path.basename(src))
-                base, ext = os.path.splitext(dst)
-                index = 1
-                while os.path.exists(dst):
-                    dst = f"{base}_{index}{ext}"
-                    index += 1
-                try:
-                    shutil.copy2(src, dst)
-                    self.sample_store.add(dst)
-                    copied += 1
-                    logger.info("[DirectoryService] Fichier copie %s -> %s", src, dst)
-                except Exception as exc:
-                    logger.info("[DirectoryService] drop url copy error: %s", exc)
-            if copied:
-                return
-
-        # Cas 2 et 3 : contenus internes a l'application (formats maison).
-        for fmt in ("application/x-sample-slice-data", "application/x-sample-card"):
-            if not mime.hasFormat(fmt):
-                continue
-
-            try:
-                payload = pickle.loads(bytes(mime.data(fmt)))
-            except Exception:
-                payload = None
-
-            if isinstance(payload, dict):
-                if "audio_data" in payload:
-                    logger.info("[DirectoryService] Sauvegarde d'une slice depuis le drag and drop")
-                    self._save_slice(folder, payload)
-                elif "sample_id" in payload:
-                    logger.info("[DirectoryService] Copie d'un sample depuis le drag and drop")
-                    self._copy_sample(folder, payload["sample_id"])
-                return
-
-            # Ancien format texte : une liste de chemins, un par ligne.
-            data = bytes(mime.data(fmt)).decode(errors="ignore")
-            for line in filter(None, data.splitlines()):
-                src = line.strip()
-                if os.path.isfile(src):
-                    dst = os.path.join(folder, os.path.basename(src))
-                    try:
-                        shutil.copy(src, dst)
-                        self.sample_store.add(dst)
-                        logger.info("[DirectoryService] Fichier copie %s -> %s", src, dst)
-                    except Exception as exc:
-                        logger.info("[DirectoryService] drop copy error: %s", exc)
+        artifact_store = getattr(self.sample_store.app_context, "lab_artifact_store", None)
+        artifact_resolver = getattr(artifact_store, "resolve_path", None)
+        request = import_request_from_mime(
+            mime,
+            sample_path_lookup=sample_path,
+            artifact_path_lookup=artifact_resolver if callable(artifact_resolver) else None,
+            destination=folder,
+        )
+        return self.import_service.import_request(request)
 
     def _on_index_completed(self, folder: str, summary: object):
         """Fin d'indexation : recharge le cache des samples et previent l'UI."""
@@ -649,55 +597,6 @@ class DirectoryService(QObject):
         if self._index_worker is not None:
             self._index_worker.deleteLater()
         self._index_worker = None
-
-    def _save_slice(self, folder: str, payload: dict):
-        """Ecrit en WAV une "slice" deposee (morceau de son decoupe dans l'appli).
-
-        Le payload contient directement les echantillons audio (audio_data),
-        la frequence et un nom propose. Le fichier cree est ajoute au
-        catalogue des samples.
-        """
-        arr = np.asarray(payload.get("audio_data"), dtype="float32")
-        sample_rate = int(payload.get("sample_rate", 44100))
-        name = payload.get("name", "slice")
-        if not name.lower().endswith(".wav"):
-            name += ".wav"
-        dest = os.path.join(folder, name)
-
-        # Eviter d'ecraser un fichier existant : suffixe _1, _2...
-        base, ext = os.path.splitext(dest)
-        index = 1
-        while os.path.exists(dest):
-            dest = f"{base}_{index}{ext}"
-            index += 1
-
-        try:
-            sf.write(dest, arr, sample_rate)
-            self.sample_store.add(dest)
-            logger.info("[DirectoryService] Slice enregistree: %s", dest)
-        except Exception as exc:
-            logger.info("[DirectoryService] save slice error: %s", exc)
-
-    def _copy_sample(self, folder: str, sample_id: int):
-        """Copie le fichier d'un sample existant vers `folder` (depot de carte)."""
-        sample = self.sample_store._get(sample_id)
-        if not sample:
-            return
-        src = sample.path
-        dest = os.path.join(folder, os.path.basename(src))
-
-        base, ext = os.path.splitext(dest)
-        index = 1
-        while os.path.exists(dest):
-            dest = f"{base}_{index}{ext}"
-            index += 1
-
-        try:
-            shutil.copy(src, dest)
-            self.sample_store.add(dest)
-            logger.info("[DirectoryService] Sample copie: %s -> %s", src, dest)
-        except Exception as exc:
-            logger.info("[DirectoryService] copy sample error: %s", exc)
 
     def _cached_samples_by_path(self) -> dict[str, Sample]:
         """Index {chemin -> Sample} construit depuis le cache du SampleService.

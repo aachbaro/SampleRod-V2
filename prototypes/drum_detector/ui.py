@@ -485,7 +485,7 @@ def _build_pattern_preview_process_task(
     *,
     target_bpm: float,
     gate: float,
-    mono_choke: bool,
+    mono_choke: bool = False,
 ) -> RetimedPreview:
     return build_pattern_preview(
         samples,
@@ -504,7 +504,7 @@ def _build_live_pattern_preview_process_task(
     *,
     target_bpm: float,
     gate: float,
-    mono_choke: bool,
+    mono_choke: bool = False,
     grouped_stem_names: tuple[tuple[str, ...], ...] = (),
     shared_audio_name: str | None = None,
     shared_audio_shape: tuple[int, ...] | None = None,

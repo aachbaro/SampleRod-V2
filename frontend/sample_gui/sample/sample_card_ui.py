@@ -34,11 +34,13 @@ from PySide6.QtWidgets import (
     QMenu,
     QWidget,
     QPushButton,
+    QProgressBar,
 )
 
 from frontend.custom_widgets import CustomSlider
 from frontend.sample_gui.waveform.waveform_ui import HoverIconButton
 from frontend.styles import theme
+from frontend.reserve import format_reserve_clock_duration, format_reserve_date, format_reserve_duration
 from frontend.ui import IconButton, themed_icon
 
 # Cle QSettings globale : afficher le badge gamme sur toutes les cartes analysees.
@@ -72,19 +74,23 @@ class SampleCardUIBuilder:
         icon_hover = "#111111"
 
         # ---- Widgets
-        c.checkbox = QCheckBox()
+        c.checkbox = QCheckBox(c)
         c.checkbox.setObjectName("SelectBox")
         c.checkbox.toggled.connect(c.onCheckboxToggled)
+        c.checkbox.setMinimumWidth(0)
+        c.checkbox.setMaximumWidth(0)
+        c.checkbox.hide()
 
         # Nom / renommage
-        c.name_label = QLabel(c.get_sample_name())
+        c.name_label = QLabel(c.get_sample_name(), c)
         c.name_label.setObjectName("SampleName")
-        c.name_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        c.name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        c.name_label.setMinimumWidth(0)
         c.name_label.setFixedHeight(24)
         c.name_label.mouseDoubleClickEvent = c.name_label_double_click
         c.name_label.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
-        c.rename_input = QLineEdit(c.get_sample_name())
+        c.rename_input = QLineEdit(c.get_sample_name(), c)
         c.rename_input.setObjectName("RenameInput")
         c.rename_input.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         c.rename_input.setMinimumWidth(200)
@@ -146,7 +152,7 @@ class SampleCardUIBuilder:
 
         c.archive_button = self._make_round_btn(
             "x",
-            "Retirer de l'historique",
+            "Désindexer",
             color_normal=icon_normal,
             color_hover=icon_hover,
             size=btn_size,
@@ -178,7 +184,7 @@ class SampleCardUIBuilder:
         c.waveform_button.setVisible(False)
 
         # Details
-        c.change_dir_combobox = QComboBox()
+        c.change_dir_combobox = QComboBox(c)
         c.change_dir_combobox.setObjectName("DirCombo")
         c.change_dir_combobox.addItem(f"{c.get_folder_name(c.sample.path)}/")
         for library in sorted(c.settings.libraries, key=lambda lib: lib.position):
@@ -191,14 +197,19 @@ class SampleCardUIBuilder:
         c.change_dir_combobox.setFixedHeight(24)
         c.change_dir_combobox.currentIndexChanged.connect(c.move_sample)
 
-        c.length_label = QLabel(f"{c.sample.duration:.1f}s")
+        c.length_label = QLabel(
+            format_reserve_clock_duration(c.sample.duration), c
+        )
         c.length_label.setObjectName("MetaLabel")
         c.length_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         c.length_label.setFixedHeight(24)
-        c.length_label.setVisible(False)
+        c.length_label.setFixedWidth(48)
+        # Do not call setVisible(True) before the label has been inserted into
+        # the card layout.  A visible parentless QWidget is a native top-level
+        # window, which caused one tiny flashing window per Recent sample.
 
-        formatted_date = c.sample.created_at.strftime("%d/%m/%Y %H:%M")
-        c.date_label = QLabel(f"{formatted_date}")
+        formatted_date = format_reserve_date(c.sample.created_at)
+        c.date_label = QLabel(f"{formatted_date}", c)
         c.date_label.setObjectName("DateChip")
         c.date_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         c.date_label.setFixedHeight(22)
@@ -209,19 +220,33 @@ class SampleCardUIBuilder:
         c.id_label.setFixedHeight(22)
 
         # Badge gamme (key detection)
-        c.key_badge = QPushButton("")
+        c.key_badge = QPushButton("", c)
         c.key_badge.setObjectName("KeyBadge")
         c.key_badge.setFixedHeight(22)
+        c.key_badge.setFixedWidth(38)
         c.key_badge.setCursor(Qt.CursorShape.PointingHandCursor)
         c.key_badge.setToolTip("Gamme détectée — cliquer pour trouver les samples compatibles")
         c.key_badge.setVisible(False)
+        c.key_slot = QWidget(c)
+        c.key_slot.setObjectName("SampleCardKeySlot")
+        c.key_slot.setFixedSize(38, 24)
+        key_slot_layout = QHBoxLayout(c.key_slot)
+        key_slot_layout.setContentsMargins(0, 0, 0, 0)
+        key_slot_layout.addWidget(c.key_badge)
 
         # Statut normalisation
-        c.status_label = QLabel("")
+        c.status_label = QLabel("", c)
         c.status_label.setObjectName("StatusLabel")
         c.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         c.status_label.setFixedHeight(22)
+        c.status_label.setMaximumWidth(74)
         c.status_label.setVisible(False)
+        c.status_slot = QWidget(c)
+        c.status_slot.setObjectName("SampleCardStatusSlot")
+        c.status_slot.setFixedSize(74, 24)
+        status_slot_layout = QHBoxLayout(c.status_slot)
+        status_slot_layout.setContentsMargins(0, 0, 0, 0)
+        status_slot_layout.addWidget(c.status_label)
 
         # Playback
         c.play_button = self._make_round_btn(
@@ -233,12 +258,18 @@ class SampleCardUIBuilder:
             icon_size=btn_icon,
         )
 
-        c.playback_slider = CustomSlider(Qt.Orientation.Horizontal)
+        c.playback_slider = CustomSlider(Qt.Orientation.Horizontal, c)
         c.playback_slider.setRange(0, 100)
         c.playback_slider.setValue(0)
-        c.playback_slider.setFixedHeight(24)
+        c.playback_slider.setFixedHeight(20)
+        c.playback_slider.setMinimumWidth(80)
+        c.playback_slider.setMaximumWidth(220)
+        c.playback_slider.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        c.playback_slider.setToolTip("Cliquer pour lire à partir de cette position")
 
-        c.time_label = QLabel("00:00/00:00")
+        c.time_label = QLabel("00:00/00:00", c)
         # Largeur calculee sur le format max (mm:ss / mm:ss) pour:
         # - eviter les sauts de layout
         # - reduire au minimum l'espace reserve a droite
@@ -254,7 +285,7 @@ class SampleCardUIBuilder:
 
         # Waveform container (rempli dynamiquement).
         # Il sera affiche via un QStackedLayout dans l'espace "editor" (ligne 3).
-        c.waveform_container = QWidget()
+        c.waveform_container = QWidget(c)
         c.waveform_container.setObjectName("WaveformContainer")
         c.waveform_container.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
@@ -264,7 +295,9 @@ class SampleCardUIBuilder:
         c.waveform_layout.setSpacing(0)
 
         # ---- Menu d'options (remplace la rangee de boutons d'action)
-        c.options_button = IconButton("dots-vertical", tooltip="Options", size="s")
+        c.options_button = IconButton(
+            "dots-vertical", tooltip="Options", size="s", parent=c
+        )
         c.options_menu = self._build_options_menu(c)
         c.options_button.clicked.connect(
             lambda: c.options_menu.exec(
@@ -272,23 +305,42 @@ class SampleCardUIBuilder:
             )
         )
 
-        # ---- Layouts (carte compacte : 2 lignes)
+        # ---- Layout principal : une ligne dense + progression active discrète.
         main_layout = QVBoxLayout(c)
-        main_layout.setContentsMargins(10, 8, 10, 8)
-        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(7, 4, 7, 4)
+        main_layout.setSpacing(2)
 
         header_layout = QHBoxLayout()
         header_layout.setSpacing(8)
-        header_layout.addWidget(c.checkbox)
-        header_layout.addWidget(c.name_label, 0, alignment=Qt.AlignmentFlag.AlignLeft)
-        header_layout.addWidget(c.rename_input, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        header_layout.addWidget(c.play_button)
+        c.name_slot = QWidget(c)
+        c.name_slot.setObjectName("SampleCardNameSlot")
+        c.name_slot.setFixedWidth(180)
+        name_slot_layout = QHBoxLayout(c.name_slot)
+        name_slot_layout.setContentsMargins(0, 0, 0, 0)
+        name_slot_layout.setSpacing(6)
+        name_slot_layout.addWidget(c.checkbox)
+        c.name_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        c.name_label.setMinimumWidth(0)
+        c.name_label.setToolTip(str(c.sample.name))
+        name_slot_layout.addWidget(c.name_label, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        name_slot_layout.addWidget(c.rename_input, 1)
+        header_layout.addWidget(c.name_slot)
+        # Preview directement dans la ligne : sa place est toujours reservee,
+        # la carte ne change donc jamais de hauteur pendant la lecture.
+        header_layout.addWidget(c.playback_slider, 1)
+        header_layout.addWidget(c.length_label)
         header_layout.addWidget(c.check_button)
         header_layout.addWidget(c.cancel_button)
         header_layout.addWidget(c.concat_button)
         header_layout.addWidget(c.concat_cancel_button)
         # Vrai vide (pas un QLabel expansif) : cliquer ici = clic sur la card.
-        header_layout.addStretch(1)
-        header_layout.addWidget(c.key_badge)
+        # Colonnes terminales stables : leur largeur ne dépend ni de "C"/"C#",
+        # ni du format de durée. Les lignes restent ainsi alignées verticalement.
+        header_layout.addWidget(c.status_slot)
+        header_layout.addWidget(c.key_slot)
         header_layout.addWidget(c.options_button)
         main_layout.addLayout(header_layout)
 
@@ -304,14 +356,13 @@ class SampleCardUIBuilder:
         _holder_layout.setContentsMargins(0, 0, 0, 0)
         _holder_layout.setSpacing(0)
         for _holder in (
-            c.date_label, c.id_label, c.status_label,
-            c.length_label, c.change_dir_combobox,
+            c.date_label, c.id_label, c.change_dir_combobox,
         ):
             _holder_layout.addWidget(_holder)
 
         # Playback container : on l'anime (maxHeight) en meme temps que le waveform
         # pour eviter l'effet "la card remonte puis redescend".
-        c.playback_container = QWidget()
+        c.playback_container = QWidget(c)
         c.playback_container.setObjectName("PlaybackContainer")
         c.playback_container.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -319,10 +370,9 @@ class SampleCardUIBuilder:
         playback_layout = QHBoxLayout(c.playback_container)
         playback_layout.setContentsMargins(0, 0, 0, 0)
         playback_layout.setSpacing(8)
-        playback_layout.addWidget(c.play_button)
 
         # Timeline : slider pleine largeur + time overlay a droite.
-        c.timeline_container = QWidget()
+        c.timeline_container = QWidget(c.playback_container)
         c.timeline_container.setObjectName("TimelineContainer")
         c.timeline_container.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -335,20 +385,23 @@ class SampleCardUIBuilder:
 
         # Base layer: slider + spacer reserve la place du time label pour que
         # la barre ne "passe pas dessous".
-        base = QWidget()
+        base = QWidget(c.timeline_container)
         base.setObjectName("TimelineBase")
         base_layout = QHBoxLayout(base)
         base_layout.setContentsMargins(0, 0, 0, 0)
         base_layout.setSpacing(0)
-        base_layout.addWidget(c.playback_slider, 1)
-        c.timeline_right_spacer = QWidget()
+        # playback_slider vit désormais dans la ligne principale. Ne pas
+        # l'ajouter une seconde fois ici : Qt le reparenterait vers ce
+        # conteneur historique masqué et il disparaîtrait de la carte compacte.
+        base_layout.addStretch(1)
+        c.timeline_right_spacer = QWidget(base)
         c.timeline_right_spacer.setObjectName("TimelineRightSpacer")
         # Reserve strictement la place du time label (pas plus).
         c.timeline_right_spacer.setFixedWidth(c.time_label.width())
         base_layout.addWidget(c.timeline_right_spacer)
 
         # Overlay layer: time label aligne a droite.
-        overlay = QWidget()
+        overlay = QWidget(c.timeline_container)
         overlay.setObjectName("TimelineOverlay")
         overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         overlay_layout = QHBoxLayout(overlay)
@@ -381,7 +434,7 @@ class SampleCardUIBuilder:
         # Espace "editor" (ligne 3) : un seul bloc qui affiche soit le playback,
         # soit le waveform editor. On animera la hauteur de ce bloc pour que les
         # 2 premieres lignes ne bougent jamais.
-        c.editor_container = QWidget()
+        c.editor_container = QWidget(c)
         c.editor_container.setObjectName("EditorContainer")
         c.editor_container.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -394,11 +447,19 @@ class SampleCardUIBuilder:
         c.editor_stack.setCurrentWidget(c.playback_container)
         c.editor_container.setMaximumHeight(c.playback_height_hint)
         c.editor_container.setMinimumHeight(c.playback_height_hint)
-        main_layout.addWidget(c.editor_container)
+        c.editor_container.hide()
+
+        c.active_progress = QProgressBar(c)
+        c.active_progress.setObjectName("RecentActiveProgress")
+        c.active_progress.setRange(0, 1000)
+        c.active_progress.setValue(0)
+        c.active_progress.setTextVisible(False)
+        c.active_progress.setFixedHeight(2)
+        c.active_progress.hide()
+        main_layout.addWidget(c.active_progress)
 
         # Si la carte obtient temporairement plus de hauteur (ex: pendant une anim),
         # cette stretch absorbe l'extra en bas et evite que les lignes 1/2 "flottent".
-        main_layout.addStretch(1)
 
         # Masquer les champs de renommage par defaut
         c.rename_input.setVisible(False)
@@ -423,6 +484,12 @@ class SampleCardUIBuilder:
     def _build_options_menu(self, c) -> QMenu:
         menu = QMenu(c)
         menu.addAction(
+            themed_icon("music", size=16, color=theme.manager.p.INFO),
+            "Analyser la gamme",
+        ).triggered.connect(
+            lambda: c.app_context.sample_store.batch_analyze_ids([c.sample.id])
+        )
+        menu.addAction(
             themed_icon("bolt", size=16, color=theme.manager.p.WARNING),
             "Normaliser",
         ).triggered.connect(c.onNormalizeButtonClicked)
@@ -441,12 +508,20 @@ class SampleCardUIBuilder:
         menu.addSeparator()
         menu.addAction(
             themed_icon("x", size=16, color=theme.manager.p.TEXT_MUTED),
-            "Retirer de l'historique\tCtrl+Shift+D",
+            "Désindexer\tCtrl+Shift+D",
         ).triggered.connect(c.onArchiveClicked)
         menu.addAction(
             themed_icon("trash", size=16, color=theme.manager.p.ERROR),
             "Supprimer\tCtrl+D",
         ).triggered.connect(c.confirmDelete)
+        menu.addSeparator()
+        menu.addAction("Ouvrir l'emplacement").triggered.connect(
+            lambda: c.openInFoldersRequested.emit(os.path.dirname(c.sample.path))
+        )
+        if getattr(getattr(c, "sample", None), "dominant_note", None):
+            menu.addAction("Trouver les compatibles").triggered.connect(
+                lambda: c.findCompatiblesRequested.emit(int(c.sample.id))
+            )
         return menu
 
     @staticmethod
@@ -469,12 +544,14 @@ class SampleCardUIBuilder:
         if folder:
             parts.append(f"Dossier : {folder}")
         try:
-            parts.append(f"Date : {c.sample.created_at.strftime('%d/%m/%Y %H:%M')}")
+            parts.append(f"Date : {format_reserve_date(c.sample.created_at)}")
         except Exception:
             pass
         duration = getattr(c.sample, "duration", None)
         if duration:
-            parts.append(f"Durée : {float(duration):.1f}s")
+            parts.append(
+                f"Durée : {format_reserve_duration(duration, compact=True)}"
+            )
         key = c.key_badge.text().strip() if getattr(c, "key_badge", None) else ""
         if key:
             parts.append(f"Gamme : {key}")
@@ -538,9 +615,13 @@ class SampleCardUIBuilder:
         QWidget#WaveformContainer, QWidget#TimelineContainer,
         QWidget#TimelineBase, QWidget#TimelineOverlay,
         QWidget#TimelineRightSpacer,
+        QWidget#SampleCardDataHolder,
+        QWidget#SampleCardNameSlot, QWidget#SampleCardKeySlot, QWidget#SampleCardStatusSlot,
         QWidget#InfoLeft, QWidget#InfoCenter, QWidget#InfoRight {{
             background: transparent;
+            border: none;
         }}
+        QCheckBox#SelectBox {{ background:transparent; border:none; spacing:0px; }}
         QLabel#SampleName {{
             font-weight: 600;
             font-size: 14px;
@@ -590,6 +671,8 @@ class SampleCardUIBuilder:
             padding: 4px 6px;
             border-radius: 4px;
         }}
+        QProgressBar#RecentActiveProgress {{ border:none; background:{p.BORDER}; }}
+        QProgressBar#RecentActiveProgress::chunk {{ background:{p.ACCENT}; }}
         QComboBox#DirCombo {{
             background-color: transparent;
             color: {p.TEXT_MUTED};
@@ -607,26 +690,26 @@ class SampleCardUIBuilder:
                 background: transparent;
             }}
             QSlider::groove:horizontal {{
-                height: 6px;
+                height: 3px;
                 background: {p.BORDER};
                 margin: 0px;
-                border-radius: 3px;
+                border-radius: 1px;
             }}
             QSlider::sub-page:horizontal {{
-                background: {p.TEXT_MUTED};
-                border-radius: 3px;
+                background: {p.ACCENT};
+                border-radius: 1px;
             }}
             QSlider::add-page:horizontal {{
                 background: {p.BORDER};
-                border-radius: 3px;
+                border-radius: 1px;
             }}
             QSlider::handle:horizontal {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 {p.TEXT_MUTED}, stop:1 {p.BORDER_LIGHT});
                 border: 1px solid {p.BORDER_LIGHT};
-                width: 12px;
+                width: 8px;
                 margin: -3px 0;
-                border-radius: 6px;
+                border-radius: 4px;
             }}
         """)
 

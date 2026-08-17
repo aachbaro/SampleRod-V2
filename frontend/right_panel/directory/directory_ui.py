@@ -27,7 +27,7 @@ import os
 
 import qtawesome as qta
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -114,7 +114,7 @@ def build_directory_widget_ui(widget) -> None:
     widget.up_button.setFixedSize(28, 28)
     widget.up_button.setToolTip("Dossier parent (←)")
     widget.up_button.clicked.connect(widget.go_to_parent_directory)
-    widget.up_button.hide()
+    widget.up_button.setText("↑")
 
     # Breadcrumb container — reconstructed on each navigation
     widget.breadcrumb_widget = QWidget()
@@ -135,8 +135,17 @@ def build_directory_widget_ui(widget) -> None:
     widget.path_label = QLabel("")
     widget.path_label.hide()
 
-    # Index chip — combines status label + index button into one control
-    widget.index_button = QPushButton("Indexer ce dossier")
+    widget.help_button = QPushButton("?")
+    widget.help_button.setObjectName("DirectoryHelpButton")
+    widget.help_button.setFixedSize(28, 28)
+    widget.help_button.setToolTip(
+        "Raccourcis\n↑↓ Sélectionner\nEspace Pré-écouter\n←/→ Reculer/avancer 1 s\n"
+        "Entrée Ouvrir dans le Labo\nAlt+← Dossier parent\nAlt+→ Ouvrir le dossier\n"
+        "F2 Renommer\nSuppr Supprimer"
+    )
+
+    # Commande stable : chaque clic relance une synchronisation récursive.
+    widget.index_button = QPushButton("Synchroniser")
     widget.index_button.setObjectName("DirectoryIndexChip")
     widget.index_button.setCursor(Qt.CursorShape.PointingHandCursor)
     widget.index_button.clicked.connect(widget.index_current_directory)
@@ -146,8 +155,23 @@ def build_directory_widget_ui(widget) -> None:
     widget.status_label.setObjectName("DirectoryStatusLabel")
     widget.status_label.hide()
 
+    header.addWidget(widget.up_button)
     header.addWidget(widget.breadcrumb_widget, 1)
-    header.addWidget(widget.index_button)
+    header.addWidget(widget.help_button)
+
+    summary = QHBoxLayout()
+    summary.setContentsMargins(4, 2, 4, 2)
+    summary_text = QVBoxLayout()
+    summary_text.setContentsMargins(0, 0, 0, 0)
+    summary_text.setSpacing(1)
+    widget.files_count_label = QLabel("0 fichier audio")
+    widget.files_count_label.setObjectName("DirectoryFilesCount")
+    widget.index_summary_label = QLabel("0 indexé")
+    widget.index_summary_label.setObjectName("DirectoryIndexSummary")
+    summary_text.addWidget(widget.files_count_label)
+    summary_text.addWidget(widget.index_summary_label)
+    summary.addLayout(summary_text, 1)
+    summary.addWidget(widget.index_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
     # ── Progress / indexation feedback
     widget.progress_label = QLabel("")
@@ -160,7 +184,7 @@ def build_directory_widget_ui(widget) -> None:
     widget.index_progress.setFixedHeight(4)
     widget.index_progress.setVisible(False)
 
-    # ── Shortcuts bar
+    # Conservée comme adaptateur interne, mais remplacée visuellement par ?.
     widget.shortcuts_bar = QWidget()
     widget.shortcuts_bar.setObjectName("DirectoryShortcutsBar")
     shortcuts_layout = QHBoxLayout(widget.shortcuts_bar)
@@ -180,15 +204,10 @@ def build_directory_widget_ui(widget) -> None:
         lbl.setObjectName("DirectoryShortcutHint")
         shortcuts_layout.addWidget(lbl)
     shortcuts_layout.addStretch(1)
+    widget.shortcuts_bar.hide()
 
-    # ── Files header (count)
-    files_header = QHBoxLayout()
-    files_header.setContentsMargins(4, 2, 4, 0)
-    files_header.setSpacing(8)
-    widget.files_count_label = QLabel("0 fichier")
-    widget.files_count_label.setObjectName("DirectoryFilesCount")
-    files_header.addWidget(widget.files_count_label)
-    files_header.addStretch(1)
+    widget.list_count_label = QLabel("")
+    widget.list_count_label.hide()
 
     # ── Compat filter row
     widget.compat_filter_row = QWidget()
@@ -224,7 +243,7 @@ def build_directory_widget_ui(widget) -> None:
     # ── Main list
     widget.list_widget = DirectoryListWidget(widget)
     widget.list_widget.setObjectName("DirectoryList")
-    widget.list_widget.setSpacing(4)
+    widget.list_widget.setSpacing(1)
     widget.list_widget.setViewportMargins(0, 0, 12, 0)
 
     # ── Hidden tree view — kept so _init_tree_model / tree signals still work
@@ -252,10 +271,9 @@ def build_directory_widget_ui(widget) -> None:
 
     # ── Assemble
     layout.addLayout(header)
+    layout.addLayout(summary)
     layout.addWidget(widget.index_progress)
     layout.addWidget(widget.progress_label)
-    layout.addWidget(widget.shortcuts_bar)
-    layout.addLayout(files_header)
     layout.addWidget(widget.compat_filter_row)
     layout.addWidget(widget.list_widget, 1)
 
@@ -335,10 +353,15 @@ def _rebuild_breadcrumb(widget, path: str) -> None:
             bc_layout.addWidget(sep)
 
         is_last = i == len(segments) - 1
-        btn = QPushButton(label)
+        shown = QFontMetrics(widget.font()).elidedText(
+            label, Qt.TextElideMode.ElideMiddle, 120
+        )
+        btn = QPushButton(shown)
+        btn.setToolTip(str(seg_path or label))
         btn.setObjectName("BreadcrumbCurrent" if is_last else "BreadcrumbSegment")
         btn.setFlat(True)
-        btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        btn.setMaximumWidth(130)
         if not is_last and seg_path:
             _nav_path = seg_path  # capture for lambda
             btn.clicked.connect(
@@ -362,19 +385,19 @@ def update_index_chip(widget, status_key: str, tracked: int = 0, total: int = 0)
         return
 
     if status_key == "busy":
-        btn.setText("Indexation…")
+        btn.setText("Synchronisation…")
         btn.setProperty("chipState", "busy")
         btn.setEnabled(False)
     elif status_key == "full":
-        btn.setText(f"{total} indexés ✓")
+        btn.setText("Synchroniser")
         btn.setProperty("chipState", "full")
-        btn.setEnabled(False)
+        btn.setEnabled(True)
     elif status_key == "partial":
-        btn.setText(f"{tracked}/{total} indexés — Continuer")
+        btn.setText("Synchroniser")
         btn.setProperty("chipState", "partial")
         btn.setEnabled(True)
     else:  # "none"
-        btn.setText("Non indexé — Indexer")
+        btn.setText("Synchroniser")
         btn.setProperty("chipState", "none")
         btn.setEnabled(True)
 
@@ -440,8 +463,9 @@ def build_directory_item_ui(
     # ── Name label
     item_widget.name_label = QLabel(os.path.basename(file_path))
     item_widget.name_label.setObjectName("DirectoryItemName")
-    item_widget.name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    item_widget.name_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
     item_widget.name_label.setMinimumWidth(0)
+    item_widget.name_label.setToolTip(file_path)
     item_widget.name_label.mouseDoubleClickEvent = on_start_rename  # type: ignore[assignment]
 
     # ── Rename input
@@ -457,12 +481,15 @@ def build_directory_item_ui(
     item_widget.duration_chip = QLabel("", item_widget)
     item_widget.duration_chip.setObjectName("DirectoryDurationChip")
     item_widget.duration_chip.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+    item_widget.duration_chip.setFixedWidth(48)
+    item_widget.duration_chip.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     item_widget.duration_chip.setVisible(False)
 
     # ── Key / note badge (clickable, shown when note detected)
     item_widget.key_badge = QPushButton("")
     item_widget.key_badge.setObjectName("DirectoryKeyBadge")
     item_widget.key_badge.setFixedHeight(20)
+    item_widget.key_badge.setFixedWidth(38)
     item_widget.key_badge.setCursor(Qt.CursorShape.PointingHandCursor)
     item_widget.key_badge.setVisible(False)
     item_widget.key_badge.clicked.connect(on_find_compatibles)
@@ -472,12 +499,26 @@ def build_directory_item_ui(
     item_widget.status_badge.setObjectName("DirectoryStatusBadge")
     item_widget.status_badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
+    item_widget.status_slot = QWidget(item_widget)
+    item_widget.status_slot.setObjectName("DirectoryStatusSlot")
+    item_widget.status_slot.setFixedSize(74, 24)
+    status_slot_layout = QHBoxLayout(item_widget.status_slot)
+    status_slot_layout.setContentsMargins(0, 0, 0, 0)
+    status_slot_layout.addWidget(item_widget.status_badge)
+
+    item_widget.key_slot = QWidget(item_widget)
+    item_widget.key_slot.setObjectName("DirectoryKeySlot")
+    item_widget.key_slot.setFixedSize(38, 24)
+    key_slot_layout = QHBoxLayout(item_widget.key_slot)
+    key_slot_layout.setContentsMargins(0, 0, 0, 0)
+    key_slot_layout.addWidget(item_widget.key_badge)
+
     # ── meta_label kept for backward compat (hidden)
     item_widget.meta_label = QLabel(meta_text, item_widget)
     item_widget.meta_label.setObjectName("DirectoryItemMeta")
     item_widget.meta_label.hide()
 
-    # ── Playback slider (thin, kept for seek functionality)
+    # Slider commun aux modes autonome et Réserve.
     item_widget.playback_slider = QSlider(Qt.Orientation.Horizontal, item_widget)
     item_widget.playback_slider.setObjectName("DirectoryPlaybackSlider")
     item_widget.playback_slider.setRange(0, 1000)
@@ -535,7 +576,9 @@ def build_directory_item_ui(
     text_layout.setContentsMargins(0, 0, 0, 0)
     text_layout.setSpacing(4)
 
-    # Name row: [name/rename ← stretch] [key] [status]
+    compact_reserve = bool(getattr(item_widget.parent_widget, "embedded_in_reserve", False))
+
+    # Name row historique pour le mode autonome.
     name_row = QHBoxLayout()
     name_row.setContentsMargins(0, 0, 0, 0)
     name_row.setSpacing(4)
@@ -545,25 +588,41 @@ def build_directory_item_ui(
     name_stack.addWidget(item_widget.name_label)
     name_stack.addWidget(item_widget.rename_input)
     name_row.addLayout(name_stack, 1)
-    name_row.addWidget(item_widget.key_badge, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
-    name_row.addWidget(item_widget.status_badge, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
+    if not compact_reserve:
+        name_row.addWidget(item_widget.status_slot, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
+        name_row.addWidget(item_widget.key_slot, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
+        name_row.addWidget(item_widget.duration_chip, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
 
     # Playback row: [slider ← stretch] [time]
     playback_row = QHBoxLayout()
     playback_row.setContentsMargins(0, 0, 0, 0)
     playback_row.setSpacing(6)
-    playback_row.addWidget(item_widget.playback_slider, 1)
-    playback_row.addWidget(item_widget.time_label, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
+    if not compact_reserve:
+        playback_row.addWidget(item_widget.playback_slider, 1)
+        playback_row.addWidget(item_widget.time_label, 0, alignment=Qt.AlignmentFlag.AlignVCenter)
+    else:
+        item_widget.time_label.hide()
 
     text_layout.addLayout(name_row)
-    text_layout.addLayout(playback_row)
+    if not compact_reserve:
+        text_layout.addLayout(playback_row)
 
-    # ── Card layout: [play btn] [text container]
+    # ── Card layout
     layout = QHBoxLayout(item_widget)
-    layout.setContentsMargins(8, 8, 14, 8)
+    layout.setContentsMargins(6, 4, 8, 4)
     layout.setSpacing(8)
     layout.addWidget(item_widget.play_button, 0, Qt.AlignmentFlag.AlignVCenter)
-    layout.addWidget(text_container, 1)
+    if compact_reserve:
+        text_container.setFixedWidth(180)
+        layout.addWidget(text_container, 0)
+        layout.addWidget(item_widget.playback_slider, 1)
+        layout.addWidget(item_widget.duration_chip, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(item_widget.status_slot, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(item_widget.key_slot, 0, Qt.AlignmentFlag.AlignVCenter)
+        item_widget.setMinimumHeight(38)
+        item_widget.setMaximumHeight(38)
+    else:
+        layout.addWidget(text_container, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +669,8 @@ def _qss_part1(p) -> str:
         f"QLabel#BreadcrumbEmpty{{color:{p.TEXT_MUTED};font-size:12px;font-style:italic;}}"
         f"QPushButton#DirectoryIndexChip{{font-size:11px;font-weight:600;padding:4px 10px;border-radius:10px;border:1px solid {p.BORDER};background:{p.BG_CARD};color:{p.TEXT_MUTED};}}"
         f"QPushButton#DirectoryIndexChip:hover{{background:{p.BG_HOVER};border-color:{p.WARNING};color:{p.WARNING};}}"
+        f"QPushButton#DirectoryHelpButton{{background:transparent;color:{p.TEXT_MUTED};border:1px solid {p.BORDER};border-radius:14px;font-weight:700;}}"
+        f"QPushButton#DirectoryHelpButton:hover{{color:{p.TEXT};border-color:{p.BORDER_LIGHT};}}"
     )
 
 def _qss_part2(p) -> str:
@@ -623,7 +684,8 @@ def _qss_part2(p) -> str:
         f"QPushButton#DirectoryChooseButton:disabled,QPushButton#DirectoryUpButton:disabled{{color:{p.TEXT_MUTED};border-color:{p.BORDER_LIGHT};}}"
         f"QWidget#DirectoryShortcutsBar{{background:transparent;}}"
         f"QLabel#DirectoryShortcutHint{{color:{p.TEXT_MUTED};font-size:11px;font-weight:500;}}"
-        f"QLabel#DirectoryFilesCount,QLabel#DirectoryDetailMeta,QLabel#DirectoryDetailPath{{color:{p.TEXT_MUTED};font-size:11px;}}"
+        f"QLabel#DirectoryFilesCount{{color:{p.TEXT};font-size:12px;font-weight:600;}}"
+        f"QLabel#DirectoryIndexSummary,QLabel#DirectoryDetailMeta,QLabel#DirectoryDetailPath{{color:{p.TEXT_MUTED};font-size:11px;}}"
     )
 
 def _qss_part3(p) -> str:
@@ -648,9 +710,11 @@ def _qss_part4(p) -> str:
         f"QListWidget#DirectoryList{{background:transparent;border:none;outline:none;}}"
         f"QListWidget#DirectoryList::item{{border:none;padding:0px;margin:0px;background:transparent;}}"
         f"QListWidget#DirectoryList::item:selected{{background:transparent;}}"
-        f"QWidget#DirectoryRow{{background-color:{p.BG_MEDIUM};border:1px solid {p.BORDER_LIGHT};border-radius:10px;}}"
-        f"QWidget#DirectoryRow[focused=\"true\"]{{background-color:{p.BG_HOVER};border:1px solid {p.ACCENT};border-radius:10px;}}"
-        f"QWidget#DirectoryRow:hover{{background-color:{p.BG_MEDIUM};border:1px solid {p.BORDER_LIGHT};border-radius:10px;}}"
+        f"QWidget#DirectoryRow{{background-color:transparent;border:none;border-radius:6px;}}"
+        f"QWidget#DirectoryRow QWidget{{background-color:transparent;border:none;}}"
+        f"QWidget#DirectoryRow QLabel{{background-color:transparent;}}"
+        f"QWidget#DirectoryRow[focused=\"true\"]{{background-color:{p.BG_HOVER};border-left:2px solid {p.ACCENT};border-radius:6px;}}"
+        f"QWidget#DirectoryRow:hover{{background-color:{p.BG_MEDIUM};border:none;border-radius:6px;}}"
         f"QPushButton#DirectoryPlayBtn{{border-radius:14px;border:1px solid {p.BORDER_LIGHT};background:{p.BG_CARD};}}"
         f"QPushButton#DirectoryPlayBtn:hover{{border-color:{p.ACCENT};}}"
     )
@@ -658,11 +722,12 @@ def _qss_part4(p) -> str:
 def _qss_part5(p) -> str:
     return (
         f"QLabel#DirectoryItemName{{color:{p.TEXT};font-size:12px;font-weight:600;background:transparent;}}"
+        f"QLabel#DirectorySectionHeader{{color:{p.TEXT_MUTED};font-size:10px;font-weight:700;padding:8px 6px 3px 6px;background:transparent;}}"
         f"QLabel#DirectoryItemMeta{{color:{p.TEXT_MUTED};font-size:11px;background:transparent;}}"
         f"QLabel#DirectoryTimeLabel{{color:{p.TEXT_MUTED};font-size:10px;background:transparent;}}"
-        f"QLabel#DirectoryDurationChip{{color:{p.TEXT_MUTED};font-size:10px;padding:2px 6px;background:{p.BG_CARD};border:1px solid {p.BORDER_LIGHT};border-radius:8px;}}"
+        f"QLabel#DirectoryDurationChip{{color:{p.TEXT_MUTED};font-size:10px;padding:0px;background:transparent;border:none;}}"
         f"QLabel#DirectoryStatusBadge{{color:{p.TEXT_MUTED};font-size:10px;font-weight:500;padding:2px 7px;background:{p.BG_CARD};border:1px solid {p.BORDER_LIGHT};border-radius:8px;}}"
-        f"QPushButton#DirectoryKeyBadge{{background-color:{p.ACCENT};color:{p.BG_DARK};border:none;border-radius:8px;padding:2px 8px;font-size:10px;font-weight:700;}}"
+        f"QPushButton#DirectoryKeyBadge{{background-color:#2196f3;color:#ffffff;border:none;border-radius:9px;padding:2px 6px;font-size:10px;font-weight:700;}}"
         f"QPushButton#DirectoryKeyBadge:hover{{background-color:{p.ACCENT};border:1px solid {p.TEXT};}}"
         f"QPushButton#DirectoryLaboBtn{{background:{p.ACCENT};color:{p.BG_DARK};border:none;border-radius:6px;padding:3px 10px;font-size:11px;font-weight:700;}}"
         f"QPushButton#DirectoryLaboBtn:hover{{background:{p.TEXT};color:{p.BG_DARK};}}"

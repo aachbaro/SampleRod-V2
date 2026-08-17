@@ -157,7 +157,9 @@ def _materialize_slice_payload(payload: dict) -> str:
     os.makedirs(folder, exist_ok=True)
     filename = f"{label}_{uuid.uuid4().hex[:8]}.wav"
     path = os.path.join(folder, filename)
-    sf.write(path, audio, sample_rate)
+    # La slice vient de la waveform editee en memoire (float32). Un WAV FLOAT
+    # evite la quantification PCM16 au moment ou une cible exige un chemin.
+    sf.write(path, audio, sample_rate, subtype="FLOAT")
     return path
 
 

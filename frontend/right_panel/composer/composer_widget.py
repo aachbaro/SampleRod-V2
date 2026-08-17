@@ -41,6 +41,7 @@ import uuid
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QEvent, QThread, Signal, QSettings
+from frontend.dragdrop import DropAcceptance, DropAction, describe_drop, drag_controller
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QWidget, QListWidgetItem, QApplication, QFileDialog
 
@@ -86,6 +87,14 @@ class SampleComposerWidget(QWidget):
         self._install_focus_filters()
         self._sync_all()
         self.setAcceptDrops(True)
+        self._drop_target_id = f"composer:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id, self,
+            lambda payload: DropAcceptance.accept(
+                DropAction.ADD_TO_COMPOSITION,
+                describe_drop(DropAction.ADD_TO_COMPOSITION, payload),
+            ),
+        )
         logger.info("[Composer] DnD target ready (acceptDrops=True)")
         logger.info("[Composer] Initialisation (ready)")
 
@@ -232,6 +241,7 @@ class SampleComposerWidget(QWidget):
         self._handle_drag_event(event)
 
     def dragLeaveEvent(self, event):
+        drag_controller().leave_target(self._drop_target_id)
         self._set_drop_active(False)
         event.accept()
 
@@ -240,6 +250,10 @@ class SampleComposerWidget(QWidget):
 
     def _handle_drag_event(self, event) -> bool:
         mime = event.mimeData()
+        if event.type() in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
+            drag_controller().enter_target(self._drop_target_id, mime)
+        elif event.type() == QEvent.Type.Drop:
+            drag_controller().finish_drag()
         if event.type() == QEvent.Type.Drop:
             logger.info(
                 "[Composer] drop formats=%s",

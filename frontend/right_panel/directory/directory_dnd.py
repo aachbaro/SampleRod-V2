@@ -30,6 +30,8 @@ from typing import Any
 from PySide6.QtCore import QMimeData
 
 from frontend.right_panel.composer.composer_dnd import has_audio_file_urls
+from frontend.dragdrop.codec import PAYLOAD_MIME
+from frontend.labo.artifact_store import ARTIFACT_MIME
 
 logger = logging.getLogger("directory_dnd")
 
@@ -43,6 +45,8 @@ def accepts(mime: QMimeData) -> bool:
     return bool(
         mime.hasFormat(MIME_SAMPLE_SLICE_DATA)
         or mime.hasFormat(MIME_SAMPLE_CARD)
+        or mime.hasFormat(PAYLOAD_MIME)
+        or mime.hasFormat(ARTIFACT_MIME)
         or has_audio_file_urls(mime)
     )
 

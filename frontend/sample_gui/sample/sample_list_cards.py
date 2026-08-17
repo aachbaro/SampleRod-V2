@@ -29,7 +29,9 @@ import logging
 import os
 from time import perf_counter
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QTimer, Qt
+from PySide6.QtWidgets import QLabel
+from frontend.reserve import format_reserve_clock_duration
 
 from frontend.sample_gui.sample.sample_card import SampleCard
 
@@ -45,6 +47,9 @@ class SampleListCards:
         self._entry_animations: dict[int, QPropertyAnimation] = {}
         self._exit_animations: dict[int, QPropertyAnimation] = {}
         self._pending_refresh_after_exit = False
+        self._incremental_refresh_running = False
+        self._pending_refresh_after_incremental = False
+        self._incremental_generation = 0
 
     # ---- Service slots
     def on_samples_changed(self, samples: list):
@@ -54,6 +59,13 @@ class SampleListCards:
         on differe le refresh pour ne pas interrompre l'animation.
         """
         self.widget.samples = samples
+        if self._incremental_refresh_running:
+            # Analyses and normalisation may update the store while the first
+            # page is being materialised.  Finish the current page, then apply
+            # only the latest snapshot instead of restarting the build for
+            # every signal.
+            self._pending_refresh_after_incremental = True
+            return
         # Si une animation de suppression est en cours, on differe le refresh
         # pour eviter de retirer la card instantanement.
         if self._exit_animations:
@@ -109,7 +121,9 @@ class SampleListCards:
         card = self.widget._card_widgets.get(sample_id)
         if card:
             card.sample.duration = new_duration
-            card.length_label.setText(f"{new_duration:.1f}s")
+            card.length_label.setText(
+                format_reserve_clock_duration(new_duration)
+            )
 
     def on_sample_concat_candidate_changed(self, sample_id: int, enabled: bool, prev_id):
         card = self.widget._card_widgets.get(sample_id)
@@ -125,6 +139,10 @@ class SampleListCards:
 
     # ---- Refresh list
     def refresh_list(self):
+        if self._should_build_first_page_incrementally():
+            self._start_incremental_first_page()
+            return
+
         start = perf_counter()
         self._clear_concat_preview()
         ordered_samples = self.widget.get_filtered_samples()
@@ -137,6 +155,14 @@ class SampleListCards:
         start_idx = (self.widget.current_page - 1) * self.widget.samples_per_page
         end_idx = start_idx + self.widget.samples_per_page
         page_samples = ordered_samples[start_idx:end_idx]
+
+        # A page may instantiate dozens of fairly rich cards.  Keep the scroll
+        # viewport quiet while the batch is assembled: otherwise Qt performs a
+        # layout/paint pass for nearly every insertion, which makes the first
+        # opening of Recents visibly stutter.
+        content_widget = getattr(self.widget, "content_widget", None)
+        if content_widget is not None:
+            content_widget.setUpdatesEnabled(False)
 
         ids_courants = {s.id for s in page_samples}
         for ancien_id in list(self.widget._card_widgets):
@@ -175,6 +201,10 @@ class SampleListCards:
             self.widget.content_layout.addWidget(w)
         self.widget.content_layout.addStretch()
 
+        if content_widget is not None:
+            content_widget.setUpdatesEnabled(True)
+            content_widget.update()
+
         if total_samples == 0:
             self.widget.updatePaginationLabel(0, 0, 0)
         else:
@@ -210,11 +240,132 @@ class SampleListCards:
             (perf_counter() - start) * 1000.0,
         )
 
+    def _should_build_first_page_incrementally(self) -> bool:
+        """Use cooperative batches only for the costly first visible page."""
+        if self._incremental_refresh_running or self.widget._card_widgets:
+            return False
+        is_visible = getattr(self.widget, "isVisible", None)
+        if not callable(is_visible) or not is_visible():
+            return False
+        return len(self.widget.get_filtered_samples()) > 8
+
+    def _start_incremental_first_page(self) -> None:
+        """Materialise the first page without monopolising the Qt event loop."""
+        start = perf_counter()
+        self._clear_concat_preview()
+        ordered_samples = self.widget.get_filtered_samples()
+        self.widget.filtered_samples = list(ordered_samples)
+        total_samples = len(ordered_samples)
+        max_pages = max(
+            1,
+            ((total_samples - 1) // self.widget.samples_per_page) + 1,
+        ) if total_samples else 1
+        self.widget.current_page = min(self.widget.current_page, max_pages)
+        start_idx = (self.widget.current_page - 1) * self.widget.samples_per_page
+        page_samples = ordered_samples[
+            start_idx:start_idx + self.widget.samples_per_page
+        ]
+
+        while self.widget.content_layout.count():
+            item = self.widget.content_layout.takeAt(0)
+            child = item.widget()
+            if child is not None:
+                self.widget.content_layout.removeWidget(child)
+
+        loading = QLabel("Chargement des récents…", self.widget.content_widget)
+        loading.setObjectName("RecentLoadingLabel")
+        loading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        loading.setStyleSheet("color: #858585; padding: 12px;")
+        self.widget.content_layout.addWidget(loading)
+
+        self._incremental_refresh_running = True
+        self._pending_refresh_after_incremental = False
+        self._incremental_generation += 1
+        generation = self._incremental_generation
+        queue = list(page_samples)
+        built: list[SampleCard] = []
+        loading_removed = False
+
+        def build_batch() -> None:
+            nonlocal loading_removed
+            if generation != self._incremental_generation:
+                return
+
+            # Four cards keeps each UI slice short enough to preserve window
+            # movement and repainting even on machines where card construction
+            # is relatively expensive.
+            for _ in range(min(4, len(queue))):
+                sample = queue.pop(0)
+                card = self._build_card(sample)
+                self.widget._card_widgets[sample.id] = card
+                if sample.id in self.widget.selected_ids:
+                    card.checkbox.setChecked(True)
+                built.append(card)
+
+            if queue:
+                QTimer.singleShot(0, build_batch)
+                return
+
+            # Publish the completed page in one layout pass.  Adding each batch
+            # to a visible layout made the page resize and blink repeatedly.
+            if not loading_removed:
+                self.widget.content_layout.removeWidget(loading)
+                loading.deleteLater()
+                loading_removed = True
+            self.widget.content_widget.setUpdatesEnabled(False)
+            for card in built:
+                self.widget.content_layout.addWidget(card)
+            self.widget.content_layout.addStretch()
+            self.widget.content_widget.setUpdatesEnabled(True)
+            self.widget.content_widget.update()
+            if total_samples:
+                self.widget.updatePaginationLabel(
+                    start_idx + 1,
+                    min(start_idx + self.widget.samples_per_page, total_samples),
+                    total_samples,
+                )
+            else:
+                self.widget.updatePaginationLabel(0, 0, 0)
+            self.widget._last_render_signature = self.widget._compute_samples_signature(
+                self.widget.samples
+            )
+            self._incremental_refresh_running = False
+            self.widget.updateSelectActions()
+            pending_focus_id = self.widget._pending_focus_sample_id
+            if pending_focus_id is not None:
+                pending_card = self.widget._card_widgets.get(int(pending_focus_id))
+                if pending_card is not None:
+                    self.widget._pending_focus_sample_id = None
+                    QTimer.singleShot(
+                        0, lambda c=pending_card: self.widget._focus_card(c)
+                    )
+            logger.info(
+                "[SampleListCards][Perf] first-page incremental cards=%s total=%.1fms",
+                len(built),
+                (perf_counter() - start) * 1000.0,
+            )
+            if self._pending_refresh_after_incremental:
+                self._pending_refresh_after_incremental = False
+                QTimer.singleShot(0, self.refresh_list)
+
+        QTimer.singleShot(0, build_batch)
+
     # ---- Helpers
     def _build_card(self, samp):
-        card = SampleCard(samp, self.widget.app_context)
+        # Parent the card at construction time.  A parentless QWidget is a
+        # top-level native window until the layout reparents it; during a large
+        # first refresh this produced the succession of tiny flashing windows.
+        card = SampleCard(
+            samp,
+            self.widget.app_context,
+            parent=getattr(self.widget, "content_widget", None),
+        )
         card.deleteSample.connect(self.widget.delete_sample)
-        card.removeFromHistory.connect(self.widget.sample_store.removeFromHistory)
+        card.removeFromHistory.connect(
+            lambda sample_id: self.widget.app_context.reserve_mutations.unindex(
+                self.widget._entry_from_sample_id(sample_id)
+            )
+        )
         card.renameSample.connect(self.widget.rename_sample)
         card.sampleMoved.connect(self.widget.move_sample)
         card.normalizeClicked.connect(self.widget.onNormalizeClicked)

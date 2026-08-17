@@ -92,10 +92,10 @@ def ensure_sqlite_schema() -> None:
             "detected_scale_kind": "ALTER TABLE samples ADD COLUMN detected_scale_kind VARCHAR(16)",
             "scale_confidence": "ALTER TABLE samples ADD COLUMN scale_confidence FLOAT",
             "compatible_scales": "ALTER TABLE samples ADD COLUMN compatible_scales TEXT",
+            "material_metadata": "ALTER TABLE samples ADD COLUMN material_metadata TEXT",
         }
         # On n'ajoute que ce qui manque : relancer la fonction est sans danger.
         for column_name, ddl in migrations.items():
             if column_name not in columns:
                 connection.exec_driver_sql(ddl)
-
 

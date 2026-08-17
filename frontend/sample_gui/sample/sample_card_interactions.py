@@ -30,11 +30,17 @@ from PySide6.QtWidgets import (
     QApplication,
     QAbstractButton,
     QComboBox,
+    QCheckBox,
     QGraphicsOpacityEffect,
     QLineEdit,
     QMenu,
     QSlider,
     QWidget,
+)
+from frontend.dragdrop import (
+    DragItem, DragKind, DragPayload, DragProvenance,
+    MaterialOperation, MaterialStatus,
+    attach_payload, drag_preview_pixmap, drag_session,
 )
 
 logger = logging.getLogger("sample_card_dnd")
@@ -47,6 +53,31 @@ class SampleCardInteractions:
         self.card = card
         self._drag_start_pos = None
         self._drag_source = None
+        self._checkbox_width_animation = None
+
+    def set_checkbox_revealed(self, revealed: bool) -> None:
+        """Anime la place de la checkbox sans modifier la hauteur de carte."""
+        checkbox = self.card.checkbox
+        revealed = bool(revealed or checkbox.isChecked())
+        for animation in (self._checkbox_width_animation,):
+            if animation is not None:
+                animation.stop()
+
+        target_width = checkbox.sizeHint().width() if revealed else 0
+        if revealed:
+            checkbox.show()
+        width_animation = QPropertyAnimation(checkbox, b"maximumWidth", checkbox)
+        width_animation.setDuration(150)
+        width_animation.setStartValue(checkbox.maximumWidth())
+        width_animation.setEndValue(target_width)
+        width_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        if not revealed:
+            width_animation.finished.connect(
+                lambda: checkbox.hide() if not checkbox.isChecked() else None
+            )
+        self._checkbox_width_animation = width_animation
+        width_animation.start()
 
     @staticmethod
     def _event_point(event):
@@ -108,8 +139,23 @@ class SampleCardInteractions:
             "application/x-sample-card",
             pickle.dumps(payload),
         )
+        descriptor = DragPayload(
+            kind=DragKind.AUDIO_FILE,
+            items=(DragItem(
+                item_id=str(sample_id or ""),
+                path=file_path,
+                display_name=os.path.basename(file_path) or "Sample",
+            ),),
+            source_id=f"sample-card:{sample_id}",
+            source_module="reserve",
+            status=MaterialStatus.SOURCE,
+            provenance=DragProvenance(file_path, MaterialOperation.IMPORT),
+        )
+        attach_payload(mime, descriptor)
         drag.setMimeData(mime)
-        result = drag.exec(Qt.DropAction.CopyAction)
+        drag.setPixmap(drag_preview_pixmap(descriptor))
+        with drag_session(descriptor):
+            result = drag.exec(Qt.DropAction.CopyAction)
         logger.info("[SampleCard] drag end (result=%s)", result)
 
     # ---- Focus
@@ -144,6 +190,9 @@ class SampleCardInteractions:
 
     def event_filter(self, watched, event) -> bool:
         if event.type() == QEvent.MouseButtonPress:
+            # Cocher pour une action bulk ne change pas l'entrée inspectée.
+            if isinstance(watched, QCheckBox):
+                return False
             self.card.setFocus()
             if (
                 event.button() == Qt.MouseButton.LeftButton

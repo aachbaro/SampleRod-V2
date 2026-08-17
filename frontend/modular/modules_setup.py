@@ -72,7 +72,8 @@ def _artifacts_factory(ctx):
 def _settings_factory(ctx):
     from frontend.settings_gui.settings_panel import SettingsPanelWidget
 
-    return SettingsPanelWidget(ctx.app_context)
+    # Le gestionnaire debloque la section "Atelier modulaire" (quadrillage).
+    return SettingsPanelWidget(ctx.app_context, window_manager=ctx.window_manager)
 
 
 def build_default_registry() -> ModuleRegistry:

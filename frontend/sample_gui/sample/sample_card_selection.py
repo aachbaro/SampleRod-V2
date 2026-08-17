@@ -38,3 +38,5 @@ class SampleCardSelection:
         c.setProperty("checked", checked)
         c.style().unpolish(c)
         c.style().polish(c)
+        if hasattr(c, "interactions"):
+            c.interactions.set_checkbox_revealed(bool(checked) or c.underMouse())

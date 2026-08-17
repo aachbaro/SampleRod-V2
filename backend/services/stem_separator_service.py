@@ -171,6 +171,7 @@ class StemSeparatorService(QObject):
         self.app_context = app_context
         self._module: ModuleType | None = None
         self._module_error = ""
+        self._metadata_loaded = False
         self._thread = None
         self._worker = None
         self._output_dir = ""
@@ -179,7 +180,6 @@ class StemSeparatorService(QObject):
         self.available_models = ["htdemucs"]
         self._pending_paths: list[str] = []
         self._current_path = ""
-        self._load_metadata()
 
     @property
     def output_dir(self) -> str:
@@ -210,11 +210,20 @@ class StemSeparatorService(QObject):
 
     def is_available(self) -> bool:
         """Vrai si le module externe a pu etre charge."""
+        self.prepare_metadata()
         return self._module is not None
 
     def availability_error(self) -> str:
         """Message expliquant pourquoi l'outil est indisponible (sinon vide)."""
+        self.prepare_metadata()
         return self._module_error
+
+    def prepare_metadata(self) -> None:
+        """Charge le pont Stem Lab a la premiere apparition/utilisation."""
+        if self._metadata_loaded:
+            return
+        self._metadata_loaded = True
+        self._load_metadata()
 
     def set_output_dir(self, path: str) -> None:
         """Definit le dossier ou seront ecrits les stems (cree si besoin)."""
@@ -313,6 +322,7 @@ class StemSeparatorService(QObject):
         """
         if self._thread is not None and self._thread.isRunning():
             return True
+        self.prepare_metadata()
         if self._module is None:
             return False
 

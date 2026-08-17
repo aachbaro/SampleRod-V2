@@ -1,129 +1,192 @@
+"""Panneau de parametres moderne, responsive et charge a la demande."""
+
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QScrollArea,
-    QVBoxLayout,
-    QWidget,
+    QFrame, QGridLayout, QLabel, QScrollArea, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from frontend.settings_gui.audio_settings import AudioSettingsWidget
-from frontend.settings_gui.display_settings import DisplaySettingsWidget
-from frontend.settings_gui.libraries_list import SettingsLibrariesList
-from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
-from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
-from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
-from frontend.settings_gui.waveform_settings import WaveformSettingsWidget
+from frontend.styles import theme
+from frontend.ui.lazy_widget import LazyWidgetHost
+
+
+class SettingsCard(QFrame):
+    """Carte plate avec une hierarchie plus legere qu'un QGroupBox."""
+
+    def __init__(self, title: str, description: str, content: QWidget, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SettingsCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 16)
+        layout.setSpacing(8)
+        title_label = QLabel(title)
+        title_label.setObjectName("SettingsCardTitle")
+        layout.addWidget(title_label)
+        if description:
+            desc = QLabel(description)
+            desc.setObjectName("SettingsCardDescription")
+            desc.setWordWrap(True)
+            layout.addWidget(desc)
+        layout.addWidget(content)
+
+
+class ResponsiveSettingsPage(QWidget):
+    """Une colonne en module etroit, deux dans une grande fenetre."""
+
+    TWO_COLUMN_MIN_WIDTH = 820
+
+    def __init__(self, cards: list[QWidget], parent=None):
+        super().__init__(parent)
+        self._cards = list(cards)
+        self._column_count = 0
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(14, 14, 14, 18)
+        self._grid.setHorizontalSpacing(12)
+        self._grid.setVerticalSpacing(12)
+        self._relayout(1)
+
+    @property
+    def column_count(self) -> int:
+        return self._column_count
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout(2 if event.size().width() >= self.TWO_COLUMN_MIN_WIDTH else 1)
+
+    def _relayout(self, columns: int) -> None:
+        columns = max(1, int(columns))
+        if columns == self._column_count:
+            return
+        while self._grid.count():
+            self._grid.takeAt(0)
+        for index, card in enumerate(self._cards):
+            self._grid.addWidget(card, index // columns, index % columns)
+        final_row = (len(self._cards) + columns - 1) // columns
+        self._grid.setRowStretch(final_row, 1)
+        for column in range(columns):
+            self._grid.setColumnStretch(column, 1)
+        self._column_count = columns
 
 
 class SettingsPanelWidget(QWidget):
-    """Panneau partage des reglages, reutilisable en onglet classique ou module."""
+    """Panneau partage entre l'onglet classique et le module Parametres."""
 
-    def __init__(self, app_context, parent=None):
+    def __init__(self, app_context, parent=None, window_manager=None):
         super().__init__(parent)
         self.app_context = app_context
         self.settings = app_context.settings
+        self._window_manager = window_manager
         self._build_ui()
+        self._apply_styles()
+        theme.manager.themeChanged.connect(lambda *_: self._apply_styles())
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        self.tabs = QTabWidget()
+        self.tabs.setObjectName("SettingsTabs")
+        self.tabs.setDocumentMode(True)
+        root.addWidget(self.tabs)
+        self._add_lazy_page("Bibliothèques", self._build_libraries_page)
+        self._add_lazy_page("Audio", self._build_audio_page)
+        self._add_lazy_page("Interface", self._build_interface_page)
+        self._add_lazy_page("Services", self._build_services_page)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        root.addWidget(scroll)
+    def _add_lazy_page(self, title: str, factory: Callable[[], QWidget]) -> None:
+        self.tabs.addTab(LazyWidgetHost(factory, f"Chargement · {title}"), title)
 
-        container = QWidget()
-        scroll.setWidget(container)
+    def _build_libraries_page(self) -> QWidget:
+        from frontend.settings_gui.libraries_list import SettingsLibrariesList
+        return self._page([self._card(
+            "Bibliothèques", "Sources de samples, ordre et dossiers.",
+            SettingsLibrariesList(self.app_context),
+        )])
 
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(12, 12, 12, 12)
-        container_layout.setSpacing(12)
+    def _build_audio_page(self) -> QWidget:
+        from frontend.settings_gui.audio_settings import AudioSettingsWidget
+        from frontend.settings_gui.retro_recording_settings import RetroRecordingWidget
+        return self._page([
+            self._card("Enregistrement rétro", "Buffer récupéré avant une prise.",
+                       RetroRecordingWidget(self.settings)),
+            self._card("Entrée audio", "Périphérique, fréquence et normalisation.",
+                       AudioSettingsWidget(self.app_context)),
+        ])
 
-        settings_libraries_list = SettingsLibrariesList(self.app_context)
-        settings_retro_widget = RetroRecordingWidget(self.settings)
-        audio_settings_widget = AudioSettingsWidget(self.app_context)
-        display_settings_widget = DisplaySettingsWidget(self.settings)
-        remote_control_widget = RemoteControlSettingsWidget(self.app_context)
-        screenshot_settings_widget = ScreenshotSettingsWidget(self.app_context)
-        waveform_settings_widget = WaveformSettingsWidget(self.settings)
+    def _build_interface_page(self) -> QWidget:
+        from frontend.settings_gui.display_settings import DisplaySettingsWidget
+        from frontend.settings_gui.waveform_settings import WaveformSettingsWidget
+        cards = [
+            self._card("Affichage", "Densité et pagination.",
+                       DisplaySettingsWidget(self.settings)),
+            self._card("Waveform", "Découpage et marqueurs.",
+                       WaveformSettingsWidget(self.settings)),
+        ]
+        if self._window_manager is not None:
+            from frontend.settings_gui.modular_grid_settings import ModularGridSettingsWidget
+            cards.insert(0, self._card(
+                "Atelier modulaire", "Quadrillage et alignement des fenêtres.",
+                ModularGridSettingsWidget(self._window_manager),
+            ))
+        return self._page(cards)
 
-        libraries_group = self._make_settings_group(
-            "Bibliotheques",
-            "Gestion des bibliotheques de samples (ajout, suppression, ordre).",
-            settings_libraries_list,
-        )
-        container_layout.addWidget(libraries_group)
-
-        columns = QHBoxLayout()
-        columns.setSpacing(12)
-
-        left_col = QVBoxLayout()
-        left_col.setSpacing(12)
-        right_col = QVBoxLayout()
-        right_col.setSpacing(12)
-
-        retro_group = self._make_settings_group(
-            "Enregistrement retro",
-            "Active le pre-enregistrement, ajuste la duree du buffer, puis utilise la molette sur REC pour choisir le retro time de chaque prise.",
-            settings_retro_widget,
-        )
-        display_group = self._make_settings_group(
-            "Affichage",
-            "Configuration de la pagination et de la densite des listes.",
-            display_settings_widget,
-        )
-        audio_group = self._make_settings_group(
-            "Audio",
-            "Sample rate, loopback et normalisation.",
-            audio_settings_widget,
-        )
-        remote_group = self._make_settings_group(
-            "Controle distant",
-            "Piloter l'app depuis un navigateur (mobile) sur le meme reseau.",
-            remote_control_widget,
-        )
-        screenshot_group = self._make_settings_group(
-            "Captures d'ecran",
-            "Capturer des images depuis le telephone (optionnel).",
-            screenshot_settings_widget,
-        )
-        waveform_group = self._make_settings_group(
-            "Waveform / Decoupage",
-            "Comportement de l'editeur waveform et des outils de decoupage.",
-            waveform_settings_widget,
-        )
-
-        left_col.addWidget(retro_group)
-        left_col.addWidget(display_group)
-        left_col.addWidget(waveform_group)
-        left_col.addStretch()
-
-        right_col.addWidget(audio_group)
-        right_col.addWidget(remote_group)
-        right_col.addWidget(screenshot_group)
-        right_col.addStretch()
-
-        columns.addLayout(left_col, 1)
-        columns.addLayout(right_col, 1)
-        container_layout.addLayout(columns)
-        container_layout.addStretch()
+    def _build_services_page(self) -> QWidget:
+        from frontend.settings_gui.remote_control_settings import RemoteControlSettingsWidget
+        from frontend.settings_gui.screenshot_settings import ScreenshotSettingsWidget
+        return self._page([
+            self._card("Contrôle distant", "Accès local depuis un autre appareil.",
+                       RemoteControlSettingsWidget(self.app_context)),
+            self._card("Captures d’écran", "Destination et écran utilisé.",
+                       ScreenshotSettingsWidget(self.app_context)),
+        ])
 
     @staticmethod
-    def _make_settings_group(title: str, description: str, widget: QWidget) -> QGroupBox:
-        group = QGroupBox(title)
-        layout = QVBoxLayout(group)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+    def _card(title: str, description: str, widget: QWidget) -> SettingsCard:
+        return SettingsCard(title, description, widget)
 
-        if description:
-            desc_label = QLabel(description)
-            desc_label.setWordWrap(True)
-            desc_label.setObjectName("SettingsDesc")
-            layout.addWidget(desc_label)
+    @staticmethod
+    def _page(cards: list[QWidget]) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setObjectName("SettingsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(ResponsiveSettingsPage(cards))
+        return scroll
 
-        layout.addWidget(widget)
-        return group
+    def _apply_styles(self) -> None:
+        p = theme.manager.p
+        self.setStyleSheet(f"""
+            SettingsPanelWidget, QScrollArea#SettingsScroll,
+            QScrollArea#SettingsScroll > QWidget > QWidget {{
+                background: {p.BG_DARK}; border: none;
+            }}
+            QTabWidget#SettingsTabs::pane {{
+                border: none; background: {p.BG_DARK};
+            }}
+            QTabWidget#SettingsTabs QTabBar::tab {{
+                background: transparent; color: {p.TEXT_MUTED}; border: none;
+                border-bottom: 2px solid transparent; padding: 9px 14px;
+                margin: 0 2px;
+            }}
+            QTabWidget#SettingsTabs QTabBar::tab:selected {{
+                color: {p.TEXT}; border-bottom-color: {p.RETRO};
+            }}
+            QTabWidget#SettingsTabs QTabBar::tab:hover:!selected {{
+                color: {p.TEXT}; background: {p.BG_HOVER};
+            }}
+            QFrame#SettingsCard {{
+                background: {p.BG_MEDIUM}; border: 1px solid {p.BORDER_LIGHT};
+                border-radius: 8px;
+            }}
+            QLabel#SettingsCardTitle {{
+                color: {p.TEXT}; font-size: 13px; font-weight: 700;
+                border: none; background: transparent;
+            }}
+            QLabel#SettingsCardDescription {{
+                color: {p.TEXT_MUTED}; font-size: 11px;
+                border: none; background: transparent;
+            }}
+        """)

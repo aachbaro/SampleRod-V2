@@ -75,6 +75,14 @@ class DirectorySelectionController:
         self._select_folder_path(folder_path)
 
     def _on_list_selection_changed(self) -> None:
+        # Pointer selection is emitted directly by DirectoryListItemWidget on
+        # MouseButtonPress.  Ignore incidental QListWidget current-item changes
+        # (notably those produced while hovering native item widgets on
+        # Windows); only Up/Down keyboard navigation enters through this slot.
+        if not getattr(
+            self.widget.list_widget, "_keyboard_selection_in_progress", False
+        ):
+            return
         list_item = self.widget.list_widget.currentItem()
         if list_item is None:
             self._set_selected_row_widget(None)

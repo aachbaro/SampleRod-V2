@@ -62,7 +62,7 @@ class SampleCardWaveform:
         self._fade = None
 
         try:
-            c.app_context.audio_player.clear_audio()
+            c.playback.controller.stop(c.playback._entry())
         except Exception:
             pass
 

@@ -67,19 +67,21 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import uuid
 from time import perf_counter
 
 import soundfile as sf
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QStandardPaths, QThread, Signal, Slot
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.db import SessionLocal
 from backend.models.integrity_worker import IntegrityCheckWorker
-from backend.models.normalize_worker import NormalizeWorker
+from backend.models.normalize_worker import NormalizeWorker, supports_in_place_normalization
 from backend.models.sample import Sample
 from backend.services.audio_metadata import get_audio_duration, normalize_audio_path
 from backend.services.notification_service import NotificationType
 from backend.services.scale_analysis_service import ScaleAnalysisService
+from backend.services.material_naming import promoted_file_stem
 
 logger = logging.getLogger("sample_service")
 
@@ -154,7 +156,8 @@ class SampleService(QObject):
     sampleStartedNormalization = Signal(int)
     sampleFinishedNormalization = Signal(int)
     sampleNormalizationFailed = Signal(int, str)
-    sampleRemovedFromHistory = Signal(int)
+    sampleUnindexed = Signal(int)
+    sampleRemovedFromHistory = Signal(int)  # alias de signal temporaire
     sampleConcatCandidateChanged = Signal(int, bool, object)
     sampleNormalizationLockChanged = Signal(int, bool)
     sampleScaleAnalyzed = Signal(int)  # emet l'ID apres analyse de gamme terminee
@@ -216,6 +219,7 @@ class SampleService(QObject):
         *,
         from_recorder: bool = False,
         sequential_with_previous: bool = False,
+        material_metadata: dict | None = None,
     ):
         """Enregistre un fichier audio comme nouveau sample.
 
@@ -231,7 +235,7 @@ class SampleService(QObject):
         path = normalize_audio_path(path)
         new_sample = None
         try:
-            new_sample = Sample(path)
+            new_sample = Sample(path, material_metadata=material_metadata)
             self.app_context.notifications.notify(
                 title="Nouveau sample ajoute",
                 message=(
@@ -263,11 +267,60 @@ class SampleService(QObject):
         finally:
             self.samplesChanged.emit(list(self._samples))
 
+    def promote_to_source(self, path: str, material_metadata: dict):
+        """Copie un dérivé en stockage durable puis crée une nouvelle SOURCE.
+
+        Le fichier et l'objet dérivé d'origine ne sont jamais modifiés.
+        """
+        source = normalize_audio_path(path)
+        if not source or not os.path.isfile(source):
+            return None
+        # AppLocalDataLocation dépend de QApplication.applicationName(). En
+        # développement il vaut parfois "python", ce qui produisait
+        # AppData/Local/python/promoted_sources. Le segment SampleRod est ici
+        # explicite et stable, quel que soit le lanceur (python, exe, tests).
+        root = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.GenericDataLocation
+        )
+        target_dir = os.path.join(root, "SampleRod", "promoted_sources")
+        os.makedirs(target_dir, exist_ok=True)
+        _source_stem, ext = os.path.splitext(os.path.basename(source))
+        ext = ext or ".wav"
+        provenance = dict((material_metadata or {}).get("provenance") or {})
+        stem = promoted_file_stem(
+            str(provenance.get("source_path") or source),
+            str(provenance.get("previous_kind") or ""),
+        )
+        target = SampleService._unique_promoted_path(target_dir, stem, ext)
+        try:
+            shutil.copy2(source, target)
+            sample = self.add(target, material_metadata=dict(material_metadata or {}))
+            if sample is None:
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+            return sample
+        except (OSError, shutil.Error) as exc:
+            logger.info("[SampleService] promotion impossible: %s", exc)
+            return None
+
+    @staticmethod
+    def _unique_promoted_path(folder: str, stem: str, extension: str) -> str:
+        candidate = normalize_audio_path(os.path.join(folder, f"{stem}{extension}"))
+        index = 2
+        while os.path.exists(candidate):
+            candidate = normalize_audio_path(
+                os.path.join(folder, f"{stem}_{index:02d}{extension}")
+            )
+            index += 1
+        return candidate
+
     def delete(self, sample_id: int):
         """Supprime un sample : son fichier, sa fiche en base, le cache."""
         samp = self._get(sample_id)
         if not samp:
-            return
+            return False
         logger.info("[SampleService][Perf] delete(%s) start", sample_id)
         total_start = perf_counter()
         delete_ms = 0.0
@@ -290,6 +343,7 @@ class SampleService(QObject):
             step_start = perf_counter()
             self.sampleDeleted.emit(sample_id)
             emit_deleted_ms = (perf_counter() - step_start) * 1000.0
+            return True
         except Exception as exc:
             self.app_context.notifications.notify(
                 title="Erreur suppression",
@@ -297,6 +351,7 @@ class SampleService(QObject):
                 type=NotificationType.ERROR,
             )
             logger.info("[SampleService] delete error: %s", exc)
+            return False
         finally:
             step_start = perf_counter()
             self.samplesChanged.emit(list(self._samples))
@@ -313,7 +368,7 @@ class SampleService(QObject):
                 len(self._samples),
             )
 
-    def delete_by_path(self, file_path: str):
+    def delete_by_path(self, file_path: str, *, missing_ok: bool = False):
         """Supprime par chemin de fichier (utilise par le navigateur de dossiers).
 
         Si le fichier correspond a un sample connu, suppression complete via
@@ -323,8 +378,7 @@ class SampleService(QObject):
         file_path = normalize_audio_path(file_path)
         samp = next((sample for sample in self._samples if sample.path == file_path), None)
         if samp:
-            self.delete(samp.id)
-            return True, None
+            return bool(self.delete(samp.id)), None
 
         try:
             if os.path.isfile(file_path):
@@ -334,6 +388,8 @@ class SampleService(QObject):
                     message=os.path.basename(file_path),
                     type=NotificationType.WARNING,
                 )
+                return True, None
+            if missing_ok:
                 return True, None
             raise FileNotFoundError(file_path)
         except Exception as exc:
@@ -428,6 +484,28 @@ class SampleService(QObject):
             logger.info("[SampleService] rename_by_path error: %s", exc)
             return False, str(exc)
 
+    def move_by_path(self, file_path: str, target_folder: str):
+        """Déplace un fichier non indexé; un fichier indexé utilise move()."""
+        file_path = normalize_audio_path(file_path)
+        target_folder = normalize_audio_path(target_folder)
+        samp = next((sample for sample in self._samples if sample.path == file_path), None)
+        if samp:
+            return bool(self.move(samp.id, target_folder)), None
+        try:
+            if not os.path.isfile(file_path):
+                raise FileNotFoundError(file_path)
+            os.makedirs(target_folder, exist_ok=True)
+            shutil.move(file_path, os.path.join(target_folder, os.path.basename(file_path)))
+            return True, None
+        except (OSError, shutil.Error) as exc:
+            logger.info("[SampleService] move_by_path error: %s", exc)
+            self.app_context.notifications.notify(
+                title="Erreur déplacement",
+                message=str(exc),
+                type=NotificationType.ERROR,
+            )
+            return False, str(exc)
+
     def rename(self, sample_id: int, new_name: str):
         """Renomme un sample par son id (fichier + fiche en base).
 
@@ -437,7 +515,7 @@ class SampleService(QObject):
         """
         samp = next((sample for sample in self._samples if sample.id == sample_id), None)
         if not samp:
-            return
+            return False
         logger.info("[SampleService][Perf] rename(%s, %s) start", sample_id, new_name)
         total_start = perf_counter()
         old_name = samp.name
@@ -470,7 +548,7 @@ class SampleService(QObject):
                     type=NotificationType.ERROR,
                 )
                 logger.info("[SampleService] rename stop playback error: %s", exc)
-                return
+                return False
 
         try:
             step_start = perf_counter()
@@ -488,6 +566,7 @@ class SampleService(QObject):
                 type=NotificationType.SUCCESS,
             )
             notify_ms = (perf_counter() - step_start) * 1000.0
+            return True
         except Exception as exc:
             self.app_context.notifications.notify(
                 title="Erreur renommage",
@@ -495,6 +574,7 @@ class SampleService(QObject):
                 type=NotificationType.ERROR,
             )
             logger.info("[SampleService] rename error: %s", exc)
+            return False
         finally:
             step_start = perf_counter()
             self.samplesChanged.emit(list(self._samples))
@@ -515,21 +595,21 @@ class SampleService(QObject):
         """Deplace le fichier d'un sample vers un autre dossier (drag and drop)."""
         samp = next((sample for sample in self._samples if sample.id == sample_id), None)
         if not samp:
-            return
+            return False
         target_folder = normalize_audio_path(target_folder)
         if not target_folder:
-            return
+            return False
         current_folder = normalize_audio_path(os.path.dirname(getattr(samp, "path", "") or ""))
         if current_folder == target_folder:
             logger.info("[SampleService][Perf] move(%s) ignored same-folder=%s", sample_id, target_folder)
-            return
+            return False
         if int(sample_id) in self._move_threads:
             logger.info(
                 "[SampleService][Perf] move(%s) ignored pending target=%s",
                 sample_id,
                 target_folder,
             )
-            return
+            return False
 
         logger.info("[SampleService][Perf] move(%s, %s) start", sample_id, target_folder)
         total_start = perf_counter()
@@ -566,7 +646,7 @@ class SampleService(QObject):
             stop_ms,
             target_folder,
         )
-        return
+        return True
         logger.info("[SampleService][Perf] move(%s, %s) start", sample_id, target_folder)
         total_start = perf_counter()
         stop_ms = 0.0
@@ -759,7 +839,7 @@ class SampleService(QObject):
             session.close()
             self.samplesChanged.emit(list(self._samples))
 
-    def removeFromHistory(self, sample_id: int):
+    def unindex(self, sample_id: int):
         """Retire un sample de l'application SANS supprimer son fichier.
 
         La fiche disparait de la base et du cache, mais le fichier audio
@@ -767,7 +847,7 @@ class SampleService(QObject):
         """
         samp = self._get(sample_id)
         if not samp:
-            return
+            return False
         try:
             session = SessionLocal()
             inst = session.get(Sample, sample_id)
@@ -777,21 +857,32 @@ class SampleService(QObject):
             session.close()
             self._cleanup_concat_state_for_deleted(sample_id)
             self._samples = [sample for sample in self._samples if sample.id != sample_id]
-            self.sampleRemovedFromHistory.emit(sample_id)
+            canonical_signal = getattr(self, "sampleUnindexed", None)
+            if canonical_signal is not None:
+                canonical_signal.emit(sample_id)
+            legacy_signal = getattr(self, "sampleRemovedFromHistory", None)
+            if legacy_signal is not None:
+                legacy_signal.emit(sample_id)
             self.app_context.notifications.notify(
-                title="Historique mis a jour",
-                message="Sample retire de l'historique",
+                title="Réserve mise à jour",
+                message="Sample désindexé — fichier conservé",
                 type=NotificationType.INFO,
             )
+            return True
         except Exception as exc:
             self.app_context.notifications.notify(
-                title="Erreur historique",
+                title="Erreur de désindexation",
                 message=str(exc),
                 type=NotificationType.ERROR,
             )
-            logger.info("[SampleService] removeFromHistory error: %s", exc)
+            logger.info("[SampleService] unindex error: %s", exc)
+            return False
         finally:
             self.samplesChanged.emit(list(self._samples))
+
+    def removeFromHistory(self, sample_id: int):
+        """Alias rétrocompatible de :meth:`unindex`."""
+        return SampleService.unindex(self, sample_id)
 
     def bulkDelete(self, sample_ids: list[int]):
         """Supprime plusieurs samples d'un coup (selection multiple).
@@ -1041,6 +1132,12 @@ class SampleService(QObject):
         samp = self._get(sample_id)
         if not samp:
             return
+        if not supports_in_place_normalization(samp.path):
+            logger.info(
+                "[SampleService] normalisation automatique ignorée pour le format %s",
+                os.path.splitext(samp.path)[1].lower() or "sans extension",
+            )
+            return
 
         worker = self._normalize_threads.get(sample_id)
         if worker is not None and worker.isRunning():
@@ -1112,6 +1209,14 @@ class SampleService(QObject):
             if os.path.normpath(os.path.dirname(getattr(samp, "path", "") or "")) == folder_norm
         ]
         return self._batch_analyze_candidates(subset)
+
+    def batch_analyze_ids(self, sample_ids) -> int:
+        """Analyse les samples explicitement désignés par une vue ou sélection."""
+        wanted = {int(sample_id) for sample_id in sample_ids if sample_id is not None}
+        return self._batch_analyze_candidates(
+            samp for samp in self._samples
+            if int(getattr(samp, "id", -1)) in wanted
+        )
 
     def _batch_analyze_candidates(self, samples) -> int:
         """Filtre les samples sans gamme et les enqueue en arriere-plan.

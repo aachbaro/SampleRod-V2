@@ -55,14 +55,11 @@ import logging
 logger = logging.getLogger("main_window")
 
 from frontend.record_widget import RecordWidgetWindow
-from frontend.settings_gui.settings_panel import SettingsPanelWidget
-from frontend.screenshot_gui.screenshot_list import ScreenshotListWidget
 from frontend.notification_widgets import NotificationManager, NotificationCenter
 from frontend.labo.artifact_store import ensure_lab_artifact_store
-from frontend.workspace.atelier_widget import AtelierWidget
 from frontend.styles import theme
 from frontend.activity import ActivityService, ActivityTrayWidget
-from frontend.ui import IconButton, install_fast_tooltips
+from frontend.ui import IconButton, LazyWidgetHost, install_fast_tooltips
 from frontend.modular import (
     WindowManager,
     WorkspaceWindow,
@@ -133,32 +130,24 @@ class MainWindow(QMainWindow):
         self.record_widget.show()
         # On ne l'ajoute pas aux tabs, c'est une fenÃªtre indÃ©pendante
 
-        # --- Onglet 'Atelier'
-        atelier_tab = QWidget()
-        atelier_layout = QVBoxLayout(atelier_tab)
-        atelier_layout.setContentsMargins(0, 0, 0, 0)
-        self.atelier_widget = AtelierWidget(
-            directory_service=self.directory_service,
-            app_context=self.app_context,
+        # Les trois ecrans classiques sont couteux et inutiles au lancement
+        # modulaire. Leurs imports ET leurs widgets sont donc différes jusqu'a
+        # la premiere fois ou l'onglet devient effectivement visible.
+        self.atelier_widget = None
+        self.screenshot_list_widget = None
+        self.settings_panel = None
+        self._atelier_host = LazyWidgetHost(
+            self._create_atelier_widget, "Préparation de l’atelier…"
         )
-        atelier_layout.addWidget(self.atelier_widget)
-        self.tab_widget.addTab(atelier_tab, "Atelier")
-
-        # --- Onglet 'Screenshots'
-        screenshots_tab = QWidget()
-        screenshots_layout = QVBoxLayout(screenshots_tab)
-        self.screenshot_list_widget = ScreenshotListWidget(self.app_context)
-        screenshots_layout.addWidget(self.screenshot_list_widget)
-        self.tab_widget.addTab(screenshots_tab, "Screenshots")
-
-        # --- Onglet 'Parametres'
-        settings_tab = QWidget()
-        settings_layout = QVBoxLayout(settings_tab)
-        settings_layout.setContentsMargins(0, 0, 0, 0)
-        self.settings_panel = SettingsPanelWidget(self.app_context)
-        settings_layout.addWidget(self.settings_panel)
-
-        self.tab_widget.addTab(settings_tab, "ParamÃ¨tres")
+        self._screenshots_host = LazyWidgetHost(
+            self._create_screenshot_widget, "Chargement des captures…"
+        )
+        self._settings_host = LazyWidgetHost(
+            self._create_settings_widget, "Chargement des paramètres…"
+        )
+        self.tab_widget.addTab(self._atelier_host, "Atelier")
+        self.tab_widget.addTab(self._screenshots_host, "Screenshots")
+        self.tab_widget.addTab(self._settings_host, "ParamÃ¨tres")
 
         self._settings_tab_index = self.tab_widget.count() - 1
 
@@ -222,6 +211,27 @@ class MainWindow(QMainWindow):
 
         self.app_context.notifications.notificationAdded.connect(self._increment_badge)
 
+    def _create_atelier_widget(self):
+        from frontend.workspace.atelier_widget import AtelierWidget
+
+        self.atelier_widget = AtelierWidget(
+            directory_service=self.directory_service,
+            app_context=self.app_context,
+        )
+        return self.atelier_widget
+
+    def _create_screenshot_widget(self):
+        from frontend.screenshot_gui.screenshot_list import ScreenshotListWidget
+
+        self.screenshot_list_widget = ScreenshotListWidget(self.app_context)
+        return self.screenshot_list_widget
+
+    def _create_settings_widget(self):
+        from frontend.settings_gui.settings_panel import SettingsPanelWidget
+
+        self.settings_panel = SettingsPanelWidget(self.app_context)
+        return self.settings_panel
+
     _MODULAR_MODE_KEY = "modular_ui_mode"
     _MODULAR_SESSION_KEY = "modular_session_v1"
 
@@ -241,9 +251,20 @@ class MainWindow(QMainWindow):
             self._workspace_window.quitRequested.connect(self._quit_app)
             # Restaure la session precedente AVANT de brancher l'auto-save.
             self._restore_modular_session()
+            # Migration douce des anciennes geometries libres : une fois toutes
+            # les instances restaurees, leurs quatre contours rejoignent les
+            # lignes du quadrillage actuellement configure.
+            self._window_manager.align_windows_to_grid()
             self._window_manager.instancesChanged.connect(self._persist_modular_session)
             self._window_manager.instanceUpdated.connect(
                 lambda *_a: self._persist_modular_session()
+            )
+            # Deplacements et redimensionnements : le controleur spatial met la
+            # geometrie a jour en memoire tout de suite et regroupe les
+            # ecritures disque. Sans cela, la geometrie n'etait capturee qu'a la
+            # fermeture d'une fenetre ou a l'arret de l'application.
+            self._window_manager.layout_manager.persistRequested.connect(
+                self._persist_modular_session
             )
             app = QApplication.instance()
             if app is not None:

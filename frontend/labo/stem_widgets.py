@@ -25,6 +25,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QMimeData, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDrag
+from frontend.dragdrop import (
+    DragItem, DragKind, DragPayload, DragProvenance, DropAcceptance, DropAction,
+    MaterialOperation, MaterialStatus,
+    attach_payload, describe_drop, drag_controller, drag_preview_pixmap, drag_session,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -89,6 +94,8 @@ class StemTile(QFrame):
         *,
         removable: bool = False,
         artifactable: bool = False,
+        provenance_source: str = "",
+        material_operation: MaterialOperation = MaterialOperation.STEM_SEPARATION,
         parent=None,
     ):
         super().__init__(parent)
@@ -96,11 +103,18 @@ class StemTile(QFrame):
         self._path = path
         self._press = None
         self._playing = False
+        self._provenance_source = provenance_source or path
+        self._material_operation = material_operation
         self.setObjectName("StemTile")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setFixedHeight(40)
-        self.setToolTip("Glisse cette piste vers le mixer, un autre outil ou l'exterieur")
+        self.setToolTip(
+            "DÉRIVÉ · STEM\n"
+            f"Opération : {self._material_operation.value}\n"
+            f"Source connue : {self._provenance_source}\n"
+            "Glisse cette piste vers le mixer, un autre outil ou l'extérieur"
+        )
 
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 4, 6, 4)
@@ -206,10 +220,22 @@ class StemTile(QFrame):
             return
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(self._path)])
+        descriptor = DragPayload(
+            kind=DragKind.STEM,
+            items=(DragItem(path=self._path, display_name=self._name),),
+            source_id=f"stem:{self._name}",
+            source_module="stem_lab",
+            status=MaterialStatus.DERIVED,
+            provenance=DragProvenance(
+                self._provenance_source, self._material_operation
+            ),
+        )
+        attach_payload(mime, descriptor)
         drag = QDrag(self)
         drag.setMimeData(mime)
-        drag.setPixmap(self.grab())
-        drag.exec(Qt.DropAction.CopyAction)
+        drag.setPixmap(drag_preview_pixmap(descriptor))
+        with drag_session(descriptor):
+            drag.exec(Qt.DropAction.CopyAction)
 
     def _apply_style(self) -> None:
         p = theme.manager.p
@@ -290,6 +316,13 @@ class StemMixerZone(QFrame):
 
         self._apply_style()
         self._refresh_chips()
+        self._drop_target_id = f"stem-mixer:{id(self)}"
+        drag_controller().register_target(
+            self._drop_target_id, self,
+            lambda payload: DropAcceptance.accept(
+                DropAction.ADD_TO_MIX, describe_drop(DropAction.ADD_TO_MIX, payload)
+            ),
+        )
         theme.manager.themeChanged.connect(lambda *_a: self._apply_style())
 
     def add_path(self, path: str) -> None:
@@ -337,7 +370,10 @@ class StemMixerZone(QFrame):
             if widget is not None:
                 widget.deleteLater()
         if self._result and os.path.isfile(self._result):
-            tile = StemTile("mix", self._result, artifactable=True)
+            tile = StemTile(
+                "mix", self._result, artifactable=True,
+                material_operation=MaterialOperation.MIX,
+            )
             tile.playRequested.connect(self.playRequested.emit)
             tile.artifactRequested.connect(self.artifactRequested.emit)
             tile.seekRequested.connect(self.seekRequested.emit)
@@ -349,6 +385,7 @@ class StemMixerZone(QFrame):
         if has_supported_audio_drop(mime) and can_accept_audio_drop(
             mime, sample_path_lookup=self._lookup
         ):
+            drag_controller().enter_target(self._drop_target_id, mime)
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -356,7 +393,12 @@ class StemMixerZone(QFrame):
     def dragMoveEvent(self, event):  # noqa: N802
         self.dragEnterEvent(event)
 
+    def dragLeaveEvent(self, event):  # noqa: N802
+        drag_controller().leave_target(self._drop_target_id)
+        event.accept()
+
     def dropEvent(self, event):  # noqa: N802
+        drag_controller().finish_drag()
         paths = resolve_audio_drop_paths(event.mimeData(), sample_path_lookup=self._lookup)
         if not paths:
             event.ignore()
@@ -452,7 +494,11 @@ class StemSessionWidget(QWidget):
             if not f.stem.startswith("mix_")
         ]
         for stem_file in stem_files:
-            tile = StemTile(stem_file.stem, normalize_audio_path(str(stem_file)))
+            tile = StemTile(
+                stem_file.stem,
+                normalize_audio_path(str(stem_file)),
+                provenance_source=self.source_path,
+            )
             tile.playRequested.connect(self._play)
             tile.seekRequested.connect(self._seek)
             self._stems_box.addWidget(tile)

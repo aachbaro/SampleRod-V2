@@ -39,6 +39,13 @@ class DirectoryFilterController:
         self.widget._reserve_status_filter = status_filter
         self.widget.refresh_list()
 
+    def set_reserve_scale_filter(self, scale: str) -> None:
+        scale = scale or "__all__"
+        if scale == self.widget._reserve_scale_filter:
+            return
+        self.widget._reserve_scale_filter = scale
+        self.widget.refresh_list()
+
     def set_compatible_scales_filter(self, sample_id: int | None) -> None:
         if sample_id is None:
             if self.widget._compat_filter_sample_id is None and not self.widget._compat_filter_scales:

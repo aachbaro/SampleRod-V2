@@ -98,9 +98,9 @@ class SampleCardHeaderActions:
         puis emet le signal pour supprimer fichier + DB.
         """
         c = self.card
-        if c.app_context.audio_player.current_sample_id == c.sample.id:
+        if c.playback.controller.is_active(c.playback._entry()):
             try:
-                c.app_context.audio_player.clear_audio()
+                c.playback.controller.stop(c.playback._entry())
                 if hasattr(c.play_button, "set_icon_pair"):
                     c.play_button.set_icon_pair(
                         "player-play",
@@ -121,9 +121,9 @@ class SampleCardHeaderActions:
         puis emet le signal pour retirer de l'historique.
         """
         c = self.card
-        if c.app_context.audio_player.current_sample_id == c.sample.id:
+        if c.playback.controller.is_active(c.playback._entry()):
             try:
-                c.app_context.audio_player.clear_audio()
+                c.playback.controller.stop(c.playback._entry())
                 if hasattr(c.play_button, "set_icon_pair"):
                     c.play_button.set_icon_pair(
                         "player-play",
@@ -142,10 +142,9 @@ class SampleCardHeaderActions:
     def normalize_clicked(self):
         """Demarre la normalisation: stoppe l'audio, met l'UI en attente, emet normalizeClicked."""
         c = self.card
-        current_id = c.app_context.audio_player.current_sample_id
-        if current_id == c.sample.id:
+        if c.playback.controller.is_active(c.playback._entry()):
             try:
-                c.app_context.audio_player.clear_audio()
+                c.playback.controller.stop(c.playback._entry())
             except Exception:
                 pass
 

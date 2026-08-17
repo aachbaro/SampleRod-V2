@@ -29,7 +29,14 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from frontend.reserve import ReserveActions, ReserveEntry, apply_status_badge
+from frontend.reserve import (
+    ReserveActions,
+    ReserveEntry,
+    apply_status_badge,
+    format_reserve_date,
+    format_reserve_duration,
+    format_reserve_rms,
+)
 from frontend.sample_gui.sample.sample_card import SampleCard
 
 
@@ -150,12 +157,12 @@ class LibraryDetailWidget(QWidget):
                     f"Racine: {library_service.get_root_label(sample)}",
                     f"Dossier: {library_service.get_folder_label(sample)}",
                     (
-                        f"Date: {sample.created_at.strftime('%d/%m/%Y %H:%M')}"
+                        f"Date: {format_reserve_date(sample.created_at)}"
                         if getattr(sample, "created_at", None) is not None
                         else ""
                     ),
-                    f"Duree: {library_service.format_duration(sample)}",
-                    f"RMS: {library_service.format_rms(sample)}" if getattr(sample, "rms_level", None) is not None else "",
+                    f"Duree: {format_reserve_duration(sample.duration, compact=True)}",
+                    f"RMS: {format_reserve_rms(sample.rms_level)}" if getattr(sample, "rms_level", None) is not None else "",
                     scale_text,
                     f"Source: {entry.source_label}",
                 ]
@@ -165,10 +172,10 @@ class LibraryDetailWidget(QWidget):
         card = SampleCard(sample, self.app_context)
         self.sample_store.sampleRenamed.connect(card.onRenameSuccess)
         self.sample_store.sampleMoved.connect(card.onMoveSuccess)
-        card.renameSample.connect(self.sample_store.rename)
-        card.sampleMoved.connect(self.sample_store.move)
-        card.deleteSample.connect(self.sample_store.delete)
-        card.removeFromHistory.connect(self.sample_store.removeFromHistory)
+        card.renameSample.connect(lambda _sid, name: self.app_context.reserve_mutations.rename(entry, name))
+        card.sampleMoved.connect(lambda _sid, folder: self.app_context.reserve_mutations.move(entry, folder))
+        card.deleteSample.connect(lambda _sid: self.app_context.reserve_mutations.delete_file_and_record(entry))
+        card.removeFromHistory.connect(lambda _sid: self.app_context.reserve_mutations.unindex(entry))
 
         card.checkbox.hide()
         card.archive_button.hide()
